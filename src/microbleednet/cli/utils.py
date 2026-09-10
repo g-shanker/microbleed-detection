@@ -7,7 +7,7 @@ loading and parsing, config-key introspection, and output — lives here.
 
 import tomllib
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple, get_args, get_origin
 
 import typer
 from pydantic import BaseModel, ValidationError
@@ -65,12 +65,16 @@ def config_fields(model: type[BaseModel], prefix: str = "") -> list[ConfigField]
             continue
         section, _, leaf = key.rpartition(".")
         default = "required" if field.is_required() else repr(field.default)
+        description = field.description or ""
+        if get_origin(annotation) is Literal:
+            choices = ", ".join(repr(choice) for choice in get_args(annotation))
+            description = f"{description} Allowed values: {choices}."
         fields.append(
             ConfigField(
                 section=section,
                 key=leaf,
                 default=default,
-                description=field.description or "",
+                description=description,
             )
         )
     return fields
