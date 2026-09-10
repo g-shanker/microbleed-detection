@@ -70,6 +70,7 @@ def test_describe_index_data_lists_config_keys() -> None:
     assert result.exit_code == 0, result.output
     assert "dataset_dir" in result.output
     assert "volume_pattern" in result.output
+    assert "Allowed values: 'T2*-GRE', 'SWI', 'QSM'." in result.output
 
 
 def test_describe_rejects_unknown_command() -> None:
