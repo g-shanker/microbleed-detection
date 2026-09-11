@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from rich.console import Console
 from rich.table import Table
 
-from ..orchestration.configs import IndexDataConfig, PreprocessConfig
+from ..orchestration.configs import IndexDataConfig, PreprocessConfig, TrainConfig
 from .utils import (
     config_fields,
     describe_hint,
@@ -39,7 +39,9 @@ class CommandSpec:
     config: type[BaseModel]
     pipe: str  # module under orchestration.pipes; imported lazily to defer torch
     dry_run_message: Callable[[Any], str]
-    success_message: Callable[[Any, Any], str]
+    success_message: Callable[[Any], str]
+
+
 SPECS: list[CommandSpec] = [
     CommandSpec(
         name="index-data",
@@ -50,7 +52,7 @@ SPECS: list[CommandSpec] = [
             f"Index configuration valid; manifests would be written under "
             f"{s.dataset_dir} (dry run)"
         ),
-        success_message=lambda s, _: (
+        success_message=lambda s: (
             f"Indexed dataset manifests written under {s.dataset_dir}"
         ),
     ),
@@ -62,8 +64,19 @@ SPECS: list[CommandSpec] = [
         dry_run_message=lambda s: (
             f"Preprocess configuration valid for {s.dataset_dir} (dry run)"
         ),
-        success_message=lambda s, _: (
-            f"Preprocessed dataset written under {s.dataset_dir}"
+        success_message=lambda s: f"Preprocessed dataset written under {s.dataset_dir}",
+    ),
+    CommandSpec(
+        name="train",
+        help="TODO: write a help message",
+        config=TrainConfig,
+        pipe="train",
+        dry_run_message=lambda s: (
+            f"Training configuration valid; artifacts would be written under "
+            f"{s.experiment_dir} (dry run)"
+        ),
+        success_message=lambda s: (
+            f"Training artifacts written under {s.experiment_dir}"
         ),
     ),
 ]
@@ -91,8 +104,8 @@ def build_command(app: typer.Typer, spec: CommandSpec) -> None:
         pipe = import_module(
             f"..orchestration.pipes.{spec.pipe}", package=__package__
         )
-        result = pipe.execute(settings)
-        report(spec.success_message(settings, result))
+        pipe.execute(settings)
+        report(spec.success_message(settings))
 
 
 def build_describe_command(app: typer.Typer, specs: list[CommandSpec]) -> None:
@@ -133,7 +146,7 @@ def build_describe_command(app: typer.Typer, specs: list[CommandSpec]) -> None:
         table.add_column("Description", ratio=1)
 
         current_section = ""
-        for config_field in config_fields(model):
+        for config_field in config_fields(model, prefix=""):
             if config_field.section != current_section:
                 table.add_section()
                 if config_field.section:

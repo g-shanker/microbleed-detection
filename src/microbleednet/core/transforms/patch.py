@@ -1,0 +1,61 @@
+import numpy as np
+from skimage.measure import label, regionprops
+
+from . import volume_ops
+
+
+def get_target_centers(mask: np.ndarray) -> list[tuple[int, int, int]]:
+    """Return rounded centers of connected target regions."""
+    labeled = label(mask > 0, connectivity=3)
+    return [
+        tuple(int(round(value)) for value in region.centroid)
+        for region in regionprops(labeled)
+    ]
+
+
+def extract_centered_patches(
+    volume: np.ndarray,
+    centers: list[tuple[int, int, int]],
+    patch_size: int,
+) -> list[np.ndarray]:
+    """Extract one cubic target-centered patch around each center."""
+    half = patch_size // 2
+    padded = np.pad(volume, half, mode="constant", constant_values=0)
+    patches = []
+    for center in centers:
+        region = tuple(slice(axis, axis + patch_size) for axis in center)
+        patches.append(padded[region])
+    return patches
+
+
+def get_nonoverlapping_patches(
+    volume: np.ndarray,
+    patch_size: int,
+) -> list[np.ndarray]:
+    """Extract non-overlapping cubic patches."""
+    if patch_size <= 0:
+        raise ValueError("patch_size must be positive")
+
+    padding = [(0, max(patch_size - size, 0)) for size in volume.shape]
+    padded = np.pad(volume, padding, mode="constant", constant_values=0)
+    starts = [
+        list(range(0, size - patch_size + 1, patch_size))
+        for size in padded.shape
+    ]
+    for axis, size in enumerate(padded.shape):
+        final_start = size - patch_size
+        if starts[axis][-1] != final_start:
+            starts[axis].append(final_start)
+
+    patches = []
+    for start_z in starts[2]:
+        for start_y in starts[1]:
+            for start_x in starts[0]:
+                bounding_box = (
+                    (start_x, start_x + patch_size),
+                    (start_y, start_y + patch_size),
+                    (start_z, start_z + patch_size),
+                )
+                patches.append(volume_ops.apply_bounding_box(padded, bounding_box))
+
+    return patches

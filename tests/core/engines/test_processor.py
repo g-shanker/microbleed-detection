@@ -3,6 +3,8 @@ from unittest.mock import Mock
 import nibabel as nib
 import numpy as np
 import pytest
+import torch
+import torch.nn as nn
 
 from microbleednet.core.engines import processor
 
@@ -66,3 +68,17 @@ def test_preprocess_rejects_mask_with_different_affine() -> None:
 def test_preprocess_rejects_reoriented_mask_with_different_shape() -> None:
     with pytest.raises(ValueError, match="shapes do not match"):
         processor.preprocess(_volume(), _volume((1, 2, 2)), "QSM")
+
+
+def test_infer_builds_batched_volume_on_model_device(monkeypatch) -> None:
+    model = nn.Conv3d(2, 2, kernel_size=1)
+    monkeypatch.setattr(
+        processor.utils,
+        "append_frst_channel",
+        lambda volume: torch.cat((volume, volume), dim=1),
+    )
+
+    result = processor.infer(model, np.ones((2, 2, 2)))
+
+    assert result.shape == (2, 2, 2, 2)
+    assert not model.training

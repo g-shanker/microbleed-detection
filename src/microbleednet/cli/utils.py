@@ -50,7 +50,7 @@ class ConfigField(NamedTuple):
     description: str
 
 
-def config_fields(model: type[BaseModel], prefix: str = "") -> list[ConfigField]:
+def config_fields(model: type[BaseModel], prefix: str) -> list[ConfigField]:
     """Flatten a config model (recursing into nested models) into leaf fields.
 
     Derived from the model so descriptions, defaults, and required-ness never

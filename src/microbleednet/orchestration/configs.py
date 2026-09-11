@@ -9,12 +9,18 @@ concern (``cli/utils.py``).
 
 import re
 from pathlib import Path
+from typing import Any
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from ..core.datamodels import FrozenModel, Modality
+from .layouts import DatasetLayout
+from .manifests import (
+    PreprocessedSubject,
+    RawDatasetManifest,
+)
 
-# Token a volume/mask filename pattern must contain exactly once; the text it
+# Token a volume/mask filename pattern must contain at least once; the text it
 # matches becomes the subject ID. Shared by the index-data pipeline (which
 # splits filenames on it) and IndexDataConfig (which validates its presence).
 SUBJECT_ID_PLACEHOLDER = "{subject_id}"
@@ -76,7 +82,7 @@ class IndexDataConfig(FrozenModel):
             ("volume_pattern", self.volume_pattern),
             ("mask_pattern", self.mask_pattern),
         ):
-            if pattern is not None and pattern.count(SUBJECT_ID_PLACEHOLDER) < 1:
+            if pattern.count(SUBJECT_ID_PLACEHOLDER) < 1:
                 raise ValueError(
                     f"{name} must contain the '{SUBJECT_ID_PLACEHOLDER}' "
                     "placeholder at least once"
@@ -101,4 +107,91 @@ class PreprocessConfig(FrozenModel):
     def validate_dataset_dir(self) -> "PreprocessConfig":
         if not self.dataset_dir.is_dir():
             raise ValueError(f"dataset_dir does not exist: {self.dataset_dir}")
+        manifest_path = DatasetLayout(dataset_dir=self.dataset_dir).raw_manifest_path()
+        if not manifest_path.is_file():
+            raise ValueError(f"raw manifest does not exist: {manifest_path}")
+        RawDatasetManifest.read(manifest_path)
         return self
+
+
+class TrainConfig(FrozenModel):
+    dataset_dir: Path = Field(
+        description=(
+            "Indexed dataset directory containing manifests/preprocessed.json."
+        ),
+    )
+    experiment_dir: Path = Field(
+        description=(
+            "Directory to write per-stage patches, checkpoints, and manifests."
+        ),
+    )
+    device: str = Field(
+        default="cpu",
+        description="Torch device string, e.g. 'cpu' or 'cuda'.",
+    )
+
+    @model_validator(mode="after")
+    def validate_device(self) -> "TrainConfig":
+        import torch
+
+        try:
+            device = torch.device(self.device)
+        except (RuntimeError, TypeError) as error:
+            raise ValueError(f"invalid device: {self.device}") from error
+        if device.type == "cuda" and not torch.cuda.is_available():
+            raise ValueError("CUDA device is not available")
+        return self
+
+    @model_validator(mode="after")
+    def validate_dataset(self) -> "TrainConfig":
+        if not self.dataset_dir.is_dir():
+            raise ValueError(f"dataset_dir does not exist: {self.dataset_dir}")
+        manifest_path = DatasetLayout(
+            dataset_dir=self.dataset_dir
+        ).preprocessed_manifest_path()
+        if not manifest_path.is_file():
+            raise ValueError(f"preprocessed manifest does not exist: {manifest_path}")
+        return self
+
+
+class BasePatchConfig(FrozenModel):
+    patch_dir: Path = Field(
+        description="Directory where materialized patches are written.",
+    )
+    subjects: list[PreprocessedSubject] = Field(
+        min_length=1,
+        description="Preprocessed subjects from which patches are extracted.",
+    )
+    patch_size: int = Field(
+        gt=0,
+        description="Cubic patch edge length in voxels.",
+    )
+    augmentation_factor: int = Field(
+        gt=0,
+        description="Total records per patch, including one original record.",
+    )
+
+
+class NonOverlappingPatchConfig(BasePatchConfig):
+    pass
+
+
+class TargetCenteredPatchConfig(BasePatchConfig):
+    probability_threshold: float = Field(
+        ge=0,
+        le=1,
+        description="Minimum detector probability retained as a candidate.",
+    )
+    detector: Any = Field(
+        description="Loaded detector used to locate candidate centers.",
+    )
+
+    @field_validator("detector")
+    @classmethod
+    def validate_detector(cls, detector: Any) -> Any:
+        from ..core.common.models import CandidateDetector
+
+        if not isinstance(detector, CandidateDetector):
+            raise TypeError("detector must be a CandidateDetector")
+        return detector
+
