@@ -27,21 +27,15 @@ class DatasetLayout(FrozenModel):
     )
     preprocessed_manifest: Path = Field(
         default=Path("manifests/preprocessed.json"),
-        description=(
-            "Preprocessed dataset manifest written by preprocess."
-        ),
+        description=("Preprocessed dataset manifest written by preprocess."),
     )
     preprocessed_volumes_dir: Path = Field(
         default=Path("preprocessed/volumes"),
-        description=(
-            "Directory for preprocessed volumes."
-        ),
+        description=("Directory for preprocessed volumes."),
     )
     preprocessed_masks_dir: Path = Field(
         default=Path("preprocessed/masks"),
-        description=(
-            "Directory for preprocessed masks."
-        ),
+        description=("Directory for preprocessed masks."),
     )
     volume_suffix: str = Field(
         default=".nii.gz",
@@ -63,3 +57,32 @@ class DatasetLayout(FrozenModel):
 
     def preprocessed_masks_path(self) -> Path:
         return self.dataset_dir / self.preprocessed_masks_dir
+
+
+class ExperimentLayout(FrozenModel):
+    experiment_dir: Path = Field(
+        description="Root directory for this experiment's artifacts."
+    )
+    best_checkpoint_template: Path = Field(
+        default=Path("train/{stage}/checkpoints/best_model.pth"),
+        description="Relative template for the best checkpoint path.",
+    )
+    patch_dir_template: Path = Field(
+        default=Path("train/{stage}/patches/{split}"),
+        description="Relative template for a stage and split's patch directory.",
+    )
+
+    def resolve(self, template: Path, **values: str) -> Path:
+        return self.experiment_dir / str(template).format(**values)
+
+    def best_checkpoint_path(self, stage: str) -> Path:
+        return self.resolve(self.best_checkpoint_template, stage=stage)
+
+    def patch_dir_path(self, stage: str, split: str) -> Path:
+        return self.resolve(self.patch_dir_template, stage=stage, split=split)
+
+    def train_patch_dir_path(self, stage: str) -> Path:
+        return self.patch_dir_path(stage, "train")
+
+    def validation_patch_dir_path(self, stage: str) -> Path:
+        return self.patch_dir_path(stage, "validation")

@@ -57,6 +57,8 @@ def test_get_slice_vessel_mask_returns_empty_for_unusable_slice(
 def test_get_slice_vessel_mask_selects_smaller_cluster_and_filters_regions(
     clusters: np.ndarray, linearity: np.ndarray, monkeypatch
 ) -> None:
+    clusterer_arguments = {}
+
     class FakeClusterer:
         def fit(self, features: np.ndarray) -> "FakeClusterer":
             assert features.shape == (4, 2)
@@ -74,7 +76,12 @@ def test_get_slice_vessel_mask_selects_smaller_cluster_and_filters_regions(
     monkeypatch.setattr(
         inpaint_vessels, "get_linearity_measure", lambda _: linearity.copy()
     )
-    monkeypatch.setattr(inpaint_vessels, "KMeans", lambda **kwargs: FakeClusterer())
+
+    def fake_kmeans(**kwargs):
+        clusterer_arguments.update(kwargs)
+        return FakeClusterer()
+
+    monkeypatch.setattr(inpaint_vessels, "KMeans", fake_kmeans)
     monkeypatch.setattr(
         inpaint_vessels, "label", lambda _: np.array([[1, 2], [3, 0]])
     )
@@ -83,6 +90,10 @@ def test_get_slice_vessel_mask_selects_smaller_cluster_and_filters_regions(
     mask = inpaint_vessels.get_slice_vessel_mask(np.array([[1.0, 2.0], [3.0, 4.0]]))
 
     np.testing.assert_array_equal(mask, np.array([[True, False], [True, False]]))
+    assert clusterer_arguments == {
+        "n_clusters": inpaint_vessels.CLUSTERER_N_CLUSTERS,
+        "random_state": inpaint_vessels.CLUSTERER_RANDOM_STATE,
+    }
 
 
 def test_get_linearity_measure_returns_nonnegative_image() -> None:
