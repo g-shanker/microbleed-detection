@@ -62,7 +62,7 @@ def test_execute_writes_volumes_masks_and_complete_manifest(
 
     def fake_preprocess(volume, mask, modality) -> PreprocessResult:
         assert modality == "QSM"
-        output_mask = None if mask is None else np.ones((1, 1, 1), dtype=np.uint8)
+        output_mask = np.ones((1, 1, 1), dtype=np.uint8)
         return PreprocessResult(np.ones((1, 1, 1)), output_mask, np.eye(4))
 
     monkeypatch.setattr(preprocess.processor, "preprocess", fake_preprocess)

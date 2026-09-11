@@ -1,9 +1,46 @@
 Manifest collection representation
 
+Deferred execution reproducibility
+
+- Revisit provenance recording, global random seeding, deterministic PyTorch
+    settings, and DataLoader worker seeding after the training pipeline is stable.
+
 Inference restoration
 
 - Restore inference outputs to the source image space using the original affine,
   orientation transform, source shape, and crop bounds.
+
+Index-data cleanup
+
+- Revisit the index-data pipe after the training pipeline is stable. Remove the
+    remaining keyword-only marker in merge_source and address its outstanding
+    lint and type-check issues without expanding the current training scope.
+
+Training resume
+
+- Design and implement an explicit training-resume workflow that restores the
+    model, optimizer, scheduler, scaler, validation history, and persisted
+    datasplit before continuing training.
+- Decide how training should handle an existing datasplit manifest whose
+    subject assignments differ from a newly generated split.
+
+Layout model cleanup
+
+- After the train pipeline commit, consider replacing the fixed DatasetLayout and
+    ExperimentLayout Pydantic models with frozen dataclasses.
+
+Manifest reader API
+
+- Consider having manifests assign and update their own created_at and updated_at
+    timestamps instead of requiring callers to provide them.
+- If manifest persistence grows beyond the shared read/write helpers, reconsider
+    exposing manifest-owned read methods instead of keeping the generic reader.
+- On training resume, load the persisted datasplit manifest and restore the
+    train, validation, and test subject lists from it instead of recreating the
+    split.
+- Consider adding a RUNNING manifest state for the index-data and preprocess
+    flows, possibly with a separate execution marker so incomplete outputs are
+    not mistaken for published datasets.
 
 Consider changing manifest collections from lists to dictionaries:
 
@@ -16,3 +53,42 @@ Consider changing manifest collections from lists to dictionaries:
 - Increment SCHEMA_VERSION because this changes persisted JSON structure.
 - Provide migration support or require old manifests to be regenerated.
 - Decide whether externally authored JSON requires duplicate-key detection during parsing; normal JSON parsing collapses duplicate object keys before Pydantic validation.
+
+Typed integration boundaries
+
+- Consolidate repeated casts around third-party APIs behind small typed adapters.
+- Start with scikit-learn's train_test_split, then review NumPy, SciPy, nibabel,
+    and PyTorch integration points.
+- Keep runtime validation where an external value can genuinely violate the
+    expected contract; do not replace casts with blanket type ignores.
+
+Data verification
+
+- Review all current validation and decide whether each check belongs at the
+    input, pipeline, persistence, or algorithm boundary.
+- Consider adding a verification method that checks processed data and related
+    artifacts end to end against expected shapes, values, alignment, manifests,
+    and other cross-file invariants.
+
+Configurable augmentations
+
+- Revisit whether augmentation operations and their ranges should become
+    user-configurable once the fixed training policy has been evaluated.
+
+Configurable knowledge distillation
+
+- Revisit whether the knowledge-distillation temperature and loss weights should
+    become user-configurable once the fixed training policy has been evaluated.
+
+Potential future configuration
+
+- Keep the public configuration limited to external data identity, file naming,
+    modality, and artifact locations until a real workflow needs another control.
+- If practical use demonstrates the need, consider exposing dataset split
+    proportions, patch size, augmentation factor, probability thresholds, or
+    preprocessing options.
+- Consider exposing training hyperparameters, optimizer/scheduler selection,
+    device, AMP, compilation, DataLoader resources, seed/determinism, and model
+    architecture only for experiments that require them.
+- Any newly exposed setting should be documented with its supported values;
+    paper-defined defaults remain hardcoded otherwise.

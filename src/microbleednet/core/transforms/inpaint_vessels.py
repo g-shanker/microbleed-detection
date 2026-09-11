@@ -8,15 +8,15 @@ from skimage.filters import frangi
 from skimage.measure import label, regionprops
 from sklearn.cluster import KMeans
 
-_FRANGI_SIGMAS = (0.5, 1.2, 0.2)
-_FRANGI_ALPHA = 0.9
-_FRANGI_BETA = 20
-_FRANGI_BLACK_RIDGES = False
+FRANGI_SIGMAS = (0.5, 1.2, 0.2)
+FRANGI_ALPHA = 0.9
+FRANGI_BETA = 20
+FRANGI_BLACK_RIDGES = False
 
-_CLUSTERER_N_CLUSTERS = 2
-_CLUSTERER_RANDOM_STATE = 42
-_MINIMUM_VESSEL_ECCENTRICITY = 0.9
-_MAXIMUM_VESSEL_SOLIDITY = 0.5
+CLUSTERER_N_CLUSTERS = 2
+CLUSTERER_RANDOM_STATE = 0
+MINIMUM_VESSEL_ECCENTRICITY = 0.9
+MAXIMUM_VESSEL_SOLIDITY = 0.5
 
 
 def apply(volume: np.ndarray) -> np.ndarray:
@@ -56,10 +56,10 @@ def get_slice_vessel_mask(image_slice: np.ndarray) -> np.ndarray:
 
     frangi_slice = frangi(
         image_slice,
-        sigmas=_FRANGI_SIGMAS,  # pyright: ignore[reportArgumentType]
-        alpha=_FRANGI_ALPHA,
-        beta=_FRANGI_BETA,
-        black_ridges=_FRANGI_BLACK_RIDGES,
+        sigmas=FRANGI_SIGMAS,  # pyright: ignore[reportArgumentType]
+        alpha=FRANGI_ALPHA,
+        beta=FRANGI_BETA,
+        black_ridges=FRANGI_BLACK_RIDGES,
     )
     frangi_slice = frangi_slice * brain_mask
 
@@ -71,8 +71,8 @@ def get_slice_vessel_mask(image_slice: np.ndarray) -> np.ndarray:
 
     slice_features = np.stack([frangi_slice.ravel(), linearity.ravel()], axis=1)
     clusterer = KMeans(
-        n_clusters=_CLUSTERER_N_CLUSTERS,
-        random_state=_CLUSTERER_RANDOM_STATE,
+        n_clusters=CLUSTERER_N_CLUSTERS,
+        random_state=CLUSTERER_RANDOM_STATE,
     ).fit(slice_features)
     clusters = clusterer.labels_
 
@@ -88,8 +88,8 @@ def get_slice_vessel_mask(image_slice: np.ndarray) -> np.ndarray:
         cast(int, prop.label)
         for prop in vessel_mask_props
         if not (
-            prop.eccentricity < _MINIMUM_VESSEL_ECCENTRICITY
-            and prop.solidity > _MAXIMUM_VESSEL_SOLIDITY
+            prop.eccentricity < MINIMUM_VESSEL_ECCENTRICITY
+            and prop.solidity > MAXIMUM_VESSEL_SOLIDITY
         )
     ]
 
