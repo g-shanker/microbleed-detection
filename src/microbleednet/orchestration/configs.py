@@ -41,16 +41,18 @@ class IndexDataConfig(FrozenModel):
     volume_pattern: str = Field(
         description=(
             "Naming pattern of volumes in the input directory. "
-            f"Must contain the '{SUBJECT_ID_PLACEHOLDER}' placeholder."
+            f"Must contain the '{SUBJECT_ID_PLACEHOLDER}' placeholder and "
+            "the complete filename extension, such as '.nii.gz'."
         ),
     )
-    label_dir: Path = Field(
-        description="Label directory containing the masks to index.",
+    mask_dir: Path = Field(
+        description="Directory containing the complete mask volumes to index.",
     )
     mask_pattern: str = Field(
         description=(
-            "Naming pattern of masks in the label directory. "
-            f"Must contain the '{SUBJECT_ID_PLACEHOLDER}' placeholder."
+            "Naming pattern of masks in the mask directory. "
+            f"Must contain the '{SUBJECT_ID_PLACEHOLDER}' placeholder and "
+            "the complete filename extension, such as '.nii.gz'."
         ),
     )
     source_id: str = Field(
@@ -93,8 +95,8 @@ class IndexDataConfig(FrozenModel):
     def validate_directories(self) -> "IndexDataConfig":
         if not self.input_dir.is_dir():
             raise ValueError(f"input_dir does not exist: {self.input_dir}")
-        if not self.label_dir.is_dir():
-            raise ValueError(f"label_dir does not exist: {self.label_dir}")
+        if not self.mask_dir.is_dir():
+            raise ValueError(f"mask_dir does not exist: {self.mask_dir}")
         return self
 
 

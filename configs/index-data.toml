@@ -1,5 +1,5 @@
 dataset_dir = "data/indexed"
 input_dir = "data/raw/volumes"
 volume_pattern = "{subject_id}.nii.gz"
-label_dir = "data/raw/masks"
+mask_dir = "data/raw/masks"
 mask_pattern = "{subject_id}.nii.gz"

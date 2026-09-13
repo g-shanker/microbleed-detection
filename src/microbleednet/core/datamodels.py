@@ -56,7 +56,6 @@ class LoadedPatch:
     volume: FloatArray
     mask: IntArray
     has_microbleed: bool
-    augmented: bool
 
 
 @dataclass(frozen=True)
@@ -66,4 +65,3 @@ class PatchRecord:
     frst_path: str
     patch_index: int
     has_microbleed: bool
-    augmented: bool

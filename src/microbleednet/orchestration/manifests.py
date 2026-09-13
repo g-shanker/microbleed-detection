@@ -94,7 +94,7 @@ class Manifest(FrozenModel):
 
 
 class RawSubject(FrozenModel):
-    """One indexed subject: a volume and its optional lesion mask."""
+    """One indexed subject: a volume and its required lesion mask."""
 
     subject_id: str = Field(description="Unique subject identifier.")
     source_id: str = Field(
@@ -108,7 +108,7 @@ class RawSource(FrozenModel):
     """A directory pair and filename patterns that contributed subjects."""
 
     input_dir: str = Field(description="Directory the volumes were indexed from.")
-    label_dir: str = Field(description="Directory the masks were indexed from.")
+    mask_dir: str = Field(description="Directory the mask volumes were indexed from.")
     volume_pattern: str = Field(description="Glob/regex pattern matching volumes.")
     mask_pattern: str = Field(description="Pattern matching masks.")
     source_id: str = Field(
@@ -133,7 +133,14 @@ class RawDatasetManifest(Manifest):
 
     @model_validator(mode="after")
     def unique_subjects(self) -> "RawDatasetManifest":
-        reject_duplicate_ids(subject.subject_id for subject in self.subjects)
+        reject_duplicate_ids(
+            (subject.subject_id for subject in self.subjects), "subject"
+        )
+        return self
+
+    @model_validator(mode="after")
+    def unique_sources(self) -> "RawDatasetManifest":
+        reject_duplicate_ids((source.source_id for source in self.sources), "source")
         return self
 
 
@@ -171,12 +178,12 @@ class PreprocessedDatasetManifest(Manifest):
     )
 
 
-def reject_duplicate_ids(subject_ids) -> None:
+def reject_duplicate_ids(ids, entity_name: str) -> None:
     seen: set[str] = set()
-    for subject_id in subject_ids:
-        if subject_id in seen:
-            raise ValueError(f"duplicate subject ID in manifest: {subject_id!r}")
-        seen.add(subject_id)
+    for entity_id in ids:
+        if entity_id in seen:
+            raise ValueError(f"duplicate {entity_name} ID in manifest: {entity_id!r}")
+        seen.add(entity_id)
 
 
 def timestamp() -> str:

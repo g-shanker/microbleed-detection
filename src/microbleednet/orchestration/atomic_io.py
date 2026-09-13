@@ -10,15 +10,20 @@ from typing import Any
 def write_json_atomic(path: Path, data: dict[str, Any] | list[Any]) -> None:
     """Serialize ``data`` to ``path`` as JSON, replacing it atomically."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=path.parent, delete=False
-    ) as temporary_file:
-        temporary_path = Path(temporary_file.name)
-        json.dump(data, temporary_file, indent=2, sort_keys=True)
-        temporary_file.write("\n")
-        temporary_file.flush()
-        os.fsync(temporary_file.fileno())
-    os.replace(temporary_path, path)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, delete=False
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            json.dump(data, temporary_file, indent=2, sort_keys=True)
+            temporary_file.write("\n")
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def read_json(path: Path) -> Any:
