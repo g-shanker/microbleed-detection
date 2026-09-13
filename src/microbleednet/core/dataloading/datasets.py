@@ -6,7 +6,7 @@ from torch.utils.data import Dataset
 
 from ..datamodels import LoadedPatch, PatchRecord
 from ..io import load_array_mmap
-from ..transforms.augmentations import augment
+from ..utils import stack_volume_and_frst
 
 
 class SegmentationBatch(NamedTuple):
@@ -47,6 +47,9 @@ class BasePatchDataset(Dataset):
         record = self.patches[idx]
         volume = np.array(self.mmap(record.volume_path)[record.patch_index])
         mask = np.array(self.mmap(record.mask_path)[record.patch_index])
+        frst = np.array(self.mmap(record.frst_path)[record.patch_index])
+
+        volume = stack_volume_and_frst(volume, frst)
 
         return LoadedPatch(
             volume=volume,
@@ -65,10 +68,6 @@ class SegmentationPatchDataset(BasePatchDataset):
 
         volume = patch.volume
         mask = patch.mask
-        if patch.augmented:
-            volume, mask = augment(volume=volume, mask=mask)
-
-        volume = np.expand_dims(volume, axis=0)  # Shape: (1, H, W, D)
 
         return SegmentationBatch(
             volume=torch.from_numpy(volume).float(),
@@ -83,10 +82,6 @@ class SegmentationClassificationPatchDataset(BasePatchDataset):
         volume = patch.volume
         mask = patch.mask
         label = patch.has_microbleed
-        if patch.augmented:
-            volume, mask = augment(volume=volume, mask=mask)
-
-        volume = np.expand_dims(volume, axis=0)  # Shape: (1, H, W, D)
         return SegmentationClassificationBatch(
             volume=torch.from_numpy(volume).float(),
             mask=torch.from_numpy(mask).long(),
@@ -100,10 +95,6 @@ class ClassificationPatchDataset(BasePatchDataset):
 
         volume = patch.volume
         label = patch.has_microbleed
-        if patch.augmented:
-            volume, _ = augment(volume=volume, mask=None)
-
-        volume = np.expand_dims(volume, axis=0)  # Shape: (1, H, W, D)
         return ClassificationBatch(
             volume=torch.from_numpy(volume).float(),
             label=torch.tensor(label).long(),

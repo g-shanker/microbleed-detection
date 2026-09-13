@@ -62,18 +62,24 @@ def test_execute_writes_volumes_masks_and_complete_manifest(
 
     def fake_preprocess(volume, mask, modality) -> PreprocessResult:
         assert modality == "QSM"
-        output_mask = np.ones((1, 1, 1), dtype=np.uint8)
-        return PreprocessResult(np.ones((1, 1, 1)), output_mask, np.eye(4))
+        output_mask = np.ones((2, 2, 2), dtype=np.uint8)
+        return PreprocessResult(np.ones((2, 2, 2)), output_mask, np.eye(4))
 
     monkeypatch.setattr(preprocess.processor, "preprocess", fake_preprocess)
 
-    preprocess.execute(PreprocessConfig(dataset_dir=dataset_dir))
+    preprocess.execute(
+        PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=2)
+    )
 
     layout = DatasetLayout(dataset_dir=dataset_dir)
     manifest = PreprocessedDatasetManifest.read(layout.preprocessed_manifest_path())
     assert manifest.status is ManifestStatus.COMPLETE
     assert [subject.subject_id for subject in manifest.subjects] == ["source_masked"]
-    assert manifest.subjects[0].mask_path is not None
-    for subject in manifest.subjects:
-        assert Path(subject.volume_path).is_file()
-        assert Path(subject.mask_path).is_file()
+    subject = manifest.subjects[0]
+    assert manifest.augmentation_factor == 2
+    assert len(subject.variants) == 2
+    variant = subject.variants[0]
+    assert Path(variant.volume_path).is_file()
+    assert Path(variant.mask_path).is_file()
+    assert variant.frst_path is not None
+    assert Path(variant.frst_path).is_file()

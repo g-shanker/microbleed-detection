@@ -1,5 +1,4 @@
 from pathlib import Path
-
 import torch
 import torch.nn as nn
 
@@ -10,6 +9,7 @@ from microbleednet.orchestration.manifests import (
     ManifestStatus,
     PreprocessedDatasetManifest,
     PreprocessedSubject,
+    PreprocessedVariant,
     timestamp,
 )
 from microbleednet.orchestration.pipes import train
@@ -26,8 +26,13 @@ def _subjects(count: int, directory: Path) -> list[PreprocessedSubject]:
         subjects.append(
             PreprocessedSubject(
                 subject_id=f"subject-{index}",
-                volume_path=str(volume_path),
-                mask_path=str(mask_path),
+                variants=[
+                    PreprocessedVariant(
+                        volume_path=str(volume_path),
+                        mask_path=str(mask_path),
+                        frst_path=str(volume_path),
+                    )
+                ],
             )
         )
     return subjects
@@ -45,6 +50,7 @@ def test_execute_runs_stages_with_fixed_training_values(
         created_at=now,
         updated_at=now,
         subjects=subjects,
+        augmentation_factor=10,
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
     calls: list[tuple[str, list[str], list[str], tuple[object, ...]]] = []
 

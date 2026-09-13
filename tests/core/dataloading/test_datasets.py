@@ -16,14 +16,17 @@ from microbleednet.core.datamodels import PatchRecord
 def _record(tmp_path: Path, augmented: bool) -> PatchRecord:
     volume_path = tmp_path / "volumes.npy"
     mask_path = tmp_path / "masks.npy"
+    frst_path = tmp_path / "frst.npy"
     np.save(volume_path, np.ones((1, 4, 4, 4)))
     np.save(mask_path, np.ones((1, 4, 4, 4), dtype=np.uint8))
+    np.save(frst_path, np.full((1, 4, 4, 4), 2.0))
     return PatchRecord(
         volume_path=str(volume_path),
         mask_path=str(mask_path),
         patch_index=0,
         has_microbleed=True,
         augmented=augmented,
+        frst_path=str(frst_path),
     )
 
 
@@ -34,22 +37,13 @@ def test_patch_datasets_return_expected_batches(tmp_path: Path) -> None:
     combined = SegmentationClassificationPatchDataset(records)[0]
     classification = ClassificationPatchDataset(records)[0]
 
-    assert segmentation.volume.shape == (1, 4, 4, 4)
+    assert segmentation.volume.shape == (2, 4, 4, 4)
     assert segmentation.mask.dtype == torch.long
     assert combined.label.item() == 1
     assert classification.label.item() == 1
 
 
-def test_dataset_reuses_mmap_and_applies_augmentation(
-    tmp_path: Path, monkeypatch
-) -> None:
-    calls = []
-
-    def augment(volume, mask):
-        calls.append((volume, mask))
-        return volume, mask
-
-    monkeypatch.setattr("microbleednet.core.dataloading.datasets.augment", augment)
+def test_dataset_reuses_mmap_and_loads_persisted_frst(tmp_path: Path) -> None:
     record = _record(tmp_path, augmented=True)
     dataset = SegmentationPatchDataset([record])
 
@@ -57,10 +51,10 @@ def test_dataset_reuses_mmap_and_applies_augmentation(
     dataset[0]
 
     assert len(dataset) == 1
-    assert len(dataset.mmaps) == 2
+    assert len(dataset.mmaps) == 3
     assert SegmentationClassificationPatchDataset([record])[0].label.item() == 1
     assert ClassificationPatchDataset([record])[0].label.item() == 1
-    assert len(calls) == 4
+    assert torch.all(dataset[0].volume[1] == 2)
 
 
 def test_base_dataset_requires_getitem() -> None:
