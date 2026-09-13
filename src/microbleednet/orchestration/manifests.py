@@ -124,7 +124,10 @@ class RawSource(FrozenModel):
 class RawDatasetManifest(Manifest):
     """Manifest ``index-data`` writes after building the raw dataset."""
 
-    manifest_type: Literal["raw_dataset"] = "raw_dataset"
+    manifest_type: Literal["raw_dataset"] = Field(
+        default="raw_dataset",
+        description="Stable discriminator for an indexed raw dataset manifest.",
+    )
     sources: list[RawSource] = Field(description="Sources that contributed subjects.")
     subjects: list[RawSubject] = Field(description="Indexed subjects.")
 
@@ -142,10 +145,15 @@ class PreprocessedSubject(FrozenModel):
         description="Absolute path to the preprocessed volume."
     )
     mask_path: str = Field(description="Absolute path to the preprocessed mask.")
+
+
 class PreprocessedDatasetManifest(Manifest):
     """Manifest ``preprocess`` writes after preparing every subject."""
 
-    manifest_type: Literal["preprocessed_dataset"] = "preprocessed_dataset"
+    manifest_type: Literal["preprocessed_dataset"] = Field(
+        default="preprocessed_dataset",
+        description="Stable discriminator for a preprocessed dataset manifest.",
+    )
     subjects: list[PreprocessedSubject] = Field(
         description="Subjects produced by the preprocessing stage."
     )

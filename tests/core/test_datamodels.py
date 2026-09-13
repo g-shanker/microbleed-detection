@@ -1,7 +1,9 @@
+from typing import cast
+
 import numpy as np
 import pytest
 
-from microbleednet.core.datamodels import PreprocessResult
+from microbleednet.core.datamodels import IntArray, PreprocessResult
 
 
 def test_preprocess_result_accepts_valid_arrays() -> None:
@@ -36,4 +38,4 @@ def test_preprocess_result_rejects_invalid_arrays(
     image: np.ndarray, mask: np.ndarray | None, message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        PreprocessResult(image=image, mask=mask, affine=np.eye(4))
+        PreprocessResult(image=image, mask=cast(IntArray, mask), affine=np.eye(4))
