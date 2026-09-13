@@ -17,13 +17,27 @@ from microbleednet.orchestration.manifests import (
 from microbleednet.orchestration.pipes import preprocess
 
 
+def test_layout_uses_frst_suffix_for_frst_variants(tmp_path: Path) -> None:
+    layout = DatasetLayout(
+        dataset_dir=tmp_path,
+        volume_suffix=".volume",
+        mask_suffix=".mask",
+        frst_suffix=".frst",
+    )
+
+    assert layout.variant_volume_path("subject", 0).name == "subject_variant_0.volume"
+    assert layout.variant_mask_path("subject", 0).name == "subject_variant_0.mask"
+    assert layout.variant_frst_path("subject", 0).name == "subject_variant_0.frst"
+
+
 def _write_raw_dataset(dataset_dir: Path) -> None:
     raw_dir = dataset_dir / "raw"
     raw_dir.mkdir(parents=True)
     volume_path = raw_dir / "masked_volume.nii.gz"
     mask_path = raw_dir / "masked_mask.nii.gz"
-    nib.save(nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4)), volume_path)
-    nib.save(nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4)), mask_path)
+    fixture_shape = (32, 32, 32)
+    nib.save(nib.Nifti1Image(np.ones(fixture_shape), np.eye(4)), volume_path)
+    nib.save(nib.Nifti1Image(np.ones(fixture_shape), np.eye(4)), mask_path)
     subjects = [
         RawSubject(
             subject_id="source_masked",
@@ -40,7 +54,7 @@ def _write_raw_dataset(dataset_dir: Path) -> None:
         sources=[
             RawSource(
                 input_dir=str(raw_dir),
-                label_dir=str(raw_dir),
+                mask_dir=str(raw_dir),
                 volume_pattern="{subject_id}_volume.nii.gz",
                 mask_pattern="{subject_id}_mask.nii.gz",
                 source_id="source",
@@ -62,8 +76,9 @@ def test_execute_writes_volumes_masks_and_complete_manifest(
 
     def fake_preprocess(volume, mask, modality) -> PreprocessResult:
         assert modality == "QSM"
-        output_mask = np.ones((2, 2, 2), dtype=np.uint8)
-        return PreprocessResult(np.ones((2, 2, 2)), output_mask, np.eye(4))
+        fixture_shape = (32, 32, 32)
+        output_mask = np.ones(fixture_shape, dtype=np.uint8)
+        return PreprocessResult(np.ones(fixture_shape), output_mask, np.eye(4))
 
     monkeypatch.setattr(preprocess.processor, "preprocess", fake_preprocess)
 

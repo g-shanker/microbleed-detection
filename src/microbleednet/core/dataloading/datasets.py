@@ -55,7 +55,6 @@ class BasePatchDataset(Dataset):
             volume=volume,
             mask=mask,
             has_microbleed=record.has_microbleed,
-            augmented=record.augmented,
         )
 
     def __getitem__(self, idx: int):
@@ -63,7 +62,7 @@ class BasePatchDataset(Dataset):
 
 
 class SegmentationPatchDataset(BasePatchDataset):
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> SegmentationBatch:
         patch = self.load_patch(idx)
 
         volume = patch.volume
@@ -76,7 +75,7 @@ class SegmentationPatchDataset(BasePatchDataset):
 
 
 class SegmentationClassificationPatchDataset(BasePatchDataset):
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> SegmentationClassificationBatch:
         patch = self.load_patch(idx)
 
         volume = patch.volume
@@ -90,7 +89,7 @@ class SegmentationClassificationPatchDataset(BasePatchDataset):
 
 
 class ClassificationPatchDataset(BasePatchDataset):
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> ClassificationBatch:
         patch = self.load_patch(idx)
 
         volume = patch.volume

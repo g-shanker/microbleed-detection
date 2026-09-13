@@ -11,11 +11,11 @@ from microbleednet.orchestration.configs import (
     NonOverlappingPatchConfig,
     TargetCenteredPatchConfig,
 )
+from microbleednet.orchestration.layouts import ExperimentLayout
 from microbleednet.orchestration.manifests import (
     PreprocessedSubject,
     PreprocessedVariant,
 )
-from microbleednet.orchestration.layouts import ExperimentLayout
 from microbleednet.orchestration.pipes import patch
 
 
@@ -59,7 +59,7 @@ def test_execute_materializes_supplied_subjects_and_returns_records(
     subject = _write_subject(tmp_path / "inputs", "selected", has_microbleed=True)
     _write_subject(tmp_path / "inputs", "not-selected")
     experiment_layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
-    patch_dir = experiment_layout.train_patch_dir_path("detector")
+    patch_dir = experiment_layout.patch_dir_path("detector", "train")
     config = NonOverlappingPatchConfig(
         experiment_layout=experiment_layout,
         stage="detector",
@@ -75,8 +75,6 @@ def test_execute_materializes_supplied_subjects_and_returns_records(
 
     assert all(record.patch_index == 0 for record in records)
     assert all(record.has_microbleed for record in records)
-    assert not records[0].augmented
-    assert records[1].augmented
     assert np.load(records[0].volume_path).shape == (1, 48, 48, 48)
     assert not (patch_dir / "volumes_not-selected.npy").exists()
 
@@ -84,7 +82,6 @@ def test_execute_materializes_supplied_subjects_and_returns_records(
 def test_execute_uses_configured_augmentation_factor(tmp_path: Path) -> None:
     subject = _write_subject(tmp_path / "inputs", "validation")
     experiment_layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
-    patch_dir = experiment_layout.validation_patch_dir_path("teacher")
     config = NonOverlappingPatchConfig(
         experiment_layout=experiment_layout,
         stage="teacher",
@@ -99,7 +96,6 @@ def test_execute_uses_configured_augmentation_factor(tmp_path: Path) -> None:
     )
 
     assert len(records) == 1
-    assert not records[0].augmented
     assert np.load(records[0].volume_path).shape == (1, 24, 24, 24)
 
 

@@ -68,7 +68,6 @@ def execute(
                     frst_path=str(frst_path.resolve()),
                     patch_index=index,
                     has_microbleed=bool(np.any(mask_array > 0)),
-                    augmented=variant_index > 0,
                 )
                 for index, mask_array in enumerate(extracted.masks)
             )
