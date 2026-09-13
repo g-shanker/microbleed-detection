@@ -2,8 +2,10 @@ from typing import cast
 
 import nibabel as nib
 import numpy as np
+import torch
+import torch.nn as nn
 
-from .. import io
+from .. import io, utils
 from ..datamodels import (
     FloatArray,
     IntArray,
@@ -50,3 +52,11 @@ def preprocess(
     cropped_affine = volume_ops.adjust_affine_for_crop(canonical_affine, crop_start)
 
     return PreprocessResult(volume_array, mask_array, cropped_affine)
+
+
+def infer(model: nn.Module, volume: np.ndarray) -> torch.Tensor:
+    model.eval()
+    model_device = utils.get_model_device(model)
+    volume_tensor = torch.from_numpy(volume).float().unsqueeze(0).unsqueeze(0)
+    with torch.no_grad():
+        return model(utils.append_frst_channel(volume_tensor.to(model_device)))[0]

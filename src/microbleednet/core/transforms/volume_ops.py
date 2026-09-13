@@ -6,9 +6,39 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import SimpleITK as sitk
+from scipy.ndimage import gaussian_filter
 
 from .. import io
 from ..datamodels import BoundingBox, Shape3D
+
+
+def translate(volume: np.ndarray, offset_x: int, offset_y: int) -> np.ndarray:
+    """Shift the first two axes without wrapping values across boundaries."""
+    translated = np.zeros_like(volume)
+    source_x_start = max(0, -offset_x)
+    source_x_stop = min(volume.shape[0], volume.shape[0] - offset_x)
+    source_y_start = max(0, -offset_y)
+    source_y_stop = min(volume.shape[1], volume.shape[1] - offset_y)
+    target_x_start = max(0, offset_x)
+    target_y_start = max(0, offset_y)
+    translated[
+        target_x_start : target_x_start + source_x_stop - source_x_start,
+        target_y_start : target_y_start + source_y_stop - source_y_start,
+        ...,
+    ] = volume[source_x_start:source_x_stop, source_y_start:source_y_stop, ...]
+    return translated
+
+
+def add_noise(volume: np.ndarray, noise: np.ndarray) -> np.ndarray:
+    """Add a precomputed noise array to a volume."""
+    if noise.shape != volume.shape:
+        raise ValueError("noise must match volume shape")
+    return volume + noise
+
+
+def blur(volume: np.ndarray, sigma: float) -> np.ndarray:
+    """Apply Gaussian filtering with the supplied sigma."""
+    return gaussian_filter(volume, sigma)
 
 
 def normalize_volume(volume: np.ndarray) -> np.ndarray:
@@ -28,21 +58,25 @@ def invert_volume(volume: np.ndarray) -> np.ndarray:
 def tight_crop_volume(
     volume: np.ndarray,
 ) -> tuple[np.ndarray, BoundingBox]:
+    bounding_box = get_bounding_box(volume)
+
+    cropped_volume = apply_bounding_box(volume, bounding_box)
+
+    return cropped_volume, bounding_box
+
+
+def get_bounding_box(volume: np.ndarray) -> BoundingBox:
     positive_voxels = np.argwhere(volume > 0)
     if positive_voxels.size == 0:
         raise ValueError("cannot crop an empty volume")
 
     starts = positive_voxels.min(axis=0)
     stops = positive_voxels.max(axis=0) + 1
-    bounding_box: BoundingBox = (
+    return (
         (int(starts[0]), int(stops[0])),
         (int(starts[1]), int(stops[1])),
         (int(starts[2]), int(stops[2])),
     )
-
-    cropped_volume = apply_bounding_box(volume, bounding_box)
-
-    return cropped_volume, bounding_box
 
 
 def apply_bounding_box(volume: np.ndarray, bounding_box: BoundingBox) -> np.ndarray:

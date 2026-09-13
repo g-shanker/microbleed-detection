@@ -13,6 +13,12 @@ from typer.testing import CliRunner
 
 from microbleednet.cli.commands import CommandSpec, build_describe_command
 from microbleednet.cli.entrypoint import app
+from microbleednet.orchestration.layouts import DatasetLayout
+from microbleednet.orchestration.manifests import (
+    ManifestStatus,
+    RawDatasetManifest,
+    timestamp,
+)
 from tests.support import create_volume_source, write_index_config
 
 runner = CliRunner()
@@ -48,7 +54,7 @@ def test_describe_renders_a_section_header_for_nested_config() -> None:
         config=_FakeConfig,
         pipe="unused",
         dry_run_message=lambda s: "",
-        success_message=lambda s, r: "",
+        success_message=lambda s: "",
     )
     build_describe_command(scratch_app, [spec])
 
@@ -70,6 +76,7 @@ def test_describe_index_data_lists_config_keys() -> None:
     assert result.exit_code == 0, result.output
     assert "dataset_dir" in result.output
     assert "volume_pattern" in result.output
+    assert "Allowed values: 'T2*-GRE', 'SWI', 'QSM'." in result.output
 
 
 def test_describe_rejects_unknown_command() -> None:
@@ -133,6 +140,14 @@ def test_index_data_rejects_unmatched_subjects_when_masks_required(
 
 
 def test_preprocess_dry_run_accepts_indexed_dataset(tmp_path: Path) -> None:
+    now = timestamp()
+    RawDatasetManifest(
+        status=ManifestStatus.COMPLETE,
+        created_at=now,
+        updated_at=now,
+        sources=[],
+        subjects=[],
+    ).write(DatasetLayout(dataset_dir=tmp_path).raw_manifest_path())
     config_path = tmp_path / "preprocess.toml"
     config_path.write_text(
         f"dataset_dir = {json.dumps(str(tmp_path))}\n", encoding="utf-8"

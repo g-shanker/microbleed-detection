@@ -8,6 +8,38 @@ import pytest
 from microbleednet.core.transforms import volume_ops
 
 
+@pytest.mark.parametrize("offset", [-1, 1])
+def test_translate_shifts_without_wrapping(offset: int) -> None:
+    volume = np.zeros((3, 3, 1))
+    volume[1, 1, 0] = 1
+
+    translated = volume_ops.translate(volume, offset, offset)
+
+    assert translated[1 + offset, 1 + offset, 0] == 1
+    assert translated.sum() == 1
+
+
+def test_add_noise_requires_matching_shape() -> None:
+    volume = np.ones((2, 2, 2))
+    noise = np.full(volume.shape, 0.5)
+
+    np.testing.assert_array_equal(
+        volume_ops.add_noise(volume, noise),
+        np.full(volume.shape, 1.5),
+    )
+    with pytest.raises(ValueError, match="noise must match volume shape"):
+        volume_ops.add_noise(volume, np.ones((1, 1, 1)))
+
+
+def test_blur_uses_supplied_sigma() -> None:
+    volume = np.zeros((5, 5, 1))
+    volume[2, 2, 0] = 1
+
+    blurred = volume_ops.blur(volume, 1.0)
+
+    assert 0 < blurred[2, 2, 0] < 1
+
+
 def test_normalize_volume_scales_by_positive_maximum() -> None:
     normalized = volume_ops.normalize_volume(np.array([[[0.0, 2.0, 4.0]]]))
 

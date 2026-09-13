@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 import pytest
 import typer
@@ -43,5 +44,23 @@ def test_config_fields_recurses_into_nested_models() -> None:
     class Outer(BaseModel):
         inner: Inner = Field(default_factory=Inner)
 
-    fields = config_fields(Outer)
+    fields = config_fields(Outer, prefix="")
     assert fields == [("inner", "knob", "1", "An inner knob.")]
+
+
+def test_config_fields_reports_literal_options() -> None:
+    class Config(BaseModel):
+        modality: Literal["T2*-GRE", "SWI", "QSM"] = Field(
+            default="T2*-GRE", description="Imaging modality."
+        )
+
+    fields = config_fields(Config, prefix="")
+
+    assert fields == [
+        (
+            "",
+            "modality",
+            "'T2*-GRE'",
+            "Imaging modality. Allowed values: 'T2*-GRE', 'SWI', 'QSM'.",
+        )
+    ]
