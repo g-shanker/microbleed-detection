@@ -41,7 +41,7 @@ def test_source_id_is_required(tmp_path) -> None:
                 "dataset_dir": tmp_path / "dataset",
                 "input_dir": tmp_path,
                 "volume_pattern": "{subject_id}.nii.gz",
-                "label_dir": tmp_path / "masks",
+                "mask_dir": tmp_path / "masks",
                 "mask_pattern": "{subject_id}.nii.gz",
             }
         )
@@ -53,7 +53,7 @@ def test_source_id_is_required(tmp_path) -> None:
         ({"volume_pattern": "volume.nii.gz"}, "volume_pattern"),
         (
             {
-                "label_dir": "labels",
+                "mask_dir": "masks",
                 "mask_pattern": "mask.nii.gz",
             },
             "mask_pattern",
@@ -76,7 +76,7 @@ def test_pattern_accepts_multiple_subject_id_placeholders(tmp_path) -> None:
 
 
 def test_mask_inputs_are_required(tmp_path) -> None:
-    with pytest.raises(ValidationError, match="label_dir|mask_pattern"):
+    with pytest.raises(ValidationError, match="mask_dir|mask_pattern"):
         IndexDataConfig.model_validate(
             {
                 "dataset_dir": tmp_path / "dataset",
@@ -92,9 +92,9 @@ def test_index_config_rejects_missing_input_dir(tmp_path) -> None:
         make_index_config(tmp_path, input_dir=tmp_path / "missing")
 
 
-def test_index_config_rejects_missing_label_dir(tmp_path) -> None:
-    with pytest.raises(ValidationError, match="label_dir"):
-        make_index_config(tmp_path, label_dir=tmp_path / "missing")
+def test_index_config_rejects_missing_mask_dir(tmp_path) -> None:
+    with pytest.raises(ValidationError, match="mask_dir"):
+        make_index_config(tmp_path, mask_dir=tmp_path / "missing")
 
 
 def test_preprocess_config_rejects_missing_dataset_dir(tmp_path) -> None:

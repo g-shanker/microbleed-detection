@@ -98,9 +98,9 @@ def get_slice_vessel_mask(image_slice: np.ndarray) -> np.ndarray:
     return vessel_mask
 
 
-def get_linearity_measure(slice: np.ndarray) -> np.ndarray:
+def get_linearity_measure(image_slice: np.ndarray) -> np.ndarray:
 
-    ixx, ixy, iyy = structure_tensor(slice)
+    ixx, ixy, iyy = structure_tensor(image_slice)
     eigenvalues = structure_tensor_eigenvalues((ixx, ixy, iyy))
 
     lambda1 = eigenvalues[0]

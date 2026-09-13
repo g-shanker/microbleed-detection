@@ -1,5 +1,3 @@
-from typing import cast
-
 import nibabel as nib
 import numpy as np
 
@@ -32,10 +30,10 @@ def execute(config: PreprocessConfig) -> None:
     frst_dir = layout.preprocessed_frst_path()
     frst_dir.mkdir(parents=True, exist_ok=True)
 
-    source_modalities = {
+    source_modalities: dict[str, Modality] = {
         source.source_id: source.modality for source in raw_manifest.sources
     }
-    preprocessed_subjects = []
+    preprocessed_subjects: list[PreprocessedSubject] = []
 
     for subject in raw_manifest.subjects:
         subject_id = subject.subject_id
@@ -43,21 +41,27 @@ def execute(config: PreprocessConfig) -> None:
         raw_volume = io.load_volume(subject.volume_path)
         raw_mask = io.load_volume(subject.mask_path)
 
-        modality = cast(Modality, source_modalities[subject.source_id])
+        modality = source_modalities[subject.source_id]
         preprocess_result = processor.preprocess(raw_volume, raw_mask, modality)
 
-        variants = []
+        variants: list[PreprocessedVariant] = []
         original_volume = preprocess_result.image
         original_mask = preprocess_result.mask
         for variant_index in range(config.augmentation_factor):
-            volume = original_volume
-            mask = original_mask
+            variant_input_volume = original_volume
+            variant_input_mask = original_mask
             if variant_index > 0:
-                volume, mask = augmentations.augment(volume, mask)
+                variant_input_volume, variant_input_mask = augmentations.augment(
+                    variant_input_volume, variant_input_mask
+                )
 
-            variant_volume = nib.Nifti1Image(volume, preprocess_result.affine)
-            variant_mask = nib.Nifti1Image(mask, preprocess_result.affine)
-            variant_frst = frst.apply(np.asarray(volume))
+            variant_volume = nib.Nifti1Image(
+                variant_input_volume, preprocess_result.affine
+            )
+            variant_mask = nib.Nifti1Image(
+                variant_input_mask, preprocess_result.affine
+            )
+            variant_frst = frst.apply(np.asarray(variant_input_volume))
             variant_frst = nib.Nifti1Image(variant_frst, preprocess_result.affine)
 
             volume_path = layout.variant_volume_path(subject_id, variant_index)
