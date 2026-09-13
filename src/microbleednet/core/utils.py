@@ -6,9 +6,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .common.models import CandidateDetector, CandidateDiscriminatorTeacher
-from .transforms import frst
-
 AMP_DTYPE = torch.float16
+
+
+def stack_volume_and_frst(volume: np.ndarray, frst: np.ndarray) -> np.ndarray:
+    """Return a channel-first model input with volume followed by FRST."""
+    return np.stack((volume, frst), axis=0)
 
 
 def unwrap_model(model: nn.Module) -> nn.Module:
@@ -17,11 +20,6 @@ def unwrap_model(model: nn.Module) -> nn.Module:
 
 def get_model_device(model: nn.Module) -> torch.device:
     return next(model.parameters()).device
-
-
-def append_frst_channel(volume: torch.Tensor) -> torch.Tensor:
-    """Return ``volume`` with its FRST transform appended as a second channel."""
-    return torch.cat((volume, frst.apply(volume)), dim=1)
 
 
 def microbleed_probability(logits: torch.Tensor) -> np.ndarray:

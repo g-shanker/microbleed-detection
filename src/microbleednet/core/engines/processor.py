@@ -57,6 +57,6 @@ def preprocess(
 def infer(model: nn.Module, volume: np.ndarray) -> torch.Tensor:
     model.eval()
     model_device = utils.get_model_device(model)
-    volume_tensor = torch.from_numpy(volume).float().unsqueeze(0).unsqueeze(0)
+    model_input = torch.from_numpy(volume).float().unsqueeze(0)
     with torch.no_grad():
-        return model(utils.append_frst_channel(volume_tensor.to(model_device)))[0]
+        return model(model_input.to(model_device))[0]

@@ -37,6 +37,10 @@ class DatasetLayout(FrozenModel):
         default=Path("preprocessed/masks"),
         description=("Directory for preprocessed masks."),
     )
+    preprocessed_frst_dir: Path = Field(
+        default=Path("preprocessed/frst"),
+        description="Directory for precomputed FRST volumes.",
+    )
     volume_suffix: str = Field(
         default=".nii.gz",
         description="Filename suffix for a preprocessed volume.",
@@ -57,6 +61,24 @@ class DatasetLayout(FrozenModel):
 
     def preprocessed_masks_path(self) -> Path:
         return self.dataset_dir / self.preprocessed_masks_dir
+
+    def preprocessed_frst_path(self) -> Path:
+        return self.dataset_dir / self.preprocessed_frst_dir
+
+    def variant_volume_path(self, subject_id: str, variant: int) -> Path:
+        return self.preprocessed_volumes_path() / (
+            f"{subject_id}_variant_{variant}{self.volume_suffix}"
+        )
+
+    def variant_mask_path(self, subject_id: str, variant: int) -> Path:
+        return self.preprocessed_masks_path() / (
+            f"{subject_id}_variant_{variant}{self.mask_suffix}"
+        )
+
+    def variant_frst_path(self, subject_id: str, variant: int) -> Path:
+        return self.preprocessed_frst_path() / (
+            f"{subject_id}_variant_{variant}{self.volume_suffix}"
+        )
 
 
 class ExperimentLayout(FrozenModel):
@@ -86,3 +108,24 @@ class ExperimentLayout(FrozenModel):
 
     def validation_patch_dir_path(self, stage: str) -> Path:
         return self.patch_dir_path(stage, "validation")
+
+    def patch_volume_path(
+        self, stage: str, split: str, subject_id: str, variant: int
+    ) -> Path:
+        return self.patch_dir_path(stage, split) / (
+            f"volumes_{subject_id}_variant_{variant}.npy"
+        )
+
+    def patch_mask_path(
+        self, stage: str, split: str, subject_id: str, variant: int
+    ) -> Path:
+        return self.patch_dir_path(stage, split) / (
+            f"masks_{subject_id}_variant_{variant}.npy"
+        )
+
+    def patch_frst_path(
+        self, stage: str, split: str, subject_id: str, variant: int
+    ) -> Path:
+        return self.patch_dir_path(stage, split) / (
+            f"frst_{subject_id}_variant_{variant}.npy"
+        )

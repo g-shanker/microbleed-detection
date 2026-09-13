@@ -141,10 +141,17 @@ class PreprocessedSubject(FrozenModel):
     """One subject produced by the preprocessing stage."""
 
     subject_id: str = Field(description="Unique subject identifier.")
-    volume_path: str = Field(
-        description="Absolute path to the preprocessed volume."
+    variants: list["PreprocessedVariant"] = Field(
+        description="Ordered preprocessed variants, including the original.",
     )
-    mask_path: str = Field(description="Absolute path to the preprocessed mask.")
+
+
+class PreprocessedVariant(FrozenModel):
+    """One persisted volume, mask, and FRST result for a subject."""
+
+    volume_path: str = Field(description="Absolute path to the variant volume.")
+    mask_path: str = Field(description="Absolute path to the variant mask.")
+    frst_path: str = Field(description="Absolute path to the variant FRST volume.")
 
 
 class PreprocessedDatasetManifest(Manifest):
@@ -156,6 +163,11 @@ class PreprocessedDatasetManifest(Manifest):
     )
     subjects: list[PreprocessedSubject] = Field(
         description="Subjects produced by the preprocessing stage."
+    )
+    augmentation_factor: int = Field(
+        default=1,
+        gt=0,
+        description="Total persisted variants per subject, including the original.",
     )
 
 
