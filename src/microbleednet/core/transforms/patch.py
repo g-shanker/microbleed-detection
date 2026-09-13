@@ -8,7 +8,11 @@ def get_target_centers(mask: np.ndarray) -> list[tuple[int, int, int]]:
     """Return rounded centers of connected target regions."""
     labeled = label(mask > 0, connectivity=3)
     return [
-        tuple(int(round(value)) for value in region.centroid)
+        (
+            int(round(region.centroid[0])),
+            int(round(region.centroid[1])),
+            int(round(region.centroid[2])),
+        )
         for region in regionprops(labeled)
     ]
 

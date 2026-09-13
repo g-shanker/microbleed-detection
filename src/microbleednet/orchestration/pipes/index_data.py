@@ -41,16 +41,16 @@ def index_source(
     config: IndexDataConfig, now: str
 ) -> tuple[RawSource, list[RawSubject]]:
     """
-    Index one input/label directory pair into a source and its subjects.
+    Index one input/mask directory pair into a source and its subjects.
     """
     volume_paths = compute_paths(config.input_dir, config.volume_pattern)
-    mask_paths = compute_paths(config.label_dir, config.mask_pattern)
+    mask_paths = compute_paths(config.mask_dir, config.mask_pattern)
 
     volume_subject_map = build_subject_map(
         config.input_dir, volume_paths, config.volume_pattern
     )
     mask_subject_map = build_subject_map(
-        config.label_dir, mask_paths, config.mask_pattern
+        config.mask_dir, mask_paths, config.mask_pattern
     )
 
     volume_ids = set(volume_subject_map)
@@ -76,7 +76,7 @@ def index_source(
     ]
     source = RawSource(
         input_dir=str(config.input_dir.resolve()),
-        label_dir=str(config.label_dir.resolve()),
+        mask_dir=str(config.mask_dir.resolve()),
         volume_pattern=config.volume_pattern,
         mask_pattern=config.mask_pattern,
         source_id=config.source_id,
@@ -137,10 +137,10 @@ def build_subject_map(
     return subject_map
 
 
-def compute_paths(dir: Path, pattern: str) -> list[Path]:
+def compute_paths(root_dir: Path, pattern: str) -> list[Path]:
     pattern_parts = pattern.split(SUBJECT_ID_PLACEHOLDER)
     glob_pattern = "*".join(glob.escape(part) for part in pattern_parts)
-    return list(dir.rglob(glob_pattern))
+    return list(root_dir.rglob(glob_pattern))
 
 
 def extract_subject_id(root_dir: Path, path: Path, pattern: str) -> Optional[str]:
@@ -150,4 +150,12 @@ def extract_subject_id(root_dir: Path, path: Path, pattern: str) -> Optional[str
     escaped_parts = [re.escape(part) for part in pattern_parts]
     regex_pattern = "^" + "(.*?)".join(escaped_parts) + "$"
     match = re.match(regex_pattern, clean_path)
-    return match.group(1) if match else None
+    if match is None:
+        return None
+
+    subject_ids = match.groups()
+    if len(set(subject_ids)) != 1:
+        raise ValueError(
+            f"subject ID placeholders do not match in path: {path}"
+        )
+    return subject_ids[0]

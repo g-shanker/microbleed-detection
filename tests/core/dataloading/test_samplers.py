@@ -11,7 +11,6 @@ def _patch(positive: bool) -> PatchRecord:
         frst_path="frst",
         patch_index=0,
         has_microbleed=positive,
-        augmented=False,
     )
 
 

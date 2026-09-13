@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .common.models import CandidateDetector, CandidateDiscriminatorTeacher
+
 AMP_DTYPE = torch.float16
 
 

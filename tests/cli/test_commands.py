@@ -77,6 +77,8 @@ def test_describe_index_data_lists_config_keys() -> None:
     assert "dataset_dir" in result.output
     assert "volume_pattern" in result.output
     assert "Allowed values: 'T2*-GRE', 'SWI', 'QSM'." in result.output
+    assert "complete filename" in result.output
+    assert "extension" in result.output
 
 
 def test_describe_rejects_unknown_command() -> None:
@@ -93,7 +95,7 @@ def test_index_data_dry_run_does_not_write_manifest(tmp_path: Path) -> None:
         config_path,
         dataset_dir=dataset_dir,
         input_dir=source,
-        label_dir=tmp_path / "first_masks",
+        mask_dir=tmp_path / "first_masks",
     )
 
     result = runner.invoke(
@@ -104,33 +106,33 @@ def test_index_data_dry_run_does_not_write_manifest(tmp_path: Path) -> None:
     assert not (dataset_dir / "manifests" / "raw.json").exists()
 
 
-def test_index_data_rejects_missing_label_dir(tmp_path: Path) -> None:
+def test_index_data_rejects_missing_mask_dir(tmp_path: Path) -> None:
     config_path = tmp_path / "index.toml"
     write_index_config(
         config_path,
-        label_dir=tmp_path / "missing_labels",
+        mask_dir=tmp_path / "missing_masks",
         mask_pattern="{subject_id}_mask.nii.gz",
     )
 
     result = runner.invoke(app, ["index-data", "--config", str(config_path)])
     assert result.exit_code != 0
-    assert "label_dir" in result.output
+    assert "mask_dir" in result.output
 
 
 def test_index_data_rejects_unmatched_subjects_when_masks_required(
     tmp_path: Path,
 ) -> None:
     input_dir = tmp_path / "volumes"
-    label_dir = tmp_path / "masks"
+    mask_dir = tmp_path / "masks"
     input_dir.mkdir()
-    label_dir.mkdir()
+    mask_dir.mkdir()
     (input_dir / "subject_1_volume.nii.gz").write_bytes(b"")
-    (label_dir / "subject_2_mask.nii.gz").write_bytes(b"")
+    (mask_dir / "subject_2_mask.nii.gz").write_bytes(b"")
     config_path = tmp_path / "index.toml"
     write_index_config(
         config_path,
         input_dir=input_dir,
-        label_dir=label_dir,
+        mask_dir=mask_dir,
         mask_pattern="{subject_id}_mask.nii.gz",
     )
 
@@ -186,7 +188,7 @@ def _run_index_data(
         config_path,
         dataset_dir=dataset_dir,
         input_dir=input_dir,
-        label_dir=input_dir.with_name(f"{input_dir.name}_masks"),
+        mask_dir=input_dir.with_name(f"{input_dir.name}_masks"),
         source_id=source_id,
     )
     return runner.invoke(app, ["index-data", "--config", str(config_path)])
@@ -202,14 +204,14 @@ def test_index_data_accumulates_sources(tmp_path: Path) -> None:
     first = create_volume_source(tmp_path, "first", ["subject_1", "subject_2"])
     second = create_volume_source(tmp_path, "second", ["subject_3"])
 
-    assert _run_index_data(tmp_path, dataset_dir, first).exit_code == 0
-    result = _run_index_data(tmp_path, dataset_dir, second)
+    assert _run_index_data(tmp_path, dataset_dir, first, "siteA").exit_code == 0
+    result = _run_index_data(tmp_path, dataset_dir, second, "siteB")
     assert result.exit_code == 0, result.output
 
     manifest = _read_raw_manifest(dataset_dir)
     assert len(manifest["sources"]) == 2
     ids = [subject["subject_id"] for subject in manifest["subjects"]]
-    assert ids == ["source_subject_1", "source_subject_2", "source_subject_3"]
+    assert ids == ["siteA_subject_1", "siteA_subject_2", "siteB_subject_3"]
     assert manifest["created_at"] <= manifest["updated_at"]
 
 

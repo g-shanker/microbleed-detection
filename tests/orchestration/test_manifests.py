@@ -49,6 +49,24 @@ def test_raw_dataset_manifest_rejects_duplicate_subject_ids() -> None:
         )
 
 
+def test_raw_dataset_manifest_rejects_duplicate_source_ids() -> None:
+    source = {
+        "input_dir": "/input",
+        "mask_dir": "/mask",
+        "volume_pattern": "{subject_id}.nii.gz",
+        "mask_pattern": "{subject_id}.nii.gz",
+        "source_id": "source",
+        "modality": "QSM",
+        "added_on": timestamp(),
+    }
+    with pytest.raises(ValidationError, match="duplicate source ID"):
+        RawDatasetManifest.model_validate(
+            _envelope(
+                manifest_type="raw_dataset", sources=[source, source], subjects=[]
+            )
+        )
+
+
 def test_read_manifest_rejects_unversioned_payload(tmp_path: Path) -> None:
     path = tmp_path / "raw.json"
     atomic_io.write_json_atomic(path, {"status": "complete"})
