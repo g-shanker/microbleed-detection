@@ -34,6 +34,29 @@ def test_extract_subject_id_returns_none_for_nonmatch(tmp_path: Path) -> None:
     assert subject_id is None
 
 
+def test_extract_subject_id_accepts_matching_repeated_placeholders(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "subject_1" / "subject_1_volume.nii.gz"
+
+    subject_id = extract_subject_id(
+        tmp_path, path, "{subject_id}/{subject_id}_volume.nii.gz"
+    )
+
+    assert subject_id == "subject_1"
+
+
+def test_extract_subject_id_rejects_mismatched_repeated_placeholders(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "subject_1" / "subject_2_volume.nii.gz"
+
+    with pytest.raises(ValueError, match="subject ID placeholders do not match"):
+        extract_subject_id(
+            tmp_path, path, "{subject_id}/{subject_id}_volume.nii.gz"
+        )
+
+
 def test_compute_paths_treats_pattern_text_literally(tmp_path: Path) -> None:
     expected = tmp_path / "scan[1]_subject_1.nii.gz"
     expected.write_bytes(b"")
@@ -63,7 +86,7 @@ def test_index_source_sorts_naturally_and_namespaces_subjects(tmp_path: Path) ->
     config = make_index_config(
         tmp_path,
         input_dir=source_dir,
-        label_dir=tmp_path / "source_masks",
+        mask_dir=tmp_path / "source_masks",
         source_id="siteA",
         modality="SWI",
     )
@@ -124,7 +147,7 @@ def test_merge_source_preserves_creation_and_combines_state() -> None:
 def _source(name: str, added_on: str) -> RawSource:
     return RawSource(
         input_dir=f"/{name}",
-        label_dir=f"/{name}-masks",
+        mask_dir=f"/{name}-masks",
         volume_pattern="{subject_id}_volume.nii.gz",
         mask_pattern="{subject_id}_mask.nii.gz",
         source_id=name,

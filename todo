@@ -1,94 +1,95 @@
-Manifest collection representation
+# Future Work
 
-Deferred execution reproducibility
+## 1. Define manifest and persistence contracts
 
-- Revisit provenance recording, global random seeding, deterministic PyTorch
-    settings, and DataLoader worker seeding after the training pipeline is stable.
+Resolve the data-model decisions that affect every later workflow before
+changing execution behavior.
 
-Inference restoration
+* Decide whether manifest collections should remain ordered lists or become
+  dictionaries keyed by `subject_id` and `source_id`.
+* If collections become dictionaries, update consumers to use `.values()` or
+  `.items()`, make processing order explicit with sorted items, remove redundant
+  IDs from values where appropriate, and increment `SCHEMA_VERSION`.
+* Provide migration support or explicitly require old manifests to be
+  regenerated.
+* Decide whether externally authored JSON needs duplicate-key detection, since
+  normal JSON parsing collapses duplicate object keys before Pydantic validation.
+* Decide whether manifests should own `created_at` and `updated_at` assignment
+  instead of requiring callers to provide timestamps.
+* Keep the generic read/write helpers unless manifest persistence grows enough to
+  justify manifest-owned reader methods.
+* When manifests become user-editable, validate that every
+  `RawSubject.source_id` refers to a source in `RawDatasetManifest.sources` and
+  report contextual validation errors for orphaned references.
 
-- Restore inference outputs to the source image space using the original affine,
-  orientation transform, source shape, and crop bounds.
+## 2. Establish reproducible execution
 
-Index-data cleanup
+Build the reproducibility foundation before relying on persisted training state.
 
-- Revisit the index-data pipe after the training pipeline is stable. Remove the
-    remaining keyword-only marker in merge_source and address its outstanding
-    lint and type-check issues without expanding the current training scope.
+* Record the provenance needed to reproduce an execution.
+* Add global random seeding and deterministic PyTorch settings where supported.
+* Seed DataLoader workers and document any remaining nondeterministic behavior.
 
-Training resume
+## 3. Add resumable pipeline execution
 
-- Design and implement an explicit training-resume workflow that restores the
-    model, optimizer, scheduler, scaler, validation history, and persisted
-    datasplit before continuing training.
-- Decide how training should handle an existing datasplit manifest whose
-    subject assignments differ from a newly generated split.
+Implement lifecycle and resume behavior together so persisted artifacts have one
+clear contract.
 
-Layout model cleanup
+* Add `RUNNING` and `FAILED` manifest states, or a separate execution marker,
+  for index-data and preprocess flows.
+* Define whether partial outputs are preserved for recovery or cleaned after
+  failure, and ensure incomplete artifacts cannot be mistaken for complete
+  datasets.
+* Design an explicit training-resume workflow that restores the model,
+  optimizer, scheduler, scaler, validation history, and persisted datasplit.
+* Resume from the persisted datasplit manifest rather than recreating the split.
+* Define behavior when a persisted datasplit differs from a newly generated
+  split.
 
-- After the train pipeline commit, consider replacing the fixed DatasetLayout and
-    ExperimentLayout Pydantic models with frozen dataclasses.
+## 4. Restore inference outputs
 
-Manifest reader API
+Restore inference results to source-image space using the original affine,
+orientation transform, source shape, and crop bounds. This depends on the
+provenance and preprocessing metadata established in the earlier workstreams.
 
-- Consider having manifests assign and update their own created_at and updated_at
-    timestamps instead of requiring callers to provide them.
-- If manifest persistence grows beyond the shared read/write helpers, reconsider
-    exposing manifest-owned read methods instead of keeping the generic reader.
-- On training resume, load the persisted datasplit manifest and restore the
-    train, validation, and test subject lists from it instead of recreating the
-    split.
-- Consider adding a RUNNING manifest state for the index-data and preprocess
-    flows, possibly with a separate execution marker so incomplete outputs are
-    not mistaken for published datasets.
+## 5. Add end-to-end data verification
 
-Consider changing manifest collections from lists to dictionaries:
+Review each existing validation check and place it at the input, pipeline,
+persistence, or algorithm boundary. Add verification for processed data and
+related artifacts, including expected shapes, values, alignment, manifests, and
+other cross-file invariants.
 
-- RawDatasetManifest.subjects: key by subject_id.
-- RawDatasetManifest.sources: key by source_id if sources are unique entities rather than ordered ingestion events.
-- PreprocessedDatasetManifest.subjects: key by subject_id.
-- Remove subject_id/source_id from values where the dictionary key makes the field redundant, unless retaining them improves standalone use of those models.
-- Make processing order explicit with sorted(...items()) rather than relying on insertion order.
-- Update consumers to use .values() or .items().
-- Increment SCHEMA_VERSION because this changes persisted JSON structure.
-- Provide migration support or require old manifests to be regenerated.
-- Decide whether externally authored JSON requires duplicate-key detection during parsing; normal JSON parsing collapses duplicate object keys before Pydantic validation.
+## 6. Consolidate third-party typing boundaries
 
-Typed integration boundaries
+Replace repeated casts around third-party APIs with small typed adapters where
+that reduces duplication or clarifies the contract.
 
-- Consolidate repeated casts around third-party APIs behind small typed adapters.
-- Start with scikit-learn's train_test_split, then review NumPy, SciPy, nibabel,
-    and PyTorch integration points.
-- Keep runtime validation where an external value can genuinely violate the
-    expected contract; do not replace casts with blanket type ignores.
+* Start with scikit-learn's `train_test_split`.
+* Review NumPy, SciPy, nibabel, and PyTorch integration points afterward.
+* Keep runtime validation where external values can violate the expected
+  contract; do not replace casts with blanket type ignores.
 
-Data verification
+## 7. Revisit public configuration after policy evaluation
 
-- Review all current validation and decide whether each check belongs at the
-    input, pipeline, persistence, or algorithm boundary.
-- Consider adding a verification method that checks processed data and related
-    artifacts end to end against expected shapes, values, alignment, manifests,
-    and other cross-file invariants.
+Keep the public configuration limited to external data identity, file naming,
+modality, and artifact locations until real workflows demonstrate a need for
+additional controls. Evaluate these related policy decisions together:
 
-Configurable augmentations
+* Make augmentation operations and ranges configurable if the fixed training
+  policy proves insufficient.
+* Make knowledge-distillation temperature and loss weights configurable if
+  experiments require them.
+* Consider dataset split proportions, patch size, augmentation factor,
+    probability thresholds, and preprocessing options.
+* Consider training hyperparameters, optimizer and scheduler selection, device,
+    AMP, compilation, DataLoader resources, seed/determinism, and model
+    architecture only for workflows that need them.
+* Document supported values for every newly exposed setting; keep paper-defined
+  defaults hardcoded otherwise.
 
-- Revisit whether augmentation operations and their ranges should become
-    user-configurable once the fixed training policy has been evaluated.
+## 8. Simplify layout models
 
-Configurable knowledge distillation
-
-- Revisit whether the knowledge-distillation temperature and loss weights should
-    become user-configurable once the fixed training policy has been evaluated.
-
-Potential future configuration
-
-- Keep the public configuration limited to external data identity, file naming,
-    modality, and artifact locations until a real workflow needs another control.
-- If practical use demonstrates the need, consider exposing dataset split
-    proportions, patch size, augmentation factor, probability thresholds, or
-    preprocessing options.
-- Consider exposing training hyperparameters, optimizer/scheduler selection,
-    device, AMP, compilation, DataLoader resources, seed/determinism, and model
-    architecture only for experiments that require them.
-- Any newly exposed setting should be documented with its supported values;
-    paper-defined defaults remain hardcoded otherwise.
+After the execution and persistence workflows stabilize, consider replacing the
+fixed `DatasetLayout` and `ExperimentLayout` Pydantic models with frozen
+dataclasses. Preserve the existing serialization and path contracts while doing
+so.

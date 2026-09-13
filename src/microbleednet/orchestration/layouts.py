@@ -13,6 +13,8 @@ from pydantic import Field
 
 from ..core.datamodels import FrozenModel
 
+DEFAULT_NIFTI_SUFFIX = ".nii.gz"
+
 
 class DatasetLayout(FrozenModel):
     """Paths within an indexed dataset directory."""
@@ -42,12 +44,16 @@ class DatasetLayout(FrozenModel):
         description="Directory for precomputed FRST volumes.",
     )
     volume_suffix: str = Field(
-        default=".nii.gz",
+        default=DEFAULT_NIFTI_SUFFIX,
         description="Filename suffix for a preprocessed volume.",
     )
     mask_suffix: str = Field(
-        default=".nii.gz",
+        default=DEFAULT_NIFTI_SUFFIX,
         description="Filename suffix for a preprocessed mask.",
+    )
+    frst_suffix: str = Field(
+        default=DEFAULT_NIFTI_SUFFIX,
+        description="Filename suffix for a precomputed FRST volume.",
     )
 
     def raw_manifest_path(self) -> Path:
@@ -65,19 +71,19 @@ class DatasetLayout(FrozenModel):
     def preprocessed_frst_path(self) -> Path:
         return self.dataset_dir / self.preprocessed_frst_dir
 
-    def variant_volume_path(self, subject_id: str, variant: int) -> Path:
+    def variant_volume_path(self, subject_id: str, variant_index: int) -> Path:
         return self.preprocessed_volumes_path() / (
-            f"{subject_id}_variant_{variant}{self.volume_suffix}"
+            f"{subject_id}_variant_{variant_index}{self.volume_suffix}"
         )
 
-    def variant_mask_path(self, subject_id: str, variant: int) -> Path:
+    def variant_mask_path(self, subject_id: str, variant_index: int) -> Path:
         return self.preprocessed_masks_path() / (
-            f"{subject_id}_variant_{variant}{self.mask_suffix}"
+            f"{subject_id}_variant_{variant_index}{self.mask_suffix}"
         )
 
-    def variant_frst_path(self, subject_id: str, variant: int) -> Path:
+    def variant_frst_path(self, subject_id: str, variant_index: int) -> Path:
         return self.preprocessed_frst_path() / (
-            f"{subject_id}_variant_{variant}{self.volume_suffix}"
+            f"{subject_id}_variant_{variant_index}{self.frst_suffix}"
         )
 
 
@@ -102,12 +108,6 @@ class ExperimentLayout(FrozenModel):
 
     def patch_dir_path(self, stage: str, split: str) -> Path:
         return self.resolve(self.patch_dir_template, stage=stage, split=split)
-
-    def train_patch_dir_path(self, stage: str) -> Path:
-        return self.patch_dir_path(stage, "train")
-
-    def validation_patch_dir_path(self, stage: str) -> Path:
-        return self.patch_dir_path(stage, "validation")
 
     def patch_volume_path(
         self, stage: str, split: str, subject_id: str, variant: int

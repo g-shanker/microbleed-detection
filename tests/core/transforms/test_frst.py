@@ -15,7 +15,16 @@ def test_normalize_tensor_slicewise_handles_variable_and_constant_slices() -> No
     )
 
 
-def test_apply_processes_non_degenerate_volume() -> None:
-    result = frst.apply(np.ones((2, 2, 2)))
+def _structured_volume() -> np.ndarray:
+    volume = np.zeros((9, 9, 3), dtype=np.float32)
+    volume[2:7, 2:7, :] = 1.0
+    volume[4, 4, :] = 2.0
+    return volume
 
-    assert result.shape == (2, 2, 2)
+
+def test_apply_processes_non_degenerate_volume() -> None:
+    result = frst.apply(_structured_volume())
+
+    assert result.shape == (9, 9, 3)
+    assert np.isfinite(result).all()
+    assert np.max(result) > 0

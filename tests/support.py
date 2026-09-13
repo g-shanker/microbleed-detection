@@ -13,7 +13,7 @@ def make_index_config(tmp_path: Path, **overrides: object) -> IndexDataConfig:
         "dataset_dir": tmp_path / "dataset",
         "input_dir": tmp_path,
         "volume_pattern": "{subject_id}_volume.nii.gz",
-        "label_dir": tmp_path / "masks",
+        "mask_dir": tmp_path / "masks",
         "mask_pattern": "{subject_id}_mask.nii.gz",
         "source_id": "test-source",
     }
@@ -27,7 +27,7 @@ def write_index_config(path: Path, **overrides: object) -> Path:
         "dataset_dir": path.parent / "dataset",
         "input_dir": path.parent,
         "volume_pattern": "{subject_id}_volume.nii.gz",
-        "label_dir": path.parent / "masks",
+        "mask_dir": path.parent / "masks",
         "mask_pattern": "{subject_id}_mask.nii.gz",
         "source_id": "test-source",
     }
