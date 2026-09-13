@@ -14,7 +14,7 @@ from typing import Any
 from pydantic import Field, field_validator, model_validator
 
 from ..core.datamodels import FrozenModel, Modality
-from .layouts import DatasetLayout
+from .layouts import DatasetLayout, ExperimentLayout
 from .manifests import (
     PreprocessedSubject,
     RawDatasetManifest,
@@ -102,6 +102,12 @@ class PreprocessConfig(FrozenModel):
     dataset_dir: Path = Field(
         description="Indexed dataset directory containing manifests/raw.json."
     )
+    augmentation_factor: int = Field(
+        gt=0,
+        description=(
+            "Total persisted variants per subject, including the original."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_dataset_dir(self) -> "PreprocessConfig":
@@ -155,8 +161,14 @@ class TrainConfig(FrozenModel):
 
 
 class BasePatchConfig(FrozenModel):
-    patch_dir: Path = Field(
-        description="Directory where materialized patches are written.",
+    experiment_layout: ExperimentLayout = Field(
+        description="Layout that owns materialized patch paths.",
+    )
+    stage: str = Field(
+        description="Training stage owning the materialized patches.",
+    )
+    split: str = Field(
+        description="Dataset split owning the materialized patches.",
     )
     subjects: list[PreprocessedSubject] = Field(
         min_length=1,

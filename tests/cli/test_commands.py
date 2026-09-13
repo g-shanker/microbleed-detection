@@ -150,7 +150,9 @@ def test_preprocess_dry_run_accepts_indexed_dataset(tmp_path: Path) -> None:
     ).write(DatasetLayout(dataset_dir=tmp_path).raw_manifest_path())
     config_path = tmp_path / "preprocess.toml"
     config_path.write_text(
-        f"dataset_dir = {json.dumps(str(tmp_path))}\n", encoding="utf-8"
+        f"dataset_dir = {json.dumps(str(tmp_path))}\n"
+        "augmentation_factor = 1\n",
+        encoding="utf-8",
     )
 
     result = runner.invoke(

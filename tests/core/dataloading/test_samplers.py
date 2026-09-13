@@ -5,7 +5,14 @@ from microbleednet.core.datamodels import PatchRecord
 
 
 def _patch(positive: bool) -> PatchRecord:
-    return PatchRecord("volume", "mask", 0, positive, False)
+    return PatchRecord(
+        volume_path="volume",
+        mask_path="mask",
+        frst_path="frst",
+        patch_index=0,
+        has_microbleed=positive,
+        augmented=False,
+    )
 
 
 def test_equal_batch_sampler_is_balanced() -> None:

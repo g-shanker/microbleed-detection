@@ -33,34 +33,45 @@ def execute(
         raise TypeError(f"unsupported patch configuration: {type(config).__name__}")
 
     records: list[PatchRecord] = []
-    config.patch_dir.mkdir(parents=True, exist_ok=True)
+    patch_dir = config.experiment_layout.patch_dir_path(config.stage, config.split)
+    patch_dir.mkdir(parents=True, exist_ok=True)
 
     for subject in config.subjects:
         subject_id = subject.subject_id
-        volume = io.nifti_to_numpy(io.load_volume(subject.volume_path))
-        mask = io.nifti_to_numpy(io.load_volume(subject.mask_path))
+        variants = subject.variants[: config.augmentation_factor]
 
-        extracted = extract(volume, mask)
-        if extracted.volumes.size == 0:
-            continue
+        for variant_index, variant in enumerate(variants):
+            volume = io.nifti_to_numpy(io.load_volume(variant.volume_path))
+            mask = io.nifti_to_numpy(io.load_volume(variant.mask_path))
+            frst = io.nifti_to_numpy(io.load_volume(variant.frst_path))
+            extracted = extract(volume, mask, frst)
+            if extracted.volumes.size == 0:
+                continue
 
-        volume_path = config.patch_dir / f"volumes_{subject_id}.npy"
-        save_array_atomic(extracted.volumes, volume_path)
-        
-        mask_path = config.patch_dir / f"masks_{subject_id}.npy"
-        save_array_atomic(extracted.masks, mask_path)
+            volume_path = config.experiment_layout.patch_volume_path(
+                config.stage, config.split, subject_id, variant_index
+            )
+            mask_path = config.experiment_layout.patch_mask_path(
+                config.stage, config.split, subject_id, variant_index
+            )
+            frst_path = config.experiment_layout.patch_frst_path(
+                config.stage, config.split, subject_id, variant_index
+            )
+            save_array_atomic(extracted.volumes, volume_path)
+            save_array_atomic(extracted.masks, mask_path)
+            save_array_atomic(extracted.frst, frst_path)
 
-        for index, mask_array in enumerate(extracted.masks):
-            for replica in range(config.augmentation_factor):
-                records.append(
-                    PatchRecord(
-                        volume_path=str(volume_path.resolve()),
-                        mask_path=str(mask_path.resolve()),
-                        patch_index=index,
-                        has_microbleed=bool(np.any(mask_array > 0)),
-                        augmented=replica > 0,
-                    )
+            records.extend(
+                PatchRecord(
+                    volume_path=str(volume_path.resolve()),
+                    mask_path=str(mask_path.resolve()),
+                    frst_path=str(frst_path.resolve()),
+                    patch_index=index,
+                    has_microbleed=bool(np.any(mask_array > 0)),
+                    augmented=variant_index > 0,
                 )
+                for index, mask_array in enumerate(extracted.masks)
+            )
 
     return records
 
@@ -71,16 +82,25 @@ class NonOverlappingExtractor:
     def __init__(self, patch_size: int):
         self.patch_size = patch_size
 
-    def __call__(self, volume: np.ndarray, mask: np.ndarray) -> ExtractedPatches:
+    def __call__(
+        self,
+        volume: np.ndarray,
+        mask: np.ndarray,
+        frst: np.ndarray,
+    ) -> ExtractedPatches:
         volume_patches = patch_transforms.get_nonoverlapping_patches(
             volume, self.patch_size
         )
         mask_patches = patch_transforms.get_nonoverlapping_patches(
             mask, self.patch_size
         )
+        frst_patches = patch_transforms.get_nonoverlapping_patches(
+            frst, self.patch_size
+        )
         return ExtractedPatches(
             volumes=np.stack(volume_patches),
             masks=np.stack(mask_patches),
+            frst=np.stack(frst_patches),
         )
 
 
@@ -97,8 +117,14 @@ class TargetCenteredExtractor:
         self.threshold = threshold
         self.patch_size = patch_size
 
-    def __call__(self, volume: np.ndarray, mask: np.ndarray) -> ExtractedPatches:
-        logits = core_processor.infer(self.detector, volume)
+    def __call__(
+        self,
+        volume: np.ndarray,
+        mask: np.ndarray,
+        frst: np.ndarray,
+    ) -> ExtractedPatches:
+        model_volume = core_utils.stack_volume_and_frst(volume, frst)
+        logits = core_processor.infer(self.detector, model_volume)
         output = core_utils.microbleed_probability(logits)
         candidate_mask = output > self.threshold
         centers = patch_transforms.get_target_centers(candidate_mask)
@@ -108,13 +134,18 @@ class TargetCenteredExtractor:
         mask_patches = patch_transforms.extract_centered_patches(
             mask, centers, self.patch_size
         )
+        frst_patches = patch_transforms.extract_centered_patches(
+            frst, centers, self.patch_size
+        )
         if not volume_patches:
             empty_shape = (0, self.patch_size, self.patch_size, self.patch_size)
             return ExtractedPatches(
                 volumes=np.empty(empty_shape),
                 masks=np.empty(empty_shape),
+                frst=np.empty(empty_shape),
             )
         return ExtractedPatches(
             volumes=np.stack(volume_patches),
             masks=np.stack(mask_patches),
+            frst=np.stack(frst_patches),
         )

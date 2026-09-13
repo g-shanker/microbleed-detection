@@ -1,5 +1,6 @@
 import math
 
+import numpy as np
 import torch
 import torchvision.transforms.functional as F
 
@@ -10,16 +11,16 @@ FRST_FACTOR_STD = 0.1
 
 
 def apply(
-    volumes: torch.Tensor,
-) -> torch.Tensor:
+    volume: np.ndarray,
+) -> np.ndarray:
     """
-    Batched 3D FRST on GPU.
-    Input: volumes (Batch, 1, H, W, D)
-    Output: frst_volumes (Batch, 1, H, W, D)
-    """
-    batch_size, _, height, width, depth = volumes.shape
+    Apply 3D FRST to one volume.
 
-    slices = volumes.permute(0, 4, 2, 3, 1).reshape(-1, height, width)
+    Input and output have shape ``(H, W, D)``.
+    """
+    volume_tensor = torch.from_numpy(np.asarray(volume)).float()
+    height, width, _ = volume_tensor.shape
+    slices = volume_tensor.permute(2, 0, 1)
     slice_count = slices.shape[0]
 
     grad_y, grad_x = torch.gradient(slices, dim=(1, 2))
@@ -40,19 +41,15 @@ def apply(
     out_width = width + 2 * offset
 
     output = torch.zeros(
-        (slice_count, out_height, out_width), device=volumes.device, dtype=volumes.dtype
+        (slice_count, out_height, out_width), dtype=volume_tensor.dtype
     )
 
     for radius in FRST_RADII:
         orientation = torch.zeros(
-            (slice_count, out_height, out_width),
-            device=volumes.device,
-            dtype=volumes.dtype,
+            (slice_count, out_height, out_width), dtype=volume_tensor.dtype
         )
         magnitude = torch.zeros(
-            (slice_count, out_height, out_width),
-            device=volumes.device,
-            dtype=volumes.dtype,
+            (slice_count, out_height, out_width), dtype=volume_tensor.dtype
         )
         gp_y = torch.round((grad_y_significant / g_norm_significant) * radius).long()
         gp_x = torch.round((grad_x_significant / g_norm_significant) * radius).long()
@@ -62,7 +59,7 @@ def apply(
 
         idx_bright = nn * (out_height * out_width) + pos_y * out_width + pos_x
         orientation.view(-1).scatter_add_(
-            0, idx_bright, torch.ones_like(idx_bright, dtype=volumes.dtype)
+            0, idx_bright, torch.ones_like(idx_bright, dtype=volume_tensor.dtype)
         )
         magnitude.view(-1).scatter_add_(0, idx_bright, g_norm_significant)
 
@@ -88,13 +85,7 @@ def apply(
 
     output = output[:, offset:-offset, offset:-offset]
 
-    # Reshape back to (Batch, 1, Height, Width, Depth)
-    output = (
-        output.view(batch_size, depth, height, width)
-        .unsqueeze(1)
-        .permute(0, 1, 3, 4, 2)
-    )
-    return output
+    return output.permute(1, 2, 0).numpy()
 
 
 def normalize_tensor_slicewise(tensor: torch.Tensor) -> torch.Tensor:

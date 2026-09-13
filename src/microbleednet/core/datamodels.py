@@ -48,6 +48,7 @@ class PreprocessResult:
 class ExtractedPatches:
     volumes: np.ndarray
     masks: np.ndarray
+    frst: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ class LoadedPatch:
 class PatchRecord:
     volume_path: str
     mask_path: str
+    frst_path: str
     patch_index: int
     has_microbleed: bool
     augmented: bool
