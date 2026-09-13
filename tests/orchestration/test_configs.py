@@ -10,11 +10,12 @@ from microbleednet.orchestration.configs import (
     TargetCenteredPatchConfig,
     TrainConfig,
 )
-from microbleednet.orchestration.layouts import DatasetLayout
+from microbleednet.orchestration.layouts import DatasetLayout, ExperimentLayout
 from microbleednet.orchestration.manifests import (
     ManifestStatus,
     PreprocessedDatasetManifest,
     PreprocessedSubject,
+    PreprocessedVariant,
     timestamp,
 )
 from tests.support import make_index_config
@@ -98,7 +99,7 @@ def test_index_config_rejects_missing_label_dir(tmp_path) -> None:
 
 def test_preprocess_config_rejects_missing_dataset_dir(tmp_path) -> None:
     with pytest.raises(ValidationError, match="dataset_dir"):
-        PreprocessConfig(dataset_dir=tmp_path / "missing")
+        PreprocessConfig(dataset_dir=tmp_path / "missing", augmentation_factor=1)
 
 
 def _training_dataset(tmp_path: Path) -> Path:
@@ -114,8 +115,13 @@ def _training_dataset(tmp_path: Path) -> Path:
         subjects.append(
             PreprocessedSubject(
                 subject_id=f"subject-{index}",
-                volume_path=str(volume_path),
-                mask_path=str(mask_path),
+                variants=[
+                    PreprocessedVariant(
+                        volume_path=str(volume_path),
+                        mask_path=str(mask_path),
+                        frst_path=str(volume_path),
+                    )
+                ],
             )
         )
     PreprocessedDatasetManifest(
@@ -167,13 +173,13 @@ def test_train_config_requires_dataset_and_preprocessed_manifest(
 
 def test_preprocess_config_requires_readable_raw_manifest(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="raw manifest does not exist"):
-        PreprocessConfig(dataset_dir=tmp_path)
+        PreprocessConfig(dataset_dir=tmp_path, augmentation_factor=1)
 
     manifest_path = DatasetLayout(dataset_dir=tmp_path).raw_manifest_path()
     manifest_path.parent.mkdir()
     manifest_path.write_text("{}", encoding="utf-8")
     with pytest.raises(ValidationError, match="not a versioned manifest"):
-        PreprocessConfig(dataset_dir=tmp_path)
+        PreprocessConfig(dataset_dir=tmp_path, augmentation_factor=1)
 
 
 def test_train_config_accepts_complete_manifest_without_training_policy(
@@ -194,8 +200,13 @@ def test_train_config_accepts_complete_manifest_without_training_policy(
     missing_subjects = [
         PreprocessedSubject(
             subject_id=f"subject-{index}",
-            volume_path=str(tmp_path / f"missing-volume-{index}"),
-            mask_path=str(tmp_path / f"missing-mask-{index}"),
+            variants=[
+                PreprocessedVariant(
+                    volume_path=str(tmp_path / f"missing-volume-{index}"),
+                    mask_path=str(tmp_path / f"missing-mask-{index}"),
+                    frst_path=str(tmp_path / f"missing-frst-{index}"),
+                )
+            ],
         )
         for index in range(7)
     ]
@@ -210,12 +221,19 @@ def test_train_config_accepts_complete_manifest_without_training_policy(
 
 def test_target_centered_config_validates_threshold(tmp_path: Path) -> None:
     values = {
-        "patch_dir": tmp_path / "patches",
+        "experiment_layout": ExperimentLayout(experiment_dir=tmp_path),
+        "stage": "student",
+        "split": "train",
         "subjects": [
             PreprocessedSubject(
                 subject_id="subject",
-                volume_path="volume.nii.gz",
-                mask_path="mask.nii.gz",
+                variants=[
+                    PreprocessedVariant(
+                        volume_path="volume.nii.gz",
+                        mask_path="mask.nii.gz",
+                        frst_path="frst.nii.gz",
+                    )
+                ],
             )
         ],
         "patch_size": 24,
@@ -228,12 +246,19 @@ def test_target_centered_config_validates_threshold(tmp_path: Path) -> None:
 
 def test_target_centered_config_rejects_invalid_detector(tmp_path: Path) -> None:
     values = {
-        "patch_dir": tmp_path / "patches",
+        "experiment_layout": ExperimentLayout(experiment_dir=tmp_path),
+        "stage": "student",
+        "split": "train",
         "subjects": [
             PreprocessedSubject(
                 subject_id="subject",
-                volume_path="volume.nii.gz",
-                mask_path="mask.nii.gz",
+                variants=[
+                    PreprocessedVariant(
+                        volume_path="volume.nii.gz",
+                        mask_path="mask.nii.gz",
+                        frst_path="frst.nii.gz",
+                    )
+                ],
             )
         ],
         "patch_size": 24,

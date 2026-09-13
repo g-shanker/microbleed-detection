@@ -2,6 +2,7 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
 import torch
 
 from microbleednet.core.common.models import CandidateDetector
@@ -10,7 +11,11 @@ from microbleednet.orchestration.configs import (
     NonOverlappingPatchConfig,
     TargetCenteredPatchConfig,
 )
-from microbleednet.orchestration.manifests import PreprocessedSubject
+from microbleednet.orchestration.manifests import (
+    PreprocessedSubject,
+    PreprocessedVariant,
+)
+from microbleednet.orchestration.layouts import ExperimentLayout
 from microbleednet.orchestration.pipes import patch
 
 
@@ -27,10 +32,24 @@ def _write_subject(
     if has_microbleed:
         mask[0, 0, 0] = 1
     nib.save(nib.Nifti1Image(mask, np.eye(4)), mask_path)
+    variants = []
+    for variant_index in range(2):
+        variant_volume_path = directory / f"{subject_id}_volume_{variant_index}.nii.gz"
+        variant_mask_path = directory / f"{subject_id}_mask_{variant_index}.nii.gz"
+        variant_frst_path = directory / f"{subject_id}_frst_{variant_index}.nii.gz"
+        nib.save(nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4)), variant_volume_path)
+        nib.save(nib.Nifti1Image(mask, np.eye(4)), variant_mask_path)
+        nib.save(nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4)), variant_frst_path)
+        variants.append(
+            PreprocessedVariant(
+                volume_path=str(variant_volume_path),
+                mask_path=str(variant_mask_path),
+                frst_path=str(variant_frst_path),
+            )
+        )
     return PreprocessedSubject(
         subject_id=subject_id,
-        volume_path=str(volume_path),
-        mask_path=str(mask_path),
+        variants=variants,
     )
 
 
@@ -39,9 +58,12 @@ def test_execute_materializes_supplied_subjects_and_returns_records(
 ) -> None:
     subject = _write_subject(tmp_path / "inputs", "selected", has_microbleed=True)
     _write_subject(tmp_path / "inputs", "not-selected")
-    patch_dir = tmp_path / "experiment" / "detector" / "train"
+    experiment_layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
+    patch_dir = experiment_layout.train_patch_dir_path("detector")
     config = NonOverlappingPatchConfig(
-        patch_dir=patch_dir,
+        experiment_layout=experiment_layout,
+        stage="detector",
+        split="train",
         subjects=[subject],
         patch_size=48,
         augmentation_factor=2,
@@ -61,9 +83,12 @@ def test_execute_materializes_supplied_subjects_and_returns_records(
 
 def test_execute_uses_configured_augmentation_factor(tmp_path: Path) -> None:
     subject = _write_subject(tmp_path / "inputs", "validation")
-    patch_dir = tmp_path / "experiment" / "teacher" / "validation"
+    experiment_layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
+    patch_dir = experiment_layout.validation_patch_dir_path("teacher")
     config = NonOverlappingPatchConfig(
-        patch_dir=patch_dir,
+        experiment_layout=experiment_layout,
+        stage="teacher",
+        split="validation",
         subjects=[subject],
         patch_size=24,
         augmentation_factor=1,
@@ -76,6 +101,11 @@ def test_execute_uses_configured_augmentation_factor(tmp_path: Path) -> None:
     assert len(records) == 1
     assert not records[0].augmented
     assert np.load(records[0].volume_path).shape == (1, 24, 24, 24)
+
+
+def test_execute_rejects_unsupported_patch_config(tmp_path: Path) -> None:
+    with pytest.raises(TypeError, match="unsupported patch configuration"):
+        patch.execute(object())
 
 
 def test_target_centered_reuses_extractor_for_all_subjects(
@@ -92,16 +122,19 @@ def test_target_centered_reuses_extractor_for_all_subjects(
         def __init__(self, **kwargs):
             instances.append(self)
 
-        def __call__(self, volume, mask):
+        def __call__(self, volume, mask, frst):
             return ExtractedPatches(
                 volumes=np.expand_dims(volume, axis=0),
                 masks=np.expand_dims(mask, axis=0),
+                frst=np.expand_dims(frst, axis=0),
             )
 
     monkeypatch.setattr(patch, "TargetCenteredExtractor", FakeExtractor)
-    patch_dir = tmp_path / "experiment" / "student" / "train"
+    experiment_layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
     config = TargetCenteredPatchConfig(
-        patch_dir=patch_dir,
+        experiment_layout=experiment_layout,
+        stage="student",
+        split="train",
         subjects=subjects,
         patch_size=24,
         augmentation_factor=1,
@@ -132,10 +165,10 @@ def test_target_centered_extractor_uses_supplied_detector(
     volume = np.ones((2, 2, 2))
     mask = np.zeros((2, 2, 2), dtype=np.uint8)
 
-    extracted = extractor(volume, mask)
+    extracted = extractor(volume, mask, volume)
     assert extracted.volumes.size == 0
     assert extracted.masks.size == 0
-    extracted = extractor(volume, mask)
+    extracted = extractor(volume, mask, volume)
     assert extracted.volumes.size == 0
     assert extracted.masks.size == 0
 
@@ -148,9 +181,13 @@ def test_target_centered_extracts_candidate(monkeypatch) -> None:
     )
     logits = torch.zeros((2, 2, 2, 2))
     logits[1, 0, 0, 0] = 10
-    monkeypatch.setattr(patch.core_processor, "infer", lambda model, volume: logits)
+    monkeypatch.setattr(
+        patch.core_processor, "infer", lambda model, volume: logits
+    )
 
-    extracted = extractor(np.ones((2, 2, 2)), np.zeros((2, 2, 2)))
+    extracted = extractor(
+        np.ones((2, 2, 2)), np.zeros((2, 2, 2)), np.ones((2, 2, 2))
+    )
 
     assert extracted.volumes.shape == (1, 2, 2, 2)
 
@@ -160,7 +197,9 @@ def test_execute_skips_subject_with_no_extracted_patches(
 ) -> None:
     subject = _write_subject(tmp_path / "inputs", "empty")
     config = NonOverlappingPatchConfig(
-        patch_dir=tmp_path / "patches",
+        experiment_layout=ExperimentLayout(experiment_dir=tmp_path),
+        stage="empty",
+        split="train",
         subjects=[subject],
         patch_size=2,
         augmentation_factor=1,
@@ -169,7 +208,7 @@ def test_execute_skips_subject_with_no_extracted_patches(
     monkeypatch.setattr(
         patch,
         "NonOverlappingExtractor",
-        lambda size: lambda volume, mask: ExtractedPatches(empty, empty),
+        lambda size: lambda volume, mask, frst: ExtractedPatches(empty, empty, empty),
     )
 
     assert patch.execute(config) == []

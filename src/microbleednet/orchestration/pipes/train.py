@@ -133,7 +133,9 @@ def train_detector(
 ) -> None:
     train_records = patch.execute(
         NonOverlappingPatchConfig(
-            patch_dir=experiment_layout.train_patch_dir_path("detector"),
+            experiment_layout=experiment_layout,
+            stage="detector",
+            split="train",
             subjects=train_subjects,
             patch_size=DETECTOR_PATCH_SIZE,
             augmentation_factor=DETECTOR_AUGMENTATION_FACTOR,
@@ -141,7 +143,9 @@ def train_detector(
     )
     validation_records = patch.execute(
         NonOverlappingPatchConfig(
-            patch_dir=experiment_layout.validation_patch_dir_path("detector"),
+            experiment_layout=experiment_layout,
+            stage="detector",
+            split="validation",
             subjects=validation_subjects,
             patch_size=DETECTOR_PATCH_SIZE,
             augmentation_factor=VALIDATION_AUGMENTATION_FACTOR,
@@ -183,7 +187,9 @@ def train_teacher(
 
     train_records = patch.execute(
         NonOverlappingPatchConfig(
-            patch_dir=experiment_layout.train_patch_dir_path("teacher"),
+            experiment_layout=experiment_layout,
+            stage="teacher",
+            split="train",
             subjects=train_subjects,
             patch_size=DISCRIMINATOR_PATCH_SIZE,
             augmentation_factor=DISCRIMINATOR_AUGMENTATION_FACTOR,
@@ -191,7 +197,9 @@ def train_teacher(
     )
     validation_records = patch.execute(
         NonOverlappingPatchConfig(
-            patch_dir=experiment_layout.validation_patch_dir_path("teacher"),
+            experiment_layout=experiment_layout,
+            stage="teacher",
+            split="validation",
             subjects=validation_subjects,
             patch_size=DISCRIMINATOR_PATCH_SIZE,
             augmentation_factor=VALIDATION_AUGMENTATION_FACTOR,
@@ -226,7 +234,9 @@ def train_student(
         )
         train_records = patch.execute(
             TargetCenteredPatchConfig(
-                patch_dir=experiment_layout.train_patch_dir_path("student"),
+                experiment_layout=experiment_layout,
+                stage="student",
+                split="train",
                 subjects=train_subjects,
                 patch_size=DISCRIMINATOR_PATCH_SIZE,
                 augmentation_factor=DISCRIMINATOR_AUGMENTATION_FACTOR,
@@ -236,7 +246,9 @@ def train_student(
         )
         validation_records = patch.execute(
             TargetCenteredPatchConfig(
-                patch_dir=experiment_layout.validation_patch_dir_path("student"),
+                experiment_layout=experiment_layout,
+                stage="student",
+                split="validation",
                 subjects=validation_subjects,
                 patch_size=DISCRIMINATOR_PATCH_SIZE,
                 augmentation_factor=VALIDATION_AUGMENTATION_FACTOR,
