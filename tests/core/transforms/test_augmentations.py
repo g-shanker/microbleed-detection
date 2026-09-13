@@ -30,7 +30,6 @@ def test_augment_preserves_shape_and_binary_mask() -> None:
     transformed_volume, transformed_mask = augmentations.augment(volume, mask)
 
     assert transformed_volume.shape == volume.shape
-    assert transformed_mask is not None
     assert transformed_mask.shape == mask.shape
     assert set(np.unique(transformed_mask)).issubset({0, 1})
 
@@ -48,23 +47,7 @@ def test_translate_applies_same_random_offsets_to_volume_and_mask(monkeypatch) -
     )
     translated_volume, translated_mask = augmentations.augment(volume, mask)
 
-    assert translated_mask is not None
     np.testing.assert_array_equal(translated_volume > 0, translated_mask > 0)
-
-
-def test_translate_accepts_volume_without_mask(monkeypatch) -> None:
-    monkeypatch.setattr(
-        augmentations.np.random,
-        "default_rng",
-        lambda: ControlledGenerator("translate"),
-    )
-
-    translated_volume, translated_mask = augmentations.augment(
-        np.ones((32, 32, 1)), None
-    )
-
-    assert translated_volume.shape == (32, 32, 1)
-    assert translated_mask is None
 
 
 def test_intensity_augmentations_do_not_change_mask(monkeypatch) -> None:

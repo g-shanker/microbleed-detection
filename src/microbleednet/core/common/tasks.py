@@ -6,7 +6,7 @@ from ..dataloading.datasets import (
     SegmentationBatch,
     SegmentationClassificationBatch,
 )
-from ..utils import append_frst_channel, get_model_device
+from ..utils import get_model_device
 from . import losses
 
 
@@ -38,7 +38,7 @@ class SegmentationTask(BaseTask[SegmentationBatch]):
         volume = batch.volume.to(device)
         mask = batch.mask.to(device)
 
-        logits = model(append_frst_channel(volume))
+        logits = model(volume)
         loss = self.criterion(logits, mask)
 
         return loss
@@ -64,9 +64,7 @@ class SegmentationClassificationTask(BaseTask[SegmentationClassificationBatch]):
         mask = batch.mask.to(device)
         label = batch.label.to(device)
 
-        segmentation_logits, classification_logits = model(
-            append_frst_channel(volume)
-        )
+        segmentation_logits, classification_logits = model(volume)
         loss = self.criterion(
             classification_logits,
             label,
@@ -99,8 +97,6 @@ class KnowledgeDistillationClassificationTask(BaseTask[ClassificationBatch]):
         device = get_model_device(model)
         volume = batch.volume.to(device)
         label = batch.label.to(device)
-
-        volume = append_frst_channel(volume)
 
         with torch.no_grad():
             _, teacher_logits = self.teacher_model(volume)

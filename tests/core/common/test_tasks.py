@@ -43,12 +43,7 @@ class StudentModel(SegmentationModel):
 
 
 def test_tasks_compute_training_and_validation_losses(monkeypatch) -> None:
-    monkeypatch.setattr(
-        tasks,
-        "append_frst_channel",
-        lambda volume: torch.cat((volume, volume), dim=1),
-    )
-    volume = torch.zeros(2, 1, 2, 2, 2)
+    volume = torch.zeros(2, 2, 2, 2, 2)
     mask = torch.zeros(2, 2, 2, 2, dtype=torch.long)
     labels = torch.tensor([0, 1])
 

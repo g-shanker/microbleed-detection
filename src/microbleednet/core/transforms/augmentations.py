@@ -12,8 +12,8 @@ AVAILABLE_TRANSFORMATIONS = ("translate", "noise", "blur")
 
 def augment(
     volume: np.ndarray,
-    mask: np.ndarray | None,
-) -> tuple[np.ndarray, np.ndarray | None]:
+    mask: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
     """Apply a random combination of the training augmentations."""
     rng = np.random.default_rng()
     count = int(rng.integers(1, len(AVAILABLE_TRANSFORMATIONS) + 1))
@@ -34,13 +34,10 @@ def augment(
             transformed_volume = volume_ops.translate(
                 transformed_volume, offset_x, offset_y
             )
-            if transformed_mask is not None:
-                transformed_mask = volume_ops.translate(
-                    transformed_mask, offset_x, offset_y
-                )
-                transformed_mask = (transformed_mask > 0).astype(
-                    transformed_mask.dtype
-                )
+            transformed_mask = volume_ops.translate(
+                transformed_mask, offset_x, offset_y
+            )
+            transformed_mask = (transformed_mask > 0).astype(transformed_mask.dtype)
         elif transformation == "noise":
             variance = rng.uniform(*NOISE_VARIANCE_RANGE)
             noise = rng.normal(0, np.sqrt(variance), transformed_volume.shape)

@@ -9,6 +9,17 @@ from microbleednet.core.common.models import (
 )
 
 
+def test_stack_volume_and_frst_returns_channel_first_input() -> None:
+    volume = np.ones((2, 3, 4))
+    frst = np.full((2, 3, 4), 2.0)
+
+    result = utils.stack_volume_and_frst(volume, frst)
+
+    assert result.shape == (2, 2, 3, 4)
+    np.testing.assert_array_equal(result[0], volume)
+    np.testing.assert_array_equal(result[1], frst)
+
+
 def test_microbleed_probability_detaches_logits_before_conversion() -> None:
     logits = torch.tensor([[[[0.0]], [[1.0]]]], requires_grad=True).squeeze(0)
 
@@ -18,17 +29,6 @@ def test_microbleed_probability_detaches_logits_before_conversion() -> None:
     assert probability == pytest.approx(
         torch.softmax(logits, dim=0)[1].detach().numpy()
     )
-
-
-def test_append_frst_channel_preserves_volume_and_normalizes_response() -> None:
-    volume = torch.arange(512, dtype=torch.float32).reshape(1, 1, 8, 8, 8)
-
-    result = utils.append_frst_channel(volume)
-
-    assert result.shape == (1, 2, 8, 8, 8)
-    torch.testing.assert_close(result[:, :1], volume)
-    assert torch.isfinite(result).all()
-    assert 0 <= result[:, 1].min() <= result[:, 1].max() <= 1
 
 
 def test_initialize_teacher_transfers_detector_feature_and_segmentor_state() -> None:
