@@ -83,7 +83,9 @@ def test_get_slice_vessel_mask_selects_smaller_cluster_and_filters_regions(
 
     monkeypatch.setattr(inpaint_vessels, "KMeans", fake_kmeans)
     monkeypatch.setattr(
-        inpaint_vessels, "label", lambda _: np.array([[1, 2], [3, 0]])
+        inpaint_vessels.utils,
+        "label_components",
+        lambda _, connectivity: np.array([[1, 2], [3, 0]]),
     )
     monkeypatch.setattr(inpaint_vessels, "regionprops", lambda _: properties)
 

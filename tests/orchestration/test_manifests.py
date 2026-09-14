@@ -3,10 +3,17 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from microbleednet.core.datamodels import TrainingSettings
 from microbleednet.core import io as core_io
+from microbleednet.core.datamodels import (
+    EvaluationAggregate,
+    EvaluationMetrics,
+    TrainingSettings,
+)
 from microbleednet.orchestration.manifests import (
+    EvaluatedSubject,
+    EvaluateManifest,
     InferManifest,
+    InferredSubject,
     Manifest,
     ManifestStatus,
     RawDatasetManifest,
@@ -157,10 +164,10 @@ def test_inference_manifest_round_trips_recipe_and_results(tmp_path: Path) -> No
         maximum_ellipticity=0.2,
         minimum_brain_distance_mm=5.0,
         subjects=[
-            {
-                "subject_id": "subject-1",
-                "output_path": "C:/experiments/infer/subject-1/detections.nii.gz",
-            }
+            InferredSubject(
+                subject_id="subject-1",
+                output_path="C:/experiments/infer/subject-1/detections.nii.gz",
+            )
         ],
     )
     path = tmp_path / "infer.json"
@@ -172,3 +179,42 @@ def test_inference_manifest_round_trips_recipe_and_results(tmp_path: Path) -> No
     assert loaded.subjects[0].subject_id == "subject-1"
     assert loaded.subjects[0].output_path.endswith("detections.nii.gz")
     assert loaded.discriminator_patch_size == 24
+
+
+def test_evaluation_manifest_round_trips_metrics(tmp_path: Path) -> None:
+    now = timestamp()
+    metrics = EvaluationMetrics(
+        true_positive=2,
+        false_positive=1,
+        false_negative=3,
+        cluster_tpr=0.4,
+        cluster_precision=2 / 3,
+    )
+    aggregate = EvaluationAggregate(
+        true_positive=2,
+        false_positive=1,
+        false_negative=3,
+        cluster_tpr=0.4,
+        cluster_precision=2 / 3,
+        false_positives_per_subject=1.0,
+    )
+    manifest = EvaluateManifest(
+        status=ManifestStatus.COMPLETE,
+        created_at=now,
+        updated_at=now,
+        dataset_dir="C:/datasets/preprocessed",
+        device="cpu",
+        inference_manifest_path="C:/experiments/manifests/infer.json",
+        subjects=[EvaluatedSubject(subject_id="subject-1", metrics=metrics)],
+        aggregate=aggregate,
+    )
+    path = tmp_path / "evaluate.json"
+
+    manifest.write(path)
+
+    loaded = EvaluateManifest.read(path)
+    assert loaded.manifest_type == "evaluation"
+    assert loaded.subjects == [
+        EvaluatedSubject(subject_id="subject-1", metrics=metrics)
+    ]
+    assert loaded.aggregate == aggregate
