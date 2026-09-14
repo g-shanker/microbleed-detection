@@ -27,7 +27,13 @@ from typing import Literal
 
 from pydantic import Field, ValidationError, model_validator
 
-from ..core.datamodels import FrozenModel, Modality
+from ..core.datamodels import (
+    EpochLoss,
+    FrozenModel,
+    Modality,
+    PatchRecord,
+    TrainingSettings,
+)
 from . import atomic_io
 
 SCHEMA_VERSION = 1
@@ -175,6 +181,96 @@ class PreprocessedDatasetManifest(Manifest):
         default=1,
         gt=0,
         description="Total persisted variants per subject, including the original.",
+    )
+
+
+class TrainManifest(Manifest):
+    """Manifest ``train`` writes for the selected subjects and recipe."""
+
+    manifest_type: Literal["train"] = Field(
+        default="train",
+        description="Stable discriminator for a training run manifest.",
+    )
+    dataset_dir: str = Field(
+        description="Absolute path to the preprocessed dataset used for training."
+    )
+    device: str = Field(description="Torch device requested for the training run.")
+    train_size: float = Field(
+        gt=0, le=1, description="Ratio of subjects assigned to the training split."
+    )
+    train_subject_ids: list[str] = Field(
+        description="Ordered subject IDs assigned to the training split."
+    )
+    validation_subject_ids: list[str] = Field(
+        description="Ordered subject IDs assigned to the validation split."
+    )
+    detector_candidate_threshold: float = Field(
+        ge=0,
+        le=1,
+        description="Detector probability threshold for student candidates.",
+    )
+    detector_augmentation_factor: int = Field(
+        gt=0, description="Number of preprocessed variants used for detector training."
+    )
+    discriminator_augmentation_factor: int = Field(
+        gt=0,
+        description="Number of preprocessed variants used for discriminator training.",
+    )
+    validation_augmentation_factor: int = Field(
+        gt=0, description="Number of preprocessed variants used for validation."
+    )
+    detector_patch_size: int = Field(
+        gt=0, description="Cubic detector patch edge length in voxels."
+    )
+    discriminator_patch_size: int = Field(
+        gt=0, description="Cubic discriminator patch edge length in voxels."
+    )
+    num_workers: int = Field(
+        ge=0, description="Number of worker processes used by training loaders."
+    )
+    pin_memory: bool = Field(
+        description="Whether training loaders pin batches in host memory."
+    )
+    training_settings: TrainingSettings = Field(
+        description="Shared optimizer and training-loop settings for all models."
+    )
+    detector_history: list[EpochLoss] = Field(
+        description="Epoch loss history for candidate detector training."
+    )
+    teacher_history: list[EpochLoss] = Field(
+        description="Epoch loss history for candidate teacher training."
+    )
+    student_history: list[EpochLoss] = Field(
+        description="Epoch loss history for candidate student training."
+    )
+
+
+class PatchManifest(Manifest):
+    """Manifest ``patch`` writes for one materialized stage and split."""
+
+    manifest_type: Literal["patch"] = Field(
+        default="patch",
+        description="Stable discriminator for a materialized patch manifest.",
+    )
+    stage: str = Field(description="Training stage owning these patches.")
+    split: str = Field(description="Dataset split owning these patches.")
+    subject_ids: list[str] = Field(
+        description="Subject IDs requested for patch extraction."
+    )
+    patch_size: int = Field(
+        gt=0, description="Cubic patch edge length in voxels."
+    )
+    augmentation_factor: int = Field(
+        gt=0, description="Number of preprocessed variants considered per subject."
+    )
+    probability_threshold: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Detector probability threshold used for target-centered patches.",
+    )
+    records: list[PatchRecord] = Field(
+        description="Materialized patch records produced by extraction."
     )
 
 

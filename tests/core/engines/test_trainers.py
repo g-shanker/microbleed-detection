@@ -7,8 +7,9 @@ from torch.utils.data import DataLoader, Dataset
 
 from microbleednet.core.common.tasks import BaseTask
 from microbleednet.core.dataloading.datasets import SegmentationBatch
+from microbleednet.core.datamodels import EpochLoss, TrainingSettings
 from microbleednet.core.engines.evaluators import Evaluator
-from microbleednet.core.engines.trainers import Trainer, TrainingSettings
+from microbleednet.core.engines.trainers import Trainer
 
 
 class RegressionTask(BaseTask[SegmentationBatch]):
@@ -53,9 +54,10 @@ def test_train_epoch_updates_model_and_learning_rate(tmp_path: Path) -> None:
     linear = cast(nn.Linear, trainer.model)
     initial_weight = linear.weight.detach().clone()
 
-    trainer.train_epoch(loader)
+    training_loss = trainer.train_epoch(loader)
 
     assert not torch.equal(initial_weight, linear.weight)
+    assert training_loss >= 0
     assert trainer.optimizer.param_groups[0]["eps"] == 1e-4
     assert trainer.optimizer.param_groups[0]["lr"] == 1e-3
 
@@ -64,7 +66,7 @@ def test_fit_stops_at_patience_and_saves_best(
     tmp_path: Path, monkeypatch
 ) -> None:
     trainer = _trainer(tmp_path, max_epochs=10, patience=2)
-    monkeypatch.setattr(trainer, "train_epoch", lambda loader: None)
+    monkeypatch.setattr(trainer, "train_epoch", lambda loader: 2.0)
     losses = iter([1.0, 1.0, 1.0])
     monkeypatch.setattr(
         trainer.evaluator,
@@ -73,10 +75,15 @@ def test_fit_stops_at_patience_and_saves_best(
     )
 
     empty_loader = DataLoader(BatchDataset([]), batch_size=None)
-    trainer.fit(empty_loader, empty_loader)
+    history = trainer.fit(empty_loader, empty_loader)
 
     assert trainer.best_val_loss == 1.0
     assert trainer.epochs_without_improvement == 2
+    assert history == [
+        EpochLoss(epoch=1, training_loss=2.0, validation_loss=1.0),
+        EpochLoss(epoch=2, training_loss=2.0, validation_loss=1.0),
+        EpochLoss(epoch=3, training_loss=2.0, validation_loss=1.0),
+    ]
     assert torch.load(tmp_path / "best.pth", weights_only=True)["epoch"] == 0
     assert not (tmp_path / "latest.pth").exists()
 
@@ -145,7 +152,7 @@ def test_trainer_handles_zero_epochs_and_amp_training(
 ) -> None:
     zero_epoch_trainer = _trainer(tmp_path / "zero", max_epochs=0)
     empty_loader = DataLoader(BatchDataset([]), batch_size=None)
-    zero_epoch_trainer.fit(empty_loader, empty_loader)
+    assert zero_epoch_trainer.fit(empty_loader, empty_loader) == []
     assert zero_epoch_trainer.best_val_loss == float("inf")
 
     calls = []

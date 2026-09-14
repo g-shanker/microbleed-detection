@@ -16,11 +16,12 @@ from ..configs import (
     NonOverlappingPatchConfig,
     TargetCenteredPatchConfig,
 )
+from ..manifests import PatchManifest, timestamp
 
 
 def execute(
     config: BasePatchConfig,
-) -> list[PatchRecord]:
+) -> None:
     if isinstance(config, NonOverlappingPatchConfig):
         extract = NonOverlappingExtractor(config.patch_size)
     elif isinstance(config, TargetCenteredPatchConfig):
@@ -72,7 +73,22 @@ def execute(
                 for index, mask_array in enumerate(extracted.masks)
             )
 
-    return records
+    PatchManifest(
+        status="complete",
+        created_at=timestamp(),
+        updated_at=timestamp(),
+        stage=config.stage,
+        split=config.split,
+        subject_ids=[subject.subject_id for subject in config.subjects],
+        patch_size=config.patch_size,
+        augmentation_factor=config.augmentation_factor,
+        probability_threshold=(
+            config.probability_threshold
+            if isinstance(config, TargetCenteredPatchConfig)
+            else None
+        ),
+        records=records,
+    ).write(config.experiment_layout.patch_manifest_path(config.stage, config.split))
 
 
 class NonOverlappingExtractor:
