@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+from typing import cast
 from unittest.mock import Mock
 
 import nibabel as nib
@@ -5,6 +7,7 @@ import numpy as np
 import pytest
 import torch
 import torch.nn as nn
+from skimage.measure._regionprops import RegionProperties
 
 from microbleednet.core import utils
 from microbleednet.core.engines import inference, processor
@@ -138,3 +141,61 @@ def test_infer_discriminator_returns_retained_candidate_volume() -> None:
     assert output[0, 0, 0] == 1
     assert output[2, 2, 2] == 0
     assert student.batch_sizes == [1, 1]
+
+
+def test_infer_discriminator_returns_empty_volume_without_candidates() -> None:
+    probability = np.zeros((3, 3, 3))
+
+    output = inference.infer_discriminator(
+        nn.Conv3d(2, 2, kernel_size=1),
+        np.ones_like(probability),
+        np.ones_like(probability),
+        probability,
+        detector_threshold=0.5,
+        patch_size=2,
+        discriminator_threshold=0.5,
+    )
+
+    np.testing.assert_array_equal(output, np.zeros_like(probability, dtype=np.uint8))
+
+
+def test_postprocess_rejects_elliptical_components(monkeypatch) -> None:
+    candidate_mask = np.ones((3, 3, 3), dtype=np.uint8)
+    monkeypatch.setattr(processor, "component_ellipticity", lambda _: 1.0)
+
+    output = processor.postprocess(
+        candidate_mask,
+        np.ones_like(candidate_mask, dtype=float),
+        (1.0, 1.0, 1.0),
+        minimum_volume_mm3=0.0,
+        maximum_ellipticity=0.2,
+        minimum_brain_distance_mm=0.0,
+    )
+
+    assert not output.any()
+
+
+def test_postprocess_rejects_components_near_brain_boundary(monkeypatch) -> None:
+    candidate_mask = np.ones((3, 3, 3), dtype=np.uint8)
+    monkeypatch.setattr(
+        processor,
+        "distance_transform_edt",
+        lambda *args, **kwargs: np.zeros_like(candidate_mask),
+    )
+
+    output = processor.postprocess(
+        candidate_mask,
+        np.ones_like(candidate_mask, dtype=float),
+        (1.0, 1.0, 1.0),
+        minimum_volume_mm3=0.0,
+        maximum_ellipticity=1.0,
+        minimum_brain_distance_mm=1.0,
+    )
+
+    assert not output.any()
+
+
+def test_component_ellipticity_handles_empty_eigenvalues() -> None:
+    region = SimpleNamespace(inertia_tensor_eigvals=np.array([]))
+
+    assert processor.component_ellipticity(cast(RegionProperties, region)) == 0.0

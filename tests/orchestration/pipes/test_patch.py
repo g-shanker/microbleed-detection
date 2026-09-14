@@ -105,7 +105,7 @@ def test_execute_uses_configured_augmentation_factor(tmp_path: Path) -> None:
 
 def test_execute_rejects_unsupported_patch_config(tmp_path: Path) -> None:
     with pytest.raises(TypeError, match="unsupported patch configuration"):
-        patch.execute(object())
+        patch.execute(object())  # pyright: ignore[reportArgumentType]
 
 
 def test_target_centered_reuses_extractor_for_all_subjects(

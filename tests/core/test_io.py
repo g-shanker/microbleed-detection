@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import cast
 
 import nibabel as nib
 import numpy as np
@@ -34,11 +35,15 @@ def test_save_volume_preserves_geometry_and_binary_dtype(tmp_path: Path) -> None
     reference = nib.Nifti1Image(np.zeros((2, 2, 2), dtype=np.uint8), np.eye(4))
     path = tmp_path / "detections.nii.gz"
 
-    io.save_volume(io.numpy_to_nifti(np.ones((2, 2, 2), dtype=np.uint8), reference), path)
+    io.save_volume(
+        io.numpy_to_nifti(np.ones((2, 2, 2), dtype=np.uint8), reference), path
+    )
 
-    saved = nib.load(path)
+    saved = cast(nib.Nifti1Image, nib.load(path))
     assert saved.shape == reference.shape
-    assert np.array_equal(saved.affine, reference.affine)
+    assert np.array_equal(
+        cast(np.ndarray, saved.affine), cast(np.ndarray, reference.affine)
+    )
     assert saved.get_data_dtype() == np.dtype(np.uint8)
     assert set(np.unique(saved.get_fdata())) == {1.0}
 

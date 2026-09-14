@@ -4,10 +4,17 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from skimage.measure import label
 
 from .common.models import CandidateDetector, CandidateDiscriminatorTeacher
 
 AMP_DTYPE = torch.float16
+COMPONENT_CONNECTIVITY = 3
+
+
+def label_components(mask: np.ndarray, connectivity: int) -> np.ndarray:
+    """Label connected components in a binary mask."""
+    return cast(np.ndarray, label(mask, connectivity=connectivity))
 
 
 def stack_volume_and_frst(volume: np.ndarray, frst: np.ndarray) -> np.ndarray:
@@ -26,9 +33,9 @@ def get_model_device(model: nn.Module) -> torch.device:
 def predict_logits(model: nn.Module, model_input: np.ndarray) -> torch.Tensor:
     model.eval()
     model_device = get_model_device(model)
-    model_input = torch.from_numpy(model_input).float().unsqueeze(0)
+    tensor_input = torch.from_numpy(model_input).float().unsqueeze(0)
     with torch.no_grad():
-        return model(model_input.to(model_device))[0]
+        return model(tensor_input.to(model_device))[0]
 
 
 def microbleed_probability(logits: torch.Tensor) -> np.ndarray:

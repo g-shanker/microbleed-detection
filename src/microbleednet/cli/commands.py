@@ -21,7 +21,12 @@ from pydantic import BaseModel
 from rich.console import Console
 from rich.table import Table
 
-from ..orchestration.configs import IndexDataConfig, PreprocessConfig, TrainConfig
+from ..orchestration.configs import (
+    EvaluateConfig,
+    IndexDataConfig,
+    PreprocessConfig,
+    TrainConfig,
+)
 from .utils import (
     config_fields,
     describe_hint,
@@ -78,6 +83,16 @@ SPECS: list[CommandSpec] = [
         success_message=lambda s: (
             f"Training artifacts written under {s.experiment_dir}"
         ),
+    ),
+    CommandSpec(
+        name="evaluate",
+        help="TODO: write a help message",
+        config=EvaluateConfig,
+        pipe="evaluate",
+        dry_run_message=lambda s: (
+            f"Evaluation configuration valid for {s.experiment_dir} (dry run)"
+        ),
+        success_message=lambda s: f"Evaluation written under {s.experiment_dir}",
     ),
 ]
 
