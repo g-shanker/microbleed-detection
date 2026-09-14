@@ -91,6 +91,14 @@ class ExperimentLayout(FrozenModel):
     experiment_dir: Path = Field(
         description="Root directory for this experiment's artifacts."
     )
+    train_manifest: Path = Field(
+        default=Path("manifests/train.json"),
+        description="Training split and recipe manifest.",
+    )
+    patch_manifest_template: Path = Field(
+        default=Path("manifests/patch_{stage}_{split}.json"),
+        description="Template for a stage and split patch manifest.",
+    )
     best_checkpoint_template: Path = Field(
         default=Path("train/{stage}/checkpoints/best_model.pth"),
         description="Relative template for the best checkpoint path.",
@@ -105,6 +113,12 @@ class ExperimentLayout(FrozenModel):
 
     def best_checkpoint_path(self, stage: str) -> Path:
         return self.resolve(self.best_checkpoint_template, stage=stage)
+
+    def train_manifest_path(self) -> Path:
+        return self.experiment_dir / self.train_manifest
+
+    def patch_manifest_path(self, stage: str, split: str) -> Path:
+        return self.resolve(self.patch_manifest_template, stage=stage, split=split)
 
     def patch_dir_path(self, stage: str, split: str) -> Path:
         return self.resolve(self.patch_dir_template, stage=stage, split=split)
