@@ -5,10 +5,9 @@ from typing import cast
 import numpy as np
 
 from ...core import io
-from ...core import utils as core_utils
 from ...core.common.models import CandidateDetector
 from ...core.datamodels import ExtractedPatches, PatchRecord
-from ...core.engines import processor as core_processor
+from ...core.engines import inference as core_inference
 from ...core.io import save_array_atomic
 from ...core.transforms import patch as patch_transforms
 from ..configs import (
@@ -138,11 +137,13 @@ class TargetCenteredExtractor:
         mask: np.ndarray,
         frst: np.ndarray,
     ) -> ExtractedPatches:
-        model_volume = core_utils.stack_volume_and_frst(volume, frst)
-        logits = core_processor.infer(self.detector, model_volume)
-        output = core_utils.microbleed_probability(logits)
-        candidate_mask = output > self.threshold
-        centers = patch_transforms.get_target_centers(candidate_mask)
+        probability_map = core_inference.infer_detector(
+            self.detector, volume, frst
+        )
+        candidate_labels = patch_transforms.label_targets(
+            probability_map, self.threshold
+        )
+        centers = patch_transforms.get_target_centers(candidate_labels)
         volume_patches = patch_transforms.extract_centered_patches(
             volume, centers, self.patch_size
         )
@@ -152,7 +153,7 @@ class TargetCenteredExtractor:
         frst_patches = patch_transforms.extract_centered_patches(
             frst, centers, self.patch_size
         )
-        if not volume_patches:
+        if not centers:
             empty_shape = (0, self.patch_size, self.patch_size, self.patch_size)
             return ExtractedPatches(
                 volumes=np.empty(empty_shape),

@@ -31,6 +31,18 @@ SOURCE_ID_PLACEHOLDER = "{source_id}"
 SOURCE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
+def ensure_device_available(device_name: str) -> None:
+    """Validate a device string without importing torch at module load time."""
+    import torch
+
+    try:
+        device = torch.device(device_name)
+    except (RuntimeError, TypeError) as error:
+        raise ValueError(f"invalid device: {device_name}") from error
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise ValueError("CUDA device is not available")
+
+
 class IndexDataConfig(FrozenModel):
     dataset_dir: Path = Field(
         description="Directory to which the indexed dataset manifests are written.",
@@ -140,14 +152,7 @@ class TrainConfig(FrozenModel):
 
     @model_validator(mode="after")
     def validate_device(self) -> "TrainConfig":
-        import torch
-
-        try:
-            device = torch.device(self.device)
-        except (RuntimeError, TypeError) as error:
-            raise ValueError(f"invalid device: {self.device}") from error
-        if device.type == "cuda" and not torch.cuda.is_available():
-            raise ValueError("CUDA device is not available")
+        ensure_device_available(self.device)
         return self
 
     @model_validator(mode="after")
@@ -159,6 +164,36 @@ class TrainConfig(FrozenModel):
         ).preprocessed_manifest_path()
         if not manifest_path.is_file():
             raise ValueError(f"preprocessed manifest does not exist: {manifest_path}")
+        return self
+
+
+class InferConfig(FrozenModel):
+    """Configuration for the internal preprocessed-subject inference pipe."""
+
+    subjects: list[PreprocessedSubject] = Field(
+        min_length=1,
+        description="Preprocessed subjects to infer.",
+    )
+    experiment_dir: Path = Field(
+        description="Experiment directory containing detector and student checkpoints.",
+    )
+    device: str = Field(
+        default="cpu",
+        description="Torch device string, e.g. 'cpu' or 'cuda'.",
+    )
+
+    @model_validator(mode="after")
+    def validate_device(self) -> "InferConfig":
+        ensure_device_available(self.device)
+        return self
+
+    @model_validator(mode="after")
+    def validate_checkpoints(self) -> "InferConfig":
+        layout = ExperimentLayout(experiment_dir=self.experiment_dir)
+        for stage in ("detector", "student"):
+            checkpoint = layout.best_checkpoint_path(stage)
+            if not checkpoint.is_file():
+                raise ValueError(f"{stage} checkpoint does not exist: {checkpoint}")
         return self
 
 

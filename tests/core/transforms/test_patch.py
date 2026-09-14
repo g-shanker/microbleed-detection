@@ -4,12 +4,31 @@ import pytest
 from microbleednet.core.transforms import patch
 
 
-def test_get_target_centers_returns_rounded_centers() -> None:
-    mask = np.zeros((3, 3, 3), dtype=np.uint8)
-    mask[0, 0, 0] = 1
-    mask[2, 2, 1:] = 1
+def test_label_targets_returns_connected_labels() -> None:
+    probability_map = np.zeros((3, 3, 3), dtype=np.uint8)
+    probability_map[0, 0, 0] = 1
+    probability_map[2, 2, 1:] = 1
 
-    centers = patch.get_target_centers(mask)
+    labels = patch.label_targets(probability_map, threshold=0.0)
+
+    assert labels[0, 0, 0] == 1
+    assert labels[2, 2, 1] == 2
+
+
+def test_label_targets_applies_threshold() -> None:
+    probability_map = np.array([[[0.2, 0.8]]])
+
+    labels = patch.label_targets(probability_map, threshold=0.5)
+
+    np.testing.assert_array_equal(labels, np.array([[[0, 1]]]))
+
+
+def test_get_target_centers_returns_rounded_centers() -> None:
+    labels = np.zeros((3, 3, 3), dtype=np.int32)
+    labels[0, 0, 0] = 1
+    labels[2, 2, 1:] = 2
+
+    centers = patch.get_target_centers(labels)
 
     assert centers == [(0, 0, 0), (2, 2, 2)]
 
