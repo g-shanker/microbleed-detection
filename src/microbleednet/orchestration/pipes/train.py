@@ -37,6 +37,7 @@ from ..configs import (
 )
 from ..layouts import DatasetLayout, ExperimentLayout
 from ..manifests import (
+    ManifestStatus,
     PatchManifest,
     PreprocessedDatasetManifest,
     PreprocessedSubject,
@@ -46,6 +47,8 @@ from ..manifests import (
 from . import patch
 
 TRAIN_SIZE = 0.7
+VALIDATION_SIZE = 0.1
+TEST_SIZE = 0.2
 DETECTOR_CANDIDATE_THRESHOLD = 0.5
 DETECTOR_AUGMENTATION_FACTOR = 10
 DISCRIMINATOR_AUGMENTATION_FACTOR = 5
@@ -63,7 +66,9 @@ def execute(config: TrainConfig) -> None:
     preprocessed_manifest = PreprocessedDatasetManifest.read(
         dataset_layout.preprocessed_manifest_path()
     )
-    train_subjects, validation_subjects = split_subjects(preprocessed_manifest.subjects)
+    train_subjects, validation_subjects, test_subjects = split_subjects(
+        preprocessed_manifest.subjects
+    )
     settings = TrainingSettings()
     device = torch.device(config.device)
     detector_history = train_detector(
@@ -93,6 +98,7 @@ def execute(config: TrainConfig) -> None:
         config.device,
         train_subjects,
         validation_subjects,
+        test_subjects,
         settings,
         detector_history,
         teacher_history,
@@ -102,12 +108,21 @@ def execute(config: TrainConfig) -> None:
 
 def split_subjects(
     subjects: list[PreprocessedSubject],
-) -> tuple[list[PreprocessedSubject], list[PreprocessedSubject]]:
-    train_subjects, validation_subjects = cast(
+) -> tuple[
+    list[PreprocessedSubject], list[PreprocessedSubject], list[PreprocessedSubject]
+]:
+    train_subjects, held_out_subjects = cast(
         tuple[list[PreprocessedSubject], list[PreprocessedSubject]],
         train_test_split(subjects, train_size=TRAIN_SIZE),
     )
-    return train_subjects, validation_subjects
+    validation_subjects, test_subjects = cast(
+        tuple[list[PreprocessedSubject], list[PreprocessedSubject]],
+        train_test_split(
+            held_out_subjects,
+            train_size=VALIDATION_SIZE / (VALIDATION_SIZE + TEST_SIZE),
+        ),
+    )
+    return train_subjects, validation_subjects, test_subjects
 
 
 def write_train_manifest(
@@ -116,6 +131,7 @@ def write_train_manifest(
     device: str,
     train_subjects: list[PreprocessedSubject],
     validation_subjects: list[PreprocessedSubject],
+    test_subjects: list[PreprocessedSubject],
     settings: TrainingSettings,
     detector_history: list[EpochLoss],
     teacher_history: list[EpochLoss],
@@ -123,7 +139,7 @@ def write_train_manifest(
 ) -> None:
     now = timestamp()
     TrainManifest(
-        status="complete",
+        status=ManifestStatus.COMPLETE,
         created_at=now,
         updated_at=now,
         dataset_dir=str(dataset_dir.resolve()),
@@ -133,6 +149,7 @@ def write_train_manifest(
         validation_subject_ids=[
             subject.subject_id for subject in validation_subjects
         ],
+        test_subject_ids=[subject.subject_id for subject in test_subjects],
         detector_candidate_threshold=DETECTOR_CANDIDATE_THRESHOLD,
         detector_augmentation_factor=DETECTOR_AUGMENTATION_FACTOR,
         discriminator_augmentation_factor=DISCRIMINATOR_AUGMENTATION_FACTOR,

@@ -2,23 +2,24 @@ import numpy as np
 import pytest
 
 from microbleednet.core.transforms import patch
+from microbleednet.core.utils import label_components
 
 
-def test_label_targets_returns_connected_labels() -> None:
-    probability_map = np.zeros((3, 3, 3), dtype=np.uint8)
-    probability_map[0, 0, 0] = 1
-    probability_map[2, 2, 1:] = 1
+def test_label_components_returns_connected_labels() -> None:
+    mask = np.zeros((3, 3, 3), dtype=np.uint8)
+    mask[0, 0, 0] = 1
+    mask[2, 2, 1:] = 1
 
-    labels = patch.label_targets(probability_map, threshold=0.0)
+    labels = label_components(mask, 3)
 
     assert labels[0, 0, 0] == 1
     assert labels[2, 2, 1] == 2
 
 
-def test_label_targets_applies_threshold() -> None:
+def test_label_components_labels_explicitly_thresholded_mask() -> None:
     probability_map = np.array([[[0.2, 0.8]]])
 
-    labels = patch.label_targets(probability_map, threshold=0.5)
+    labels = label_components(probability_map > 0.5, 3)
 
     np.testing.assert_array_equal(labels, np.array([[[0, 1]]]))
 

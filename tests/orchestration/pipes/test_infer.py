@@ -1,13 +1,19 @@
 from pathlib import Path
 
+import nibabel as nib
 import numpy as np
+import torch.nn as nn
 
 from microbleednet.core.engines import processor
+from microbleednet.orchestration.configs import InferConfig
 from microbleednet.orchestration.layouts import ExperimentLayout
 from microbleednet.orchestration.manifests import (
     InferManifest,
     ManifestStatus,
+    PreprocessedSubject,
+    PreprocessedVariant,
 )
+from microbleednet.orchestration.pipes import infer
 
 
 def test_cleanup_candidates_rejects_small_and_boundary_components() -> None:
@@ -97,3 +103,69 @@ def test_inference_manifest_round_trip(tmp_path: Path) -> None:
     loaded = InferManifest.read(layout.inference_manifest_path())
     assert loaded.manifest_type == "inference"
     assert loaded.status is ManifestStatus.COMPLETE
+
+
+def test_execute_writes_inference_manifest(tmp_path: Path, monkeypatch) -> None:
+    experiment_dir = tmp_path / "experiment"
+    layout = ExperimentLayout(experiment_dir=experiment_dir)
+    for stage in ("detector", "student"):
+        checkpoint = layout.best_checkpoint_path(stage)
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint.write_bytes(b"checkpoint")
+
+    subject = PreprocessedSubject(
+        subject_id="subject-1",
+        variants=[
+            PreprocessedVariant(
+                volume_path="volume", mask_path="mask", frst_path="frst"
+            )
+        ],
+    )
+    volume_image = nib.Nifti1Image(np.ones((3, 3, 3)), np.eye(4))
+    saved = {}
+
+    class FakeModel(nn.Module):
+        def forward(self, inputs):
+            return inputs
+
+    monkeypatch.setattr(infer, "CandidateDetector", FakeModel)
+    monkeypatch.setattr(infer, "CandidateDiscriminatorStudent", FakeModel)
+    monkeypatch.setattr(infer.core_io, "load_model_weights", lambda *args: None)
+    monkeypatch.setattr(infer.core_io, "load_volume", lambda _: volume_image)
+    monkeypatch.setattr(
+        infer.core_io,
+        "nifti_to_numpy",
+        lambda _: np.ones((3, 3, 3), dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        infer.core_inference,
+        "infer_detector",
+        lambda *args: np.ones((3, 3, 3), dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        infer.core_inference,
+        "infer_discriminator",
+        lambda *args: np.ones((3, 3, 3), dtype=np.uint8),
+    )
+    monkeypatch.setattr(
+        infer.core_processor,
+        "postprocess",
+        lambda *args: np.ones((3, 3, 3), dtype=np.uint8),
+    )
+    monkeypatch.setattr(infer.core_io, "numpy_to_nifti", lambda array, _: array)
+    monkeypatch.setattr(
+        infer.core_io,
+        "save_volume",
+        lambda image, path: saved.update({str(path): image}),
+    )
+    monkeypatch.setattr(infer, "release_gpu_memory", lambda: None)
+
+    infer.execute(
+        InferConfig(
+            subjects=[subject], experiment_dir=experiment_dir, device="cpu"
+        )
+    )
+
+    manifest = InferManifest.read(layout.inference_manifest_path())
+    assert [item.subject_id for item in manifest.subjects] == ["subject-1"]
+    assert len(saved) == 1

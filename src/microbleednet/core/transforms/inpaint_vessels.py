@@ -5,8 +5,10 @@ from joblib import Parallel, delayed
 from scipy.ndimage import binary_dilation, convolve
 from skimage.feature import structure_tensor, structure_tensor_eigenvalues
 from skimage.filters import frangi
-from skimage.measure import label, regionprops
+from skimage.measure import regionprops
 from sklearn.cluster import KMeans
+
+from .. import utils
 
 FRANGI_SIGMAS = (0.5, 1.2, 0.2)
 FRANGI_ALPHA = 0.9
@@ -17,6 +19,7 @@ CLUSTERER_N_CLUSTERS = 2
 CLUSTERER_RANDOM_STATE = 0
 MINIMUM_VESSEL_ECCENTRICITY = 0.9
 MAXIMUM_VESSEL_SOLIDITY = 0.5
+VESSEL_CONNECTIVITY = 1
 
 
 def apply(volume: np.ndarray) -> np.ndarray:
@@ -81,7 +84,9 @@ def get_slice_vessel_mask(image_slice: np.ndarray) -> np.ndarray:
     vessel_cluster_label = 1 if (clusters == 1).sum() < (clusters == 0).sum() else 0
 
     vessel_mask = np.reshape(clusters == vessel_cluster_label, image_slice.shape)
-    labeled_vessel_mask = cast(np.ndarray, label(vessel_mask))
+    labeled_vessel_mask = cast(
+        np.ndarray, utils.label_components(vessel_mask, VESSEL_CONNECTIVITY)
+    )
     vessel_mask_props = regionprops(labeled_vessel_mask)
 
     valid_vessel_regions: list[int] = [

@@ -27,14 +27,16 @@ from typing import Literal
 
 from pydantic import Field, ValidationError, model_validator
 
+from ..core import io as core_io
 from ..core.datamodels import (
     EpochLoss,
+    EvaluationAggregate,
+    EvaluationMetrics,
     FrozenModel,
     Modality,
     PatchRecord,
     TrainingSettings,
 )
-from ..core import io as core_io
 
 SCHEMA_VERSION = 1
 
@@ -204,6 +206,10 @@ class TrainManifest(Manifest):
     validation_subject_ids: list[str] = Field(
         description="Ordered subject IDs assigned to the validation split."
     )
+    test_subject_ids: list[str] = Field(
+        default_factory=list,
+        description="Ordered subject IDs held out for evaluation."
+    )
     detector_candidate_threshold: float = Field(
         ge=0,
         le=1,
@@ -252,6 +258,13 @@ class InferredSubject(FrozenModel):
     output_path: str = Field(description="Absolute path to the final detection mask.")
 
 
+class EvaluatedSubject(FrozenModel):
+    """Evaluation metrics published for one subject."""
+
+    subject_id: str = Field(description="Subject identifier.")
+    metrics: EvaluationMetrics = Field(description="Metrics for the subject.")
+
+
 class InferManifest(Manifest):
     """Manifest written after the internal inference pipe completes."""
 
@@ -290,6 +303,28 @@ class InferManifest(Manifest):
     )
     subjects: list[InferredSubject] = Field(
         description="Results published for each inferred subject."
+    )
+
+
+class EvaluateManifest(Manifest):
+    """Manifest written after scoring held-out inference results."""
+
+    manifest_type: Literal["evaluation"] = Field(
+        default="evaluation",
+        description="Stable discriminator for an evaluation manifest.",
+    )
+    dataset_dir: str = Field(
+        description="Absolute path to the preprocessed dataset evaluated."
+    )
+    device: str = Field(description="Torch device used for inference.")
+    inference_manifest_path: str = Field(
+        description="Absolute path to the inference manifest that was scored."
+    )
+    subjects: list[EvaluatedSubject] = Field(
+        description="Metrics produced for each evaluated subject."
+    )
+    aggregate: EvaluationAggregate = Field(
+        description="Metrics aggregated across evaluated subjects."
     )
 
 

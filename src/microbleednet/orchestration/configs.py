@@ -197,6 +197,26 @@ class InferConfig(FrozenModel):
         return self
 
 
+class EvaluateConfig(FrozenModel):
+    """Configuration for held-out final-pipeline evaluation."""
+
+    experiment_dir: Path = Field(
+        description="Experiment directory containing train and inference artifacts."
+    )
+    dataset_dir: Path = Field(
+        description="Indexed dataset directory containing preprocessed subjects."
+    )
+    device: str = Field(
+        default="cpu",
+        description="Torch device string, e.g. 'cpu' or 'cuda'.",
+    )
+
+    @model_validator(mode="after")
+    def validate_device(self) -> "EvaluateConfig":
+        ensure_device_available(self.device)
+        return self
+
+
 class BasePatchConfig(FrozenModel):
     experiment_layout: ExperimentLayout = Field(
         description="Layout that owns materialized patch paths.",

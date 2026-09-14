@@ -111,6 +111,10 @@ class ExperimentLayout(FrozenModel):
         default=Path("manifests/infer.json"),
         description="Inference manifest written after processing subjects.",
     )
+    evaluation_manifest: Path = Field(
+        default=Path("manifests/evaluate.json"),
+        description="Evaluation manifest written after scoring subjects.",
+    )
     inference_output_template: Path = Field(
         default=Path("infer/{subject_id}/detections.nii.gz"),
         description="Template for a subject's final detection mask.",
@@ -133,6 +137,9 @@ class ExperimentLayout(FrozenModel):
 
     def inference_manifest_path(self) -> Path:
         return self.experiment_dir / self.inference_manifest
+
+    def evaluation_manifest_path(self) -> Path:
+        return self.experiment_dir / self.evaluation_manifest
 
     def inference_output_path(self, subject_id: str) -> Path:
         return self.resolve(self.inference_output_template, subject_id=subject_id)
