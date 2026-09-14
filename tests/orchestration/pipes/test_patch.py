@@ -13,6 +13,7 @@ from microbleednet.orchestration.configs import (
 )
 from microbleednet.orchestration.layouts import ExperimentLayout
 from microbleednet.orchestration.manifests import (
+    PatchManifest,
     PreprocessedSubject,
     PreprocessedVariant,
 )
@@ -53,7 +54,7 @@ def _write_subject(
     )
 
 
-def test_execute_materializes_supplied_subjects_and_returns_records(
+def test_execute_materializes_supplied_subjects_and_writes_manifest(
     tmp_path: Path,
 ) -> None:
     subject = _write_subject(tmp_path / "inputs", "selected", has_microbleed=True)
@@ -69,9 +70,10 @@ def test_execute_materializes_supplied_subjects_and_returns_records(
         augmentation_factor=2,
     )
 
-    records = patch.execute(
-        config,
-    )
+    assert patch.execute(config) is None
+    records = PatchManifest.read(
+        experiment_layout.patch_manifest_path("detector", "train")
+    ).records
 
     assert all(record.patch_index == 0 for record in records)
     assert all(record.has_microbleed for record in records)
@@ -91,9 +93,10 @@ def test_execute_uses_configured_augmentation_factor(tmp_path: Path) -> None:
         augmentation_factor=1,
     )
 
-    records = patch.execute(
-        config,
-    )
+    assert patch.execute(config) is None
+    records = PatchManifest.read(
+        experiment_layout.patch_manifest_path("teacher", "validation")
+    ).records
 
     assert len(records) == 1
     assert np.load(records[0].volume_path).shape == (1, 24, 24, 24)
@@ -138,10 +141,18 @@ def test_target_centered_reuses_extractor_for_all_subjects(
         detector=detector,
     )
 
-    records = patch.execute(config)
+    assert patch.execute(config) is None
+    records = PatchManifest.read(
+        experiment_layout.patch_manifest_path("student", "train")
+    ).records
 
     assert len(instances) == 1
     assert len(records) == 2
+    manifest = PatchManifest.read(
+        experiment_layout.patch_manifest_path("student", "train")
+    )
+    assert manifest.subject_ids == ["first", "second"]
+    assert manifest.probability_threshold == 0.5
 
 
 def test_target_centered_extractor_uses_supplied_detector(
@@ -207,5 +218,8 @@ def test_execute_skips_subject_with_no_extracted_patches(
         lambda size: lambda volume, mask, frst: ExtractedPatches(empty, empty, empty),
     )
 
-    assert patch.execute(config) == []
+    assert patch.execute(config) is None
+    assert PatchManifest.read(
+        config.experiment_layout.patch_manifest_path("empty", "train")
+    ).records == []
 
