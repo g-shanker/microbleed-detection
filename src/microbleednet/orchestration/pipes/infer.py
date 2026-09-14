@@ -1,5 +1,7 @@
 """Run the internal detector/discriminator inference pipeline."""
 
+from typing import cast
+
 import torch
 
 from ...core import io as core_io
@@ -11,6 +13,7 @@ from ..layouts import ExperimentLayout
 from ..manifests import (
     InferManifest,
     InferredSubject,
+    ManifestStatus,
     timestamp,
 )
 from ..utils import release_gpu_memory
@@ -62,7 +65,7 @@ def execute(config: InferConfig) -> None:
             final_mask_array = core_processor.postprocess(
                 retained_labels,
                 volume,
-                volume_image.header.get_zooms()[:3],
+                cast(tuple[float, float, float], volume_image.header.get_zooms()[:3]),
                 MINIMUM_VOLUME_MM3,
                 MAXIMUM_ELLIPTICITY,
                 MINIMUM_BRAIN_DISTANCE_MM,
@@ -84,7 +87,7 @@ def execute(config: InferConfig) -> None:
 
         now = timestamp()
         InferManifest(
-            status="complete",
+            status=ManifestStatus.COMPLETE,
             created_at=now,
             updated_at=now,
             device=config.device,

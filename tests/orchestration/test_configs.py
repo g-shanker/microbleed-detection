@@ -5,8 +5,8 @@ from pydantic import ValidationError
 
 from microbleednet.core.common.models import CandidateDetector
 from microbleednet.orchestration.configs import (
-    InferConfig,
     IndexDataConfig,
+    InferConfig,
     PreprocessConfig,
     TargetCenteredPatchConfig,
     TrainConfig,
@@ -246,6 +246,27 @@ def test_infer_config_accepts_subjects_without_rechecking_variant_paths(
 
     assert config.subjects == [subject]
     assert config.device == "cpu"
+
+
+def test_infer_config_rejects_missing_student_checkpoint(tmp_path: Path) -> None:
+    experiment_dir = tmp_path / "experiment"
+    detector_checkpoint = ExperimentLayout(
+        experiment_dir=experiment_dir
+    ).best_checkpoint_path("detector")
+    detector_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    detector_checkpoint.touch()
+
+    subject = PreprocessedSubject(
+        subject_id="subject-1",
+        variants=[
+            PreprocessedVariant(
+                volume_path="volume", mask_path="mask", frst_path="frst"
+            )
+        ],
+    )
+
+    with pytest.raises(ValidationError, match="student checkpoint does not exist"):
+        InferConfig(subjects=[subject], experiment_dir=experiment_dir)
 
 
 def test_target_centered_config_validates_threshold(tmp_path: Path) -> None:

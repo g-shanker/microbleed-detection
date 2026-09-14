@@ -1,14 +1,7 @@
 import numpy as np
-from skimage.measure import label, regionprops
+from skimage.measure import regionprops
 
 from . import volume_ops
-
-
-def label_targets(
-    probability_map: np.ndarray, threshold: float
-) -> np.ndarray:
-    """Threshold and label connected target regions."""
-    return label(probability_map > threshold, connectivity=3)
 
 
 def get_target_centers(labels: np.ndarray) -> list[tuple[int, int, int]]:

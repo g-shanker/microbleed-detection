@@ -27,8 +27,8 @@ def infer_discriminator(
     discriminator_threshold: float,
 ) -> np.ndarray:
     """Threshold detector candidates, classify patches, and return retained labels."""
-    candidate_labels = patch_transforms.label_targets(
-        detector_probability, detector_threshold
+    candidate_labels = utils.label_components(
+        detector_probability > detector_threshold, utils.COMPONENT_CONNECTIVITY
     )
     centers = patch_transforms.get_target_centers(candidate_labels)
     if not centers:
