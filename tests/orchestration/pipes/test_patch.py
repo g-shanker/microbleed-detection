@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 import torch
 
+from microbleednet.core import utils
 from microbleednet.core.common.models import CandidateDetector
 from microbleednet.core.datamodels import ExtractedPatches
 from microbleednet.orchestration.configs import (
@@ -160,8 +161,8 @@ def test_target_centered_extractor_uses_supplied_detector(
 ) -> None:
     detector = CandidateDetector()
     monkeypatch.setattr(
-        patch.core_processor,
-        "infer",
+        utils,
+        "predict_logits",
         lambda model, volume: torch.zeros((2, 2, 2, 2)),
     )
     extractor = patch.TargetCenteredExtractor(
@@ -189,7 +190,7 @@ def test_target_centered_extracts_candidate(monkeypatch) -> None:
     logits = torch.zeros((2, 2, 2, 2))
     logits[1, 0, 0, 0] = 10
     monkeypatch.setattr(
-        patch.core_processor, "infer", lambda model, volume: logits
+        utils, "predict_logits", lambda model, volume: logits
     )
 
     extracted = extractor(

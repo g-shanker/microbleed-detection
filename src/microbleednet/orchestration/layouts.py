@@ -107,6 +107,14 @@ class ExperimentLayout(FrozenModel):
         default=Path("train/{stage}/patches/{split}"),
         description="Relative template for a stage and split's patch directory.",
     )
+    inference_manifest: Path = Field(
+        default=Path("manifests/infer.json"),
+        description="Inference manifest written after processing subjects.",
+    )
+    inference_output_template: Path = Field(
+        default=Path("infer/{subject_id}/detections.nii.gz"),
+        description="Template for a subject's final detection mask.",
+    )
 
     def resolve(self, template: Path, **values: str) -> Path:
         return self.experiment_dir / str(template).format(**values)
@@ -122,6 +130,12 @@ class ExperimentLayout(FrozenModel):
 
     def patch_dir_path(self, stage: str, split: str) -> Path:
         return self.resolve(self.patch_dir_template, stage=stage, split=split)
+
+    def inference_manifest_path(self) -> Path:
+        return self.experiment_dir / self.inference_manifest
+
+    def inference_output_path(self, subject_id: str) -> Path:
+        return self.resolve(self.inference_output_template, subject_id=subject_id)
 
     def patch_volume_path(
         self, stage: str, split: str, subject_id: str, variant: int

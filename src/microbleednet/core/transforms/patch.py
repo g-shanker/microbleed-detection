@@ -4,16 +4,22 @@ from skimage.measure import label, regionprops
 from . import volume_ops
 
 
-def get_target_centers(mask: np.ndarray) -> list[tuple[int, int, int]]:
-    """Return rounded centers of connected target regions."""
-    labeled = label(mask > 0, connectivity=3)
+def label_targets(
+    probability_map: np.ndarray, threshold: float
+) -> np.ndarray:
+    """Threshold and label connected target regions."""
+    return label(probability_map > threshold, connectivity=3)
+
+
+def get_target_centers(labels: np.ndarray) -> list[tuple[int, int, int]]:
+    """Return rounded centers of connected labeled target regions."""
     return [
         (
             int(round(region.centroid[0])),
             int(round(region.centroid[1])),
             int(round(region.centroid[2])),
         )
-        for region in regionprops(labeled)
+        for region in regionprops(labels)
     ]
 
 
