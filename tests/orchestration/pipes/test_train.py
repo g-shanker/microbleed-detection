@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
@@ -62,7 +63,7 @@ def test_execute_runs_stages_with_fixed_training_values(
             layout: ExperimentLayout,
             _device: torch.device,
             *_dependencies,
-        ) -> Path:
+        ) -> list:
             calls.append(
                 (
                     name,
@@ -71,7 +72,7 @@ def test_execute_runs_stages_with_fixed_training_values(
                     _dependencies,
                 )
             )
-            return layout.best_checkpoint_path(checkpoint_name)
+            return []
 
         return stage
 
@@ -93,9 +94,29 @@ def test_execute_runs_stages_with_fixed_training_values(
         )
     )
 
+    train_manifest = train.TrainManifest.read(
+        ExperimentLayout(experiment_dir=experiment_dir).train_manifest_path()
+    )
     assert [call[0] for call in calls] == ["detector", "teacher", "student"]
     assert all(call[1:3] == calls[0][1:3] for call in calls)
-    assert calls[2][3][-1] == train.DETECTOR_CANDIDATE_THRESHOLD
+    assert calls[2][3] == (train.TrainingSettings(),)
+    assert train_manifest.dataset_dir == str(dataset_dir.resolve())
+    assert train_manifest.device == "cpu"
+    assert train_manifest.train_size == train.TRAIN_SIZE
+    assert train_manifest.train_subject_ids == calls[0][1]
+    assert train_manifest.validation_subject_ids == calls[0][2]
+    assert (
+        train_manifest.detector_candidate_threshold
+        == train.DETECTOR_CANDIDATE_THRESHOLD
+    )
+    assert (
+        train_manifest.training_settings.batch_size
+        == train.TrainingSettings().batch_size
+    )
+    assert (
+        ExperimentLayout(experiment_dir=experiment_dir).train_manifest_path()
+        == experiment_dir / "manifests" / "train.json"
+    )
 
 
 def test_stage_functions_apply_fixed_training_recipe(
@@ -123,7 +144,13 @@ def test_stage_functions_apply_fixed_training_recipe(
 
     def extract(config):
         patch_calls.append(config)
-        return [object(), object()]
+        return None
+
+    monkeypatch.setattr(
+        train.PatchManifest,
+        "read",
+        lambda path: SimpleNamespace(records=[object(), object()]),
+    )
 
     monkeypatch.setattr(train.patch, "execute", extract)
     monkeypatch.setattr(train, "SegmentationPatchDataset", FakeDataset)
@@ -161,19 +188,20 @@ def test_stage_functions_apply_fixed_training_recipe(
     detector_checkpoint.parent.mkdir(parents=True)
     detector_checkpoint.touch()
 
-    train.train_detector(subjects, subjects, layout, device)
-    train.train_teacher(subjects, subjects, layout, device)
+    settings = train.TrainingSettings()
+    train.train_detector(subjects, subjects, layout, device, settings)
+    train.train_teacher(subjects, subjects, layout, device, settings)
     train.train_student(
         subjects,
         subjects,
         layout,
         device,
-        0.25,
+        settings,
     )
 
     assert [call.patch_size for call in patch_calls] == [48, 48, 24, 24, 24, 24]
     assert [call.augmentation_factor for call in patch_calls] == [10, 1, 5, 1, 5, 1]
-    assert patch_calls[4].probability_threshold == 0.25
+    assert patch_calls[4].probability_threshold == train.DETECTOR_CANDIDATE_THRESHOLD
     assert patch_calls[4].detector is patch_calls[5].detector
     assert len(trainer_calls) == 6
     assert len(initialized) == 1
