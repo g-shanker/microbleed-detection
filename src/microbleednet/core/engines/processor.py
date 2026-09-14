@@ -3,10 +3,10 @@ from typing import cast
 import nibabel as nib
 import numpy as np
 from scipy.ndimage import distance_transform_edt
-from skimage.measure import label, regionprops
+from skimage.measure import regionprops
 from skimage.measure._regionprops import RegionProperties
 
-from .. import io
+from .. import io, utils
 from ..datamodels import (
     FloatArray,
     IntArray,
@@ -65,8 +65,10 @@ def postprocess(
 ) -> np.ndarray:
     """Apply volume, shape, and brain-boundary filters."""
     brain_mask = volume > 0
-    brain_distance = distance_transform_edt(brain_mask, sampling=voxel_sizes)
-    labels = label(candidate_mask > 0, connectivity=3)
+    brain_distance = cast(
+        np.ndarray, distance_transform_edt(brain_mask, sampling=voxel_sizes)
+    )
+    labels = utils.label_components(candidate_mask, utils.COMPONENT_CONNECTIVITY)
     output = np.zeros_like(candidate_mask, dtype=np.uint8)
     voxel_volume = float(np.prod(voxel_sizes))
     voxel_regions = regionprops(labels)
@@ -78,7 +80,10 @@ def postprocess(
             continue
         if component_ellipticity(physical_region) > maximum_ellipticity:
             continue
-        centroid = tuple(int(round(value)) for value in voxel_region.centroid)
+        centroid = cast(
+            tuple[int, int, int],
+            tuple(int(round(value)) for value in voxel_region.centroid),
+        )
         if brain_distance[centroid] < minimum_brain_distance_mm:
             continue
         output[labels == voxel_region.label] = 1

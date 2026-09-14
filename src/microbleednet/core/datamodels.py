@@ -98,6 +98,38 @@ class TrainingSettings(FrozenModel):
     )
 
 
+class EvaluationMetrics(FrozenModel):
+    """Lesion-level metrics for one prediction/reference mask pair."""
+
+    true_positive: int = Field(
+        ge=0, description="Reference components matched by predicted components."
+    )
+    false_positive: int = Field(
+        ge=0, description="Predicted components that did not match a reference."
+    )
+    false_negative: int = Field(
+        ge=0, description="Reference components missed by the prediction."
+    )
+    cluster_tpr: float = Field(
+        ge=0,
+        le=1,
+        description="Matched reference components divided by all reference components.",
+    )
+    cluster_precision: float = Field(
+        ge=0,
+        le=1,
+        description="Matched predicted components divided by all predicted components.",
+    )
+
+class EvaluationAggregate(EvaluationMetrics):
+    """Aggregated lesion-level metrics for an evaluated cohort."""
+
+    false_positives_per_subject: float = Field(
+        ge=0,
+        description="Average number of unmatched predicted components per subject.",
+    )
+
+
 @dataclass(frozen=True)
 class PreprocessResult:
     image: FloatArray

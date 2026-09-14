@@ -4,7 +4,7 @@ from typing import cast
 
 import numpy as np
 
-from ...core import io
+from ...core import io, utils
 from ...core.common.models import CandidateDetector
 from ...core.datamodels import ExtractedPatches, PatchRecord
 from ...core.engines import inference as core_inference
@@ -15,7 +15,7 @@ from ..configs import (
     NonOverlappingPatchConfig,
     TargetCenteredPatchConfig,
 )
-from ..manifests import PatchManifest, timestamp
+from ..manifests import ManifestStatus, PatchManifest, timestamp
 
 
 def execute(
@@ -73,7 +73,7 @@ def execute(
             )
 
     PatchManifest(
-        status="complete",
+        status=ManifestStatus.COMPLETE,
         created_at=timestamp(),
         updated_at=timestamp(),
         stage=config.stage,
@@ -140,8 +140,8 @@ class TargetCenteredExtractor:
         probability_map = core_inference.infer_detector(
             self.detector, volume, frst
         )
-        candidate_labels = patch_transforms.label_targets(
-            probability_map, self.threshold
+        candidate_labels = utils.label_components(
+            probability_map > self.threshold, utils.COMPONENT_CONNECTIVITY
         )
         centers = patch_transforms.get_target_centers(candidate_labels)
         volume_patches = patch_transforms.extract_centered_patches(
