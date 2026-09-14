@@ -3,9 +3,11 @@ from unittest.mock import Mock
 import nibabel as nib
 import numpy as np
 import pytest
+import torch
 import torch.nn as nn
 
-from microbleednet.core.engines import processor
+from microbleednet.core import utils
+from microbleednet.core.engines import inference, processor
 
 
 def _volume(shape: tuple[int, int, int] = (2, 2, 2), affine=None) -> nib.Nifti1Image:
@@ -69,20 +71,70 @@ def test_preprocess_rejects_reoriented_mask_with_different_shape() -> None:
         processor.preprocess(_volume(), _volume((1, 2, 2)), "QSM")
 
 
-def test_infer_builds_batched_volume_on_model_device() -> None:
+def test_predict_logits_builds_batched_volume_on_model_device() -> None:
     model = nn.Conv3d(2, 2, kernel_size=1)
 
     volume = np.stack((np.ones((2, 2, 2)), np.zeros((2, 2, 2))))
-    result = processor.infer(model, volume)
+    result = utils.predict_logits(model, volume)
 
     assert result.shape == (2, 2, 2, 2)
     assert not model.training
 
 
-def test_infer_uses_persisted_frst_channel() -> None:
+def test_predict_logits_uses_persisted_frst_channel() -> None:
     model = nn.Conv3d(2, 2, kernel_size=1)
 
     volume = np.stack((np.ones((2, 2, 2)), np.zeros((2, 2, 2))))
-    result = processor.infer(model, volume)
+    result = utils.predict_logits(model, volume)
 
     assert result.shape == (2, 2, 2, 2)
+
+
+def test_detector_probability_uses_volume_and_frst_channels(monkeypatch) -> None:
+    logits = torch.zeros((2, 2, 2, 2))
+    logits[1, 0, 0, 0] = 10
+    monkeypatch.setattr(utils, "predict_logits", lambda model, volume: logits)
+
+    probability_map = inference.infer_detector(
+        nn.Conv3d(2, 2, kernel_size=1),
+        np.ones((2, 2, 2)),
+        np.zeros((2, 2, 2)),
+    )
+
+    assert probability_map.shape == (2, 2, 2)
+    assert probability_map[0, 0, 0] > 0.5
+
+
+def test_infer_discriminator_returns_retained_candidate_volume() -> None:
+    detector_probability = np.zeros((3, 3, 3))
+    detector_probability[0, 0, 0] = 0.9
+    detector_probability[2, 2, 2] = 0.9
+    volume = np.ones((3, 3, 3))
+    frst = np.ones((3, 3, 3))
+
+    class Student(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.device_parameter = nn.Parameter(torch.zeros(1))
+            self.batch_sizes = []
+
+        def forward(self, inputs):
+            self.batch_sizes.append(inputs.shape[0])
+            if len(self.batch_sizes) == 1:
+                return torch.tensor([[0.0, 2.0]])
+            return torch.tensor([[2.0, 0.0]])
+
+    student = Student()
+    output = inference.infer_discriminator(
+        student,
+        volume,
+        frst,
+        detector_probability,
+        detector_threshold=0.5,
+        patch_size=2,
+        discriminator_threshold=0.5,
+    )
+
+    assert output[0, 0, 0] == 1
+    assert output[2, 2, 2] == 0
+    assert student.batch_sizes == [1, 1]

@@ -23,6 +23,14 @@ def get_model_device(model: nn.Module) -> torch.device:
     return next(model.parameters()).device
 
 
+def predict_logits(model: nn.Module, model_input: np.ndarray) -> torch.Tensor:
+    model.eval()
+    model_device = get_model_device(model)
+    model_input = torch.from_numpy(model_input).float().unsqueeze(0)
+    with torch.no_grad():
+        return model(model_input.to(model_device))[0]
+
+
 def microbleed_probability(logits: torch.Tensor) -> np.ndarray:
     """Return the microbleed channel of unbatched two-class logits."""
     return F.softmax(logits, dim=0)[1].detach().cpu().numpy()
