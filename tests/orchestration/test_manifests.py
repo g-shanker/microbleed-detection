@@ -3,11 +3,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from microbleednet.core.datamodels import TrainingSettings
 from microbleednet.orchestration import atomic_io
 from microbleednet.orchestration.manifests import (
     Manifest,
     ManifestStatus,
     RawDatasetManifest,
+    TrainManifest,
     timestamp,
 )
 
@@ -97,3 +99,42 @@ def test_read_manifest_rejects_payload_that_fails_schema_validation(
     atomic_io.write_json_atomic(path, _envelope())
     with pytest.raises(ValueError, match="invalid manifest at"):
         RawDatasetManifest.read(path)
+
+
+def test_train_manifest_round_trips_split_and_training_settings(
+    tmp_path: Path,
+) -> None:
+    now = timestamp()
+    manifest = TrainManifest(
+        status=ManifestStatus.COMPLETE,
+        created_at=now,
+        updated_at=now,
+        dataset_dir="C:/datasets/preprocessed",
+        device="cuda:0",
+        train_size=0.7,
+        train_subject_ids=["train-1"],
+        validation_subject_ids=["validation-1"],
+        detector_candidate_threshold=0.5,
+        detector_augmentation_factor=10,
+        discriminator_augmentation_factor=5,
+        validation_augmentation_factor=1,
+        detector_patch_size=48,
+        discriminator_patch_size=24,
+        num_workers=0,
+        pin_memory=False,
+        training_settings=TrainingSettings(),
+        detector_history=[],
+        teacher_history=[],
+        student_history=[],
+    )
+    path = tmp_path / "train.json"
+
+    manifest.write(path)
+
+    loaded = TrainManifest.read(path)
+    assert loaded.dataset_dir == "C:/datasets/preprocessed"
+    assert loaded.device == "cuda:0"
+    assert loaded.train_subject_ids == ["train-1"]
+    assert loaded.validation_subject_ids == ["validation-1"]
+    assert loaded.training_settings.batch_size == 8
+    assert loaded.detector_history == []
