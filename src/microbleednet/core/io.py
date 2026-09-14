@@ -1,9 +1,10 @@
-"""NIfTI, array, and checkpoint I/O used by core operations."""
+"""Atomic JSON, NIfTI, array, and checkpoint I/O used by core operations."""
 
+import json
 import os
 import tempfile
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import nibabel as nib
 import numpy as np
@@ -12,6 +13,31 @@ import torch.nn as nn
 
 from . import utils
 from .datamodels import CheckpointState
+
+
+def write_json_atomic(path: Path, data: dict[str, Any] | list[Any]) -> None:
+    """Serialize ``data`` to ``path`` as JSON, replacing it atomically."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, delete=False
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            json.dump(data, temporary_file, indent=2, sort_keys=True)
+            temporary_file.write("\n")
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def read_json(path: Path) -> Any:
+    """Read and parse a JSON document from ``path``."""
+    with path.open(encoding="utf-8") as json_file:
+        return json.load(json_file)
 
 
 def load_volume(path: Path | str) -> nib.Nifti1Image:
