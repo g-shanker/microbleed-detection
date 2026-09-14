@@ -16,7 +16,7 @@ Rules enforced here (see ``ARCHITECTURE.md``):
 
 The models and their read/write helpers live together because the behavior is
 intrinsic to the type and layer-agnostic: the helpers depend only on
-:mod:`microbleednet.orchestration.atomic_io`, so manifest persistence does not
+:mod:`microbleednet.core.io`, so manifest persistence does not
 pull in the ML stack.
 """
 
@@ -34,7 +34,7 @@ from ..core.datamodels import (
     PatchRecord,
     TrainingSettings,
 )
-from . import atomic_io
+from ..core import io as core_io
 
 SCHEMA_VERSION = 1
 
@@ -74,14 +74,14 @@ class Manifest(FrozenModel):
 
     def write(self, path: Path) -> None:
         """Serialize this manifest to ``path`` atomically as versioned JSON."""
-        atomic_io.write_json_atomic(path, self.model_dump(mode="json"))
+        core_io.write_json_atomic(path, self.model_dump(mode="json"))
 
     @classmethod
     def read[ManifestType: Manifest](
         cls: type[ManifestType], path: Path
     ) -> ManifestType:
         """Load and validate a complete manifest from ``path``."""
-        payload = atomic_io.read_json(path)
+        payload = core_io.read_json(path)
         if not isinstance(payload, dict) or "schema_version" not in payload:
             raise ValueError(
                 f"{path} is not a versioned manifest; regenerate it with the current "
@@ -242,6 +242,54 @@ class TrainManifest(Manifest):
     )
     student_history: list[EpochLoss] = Field(
         description="Epoch loss history for candidate student training."
+    )
+
+
+class InferredSubject(FrozenModel):
+    """Published result metadata for one inferred preprocessed subject."""
+
+    subject_id: str = Field(description="Subject identifier.")
+    output_path: str = Field(description="Absolute path to the final detection mask.")
+
+
+class InferManifest(Manifest):
+    """Manifest written after the internal inference pipe completes."""
+
+    manifest_type: Literal["inference"] = Field(
+        default="inference",
+        description="Stable discriminator for an inference manifest.",
+    )
+    device: str = Field(description="Torch device used for inference.")
+    detector_checkpoint_path: str = Field(description="Detector checkpoint used.")
+    student_checkpoint_path: str = Field(description="Student checkpoint used.")
+    detector_threshold: float = Field(
+        ge=0,
+        le=1,
+        description="Detector probability threshold used for candidates.",
+    )
+    student_threshold: float = Field(
+        ge=0,
+        le=1,
+        description="Student probability threshold used for retained candidates.",
+    )
+    discriminator_patch_size: int = Field(
+        gt=0,
+        description="Cubic candidate patch edge length in voxels.",
+    )
+    minimum_volume_mm3: float = Field(
+        ge=0,
+        description="Minimum retained component volume in cubic millimetres.",
+    )
+    maximum_ellipticity: float = Field(
+        ge=0,
+        description="Maximum retained component ellipticity.",
+    )
+    minimum_brain_distance_mm: float = Field(
+        ge=0,
+        description="Minimum retained centroid distance from the brain boundary.",
+    )
+    subjects: list[InferredSubject] = Field(
+        description="Results published for each inferred subject."
     )
 
 

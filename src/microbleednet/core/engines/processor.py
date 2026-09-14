@@ -2,10 +2,11 @@ from typing import cast
 
 import nibabel as nib
 import numpy as np
-import torch
-import torch.nn as nn
+from scipy.ndimage import distance_transform_edt
+from skimage.measure import label, regionprops
+from skimage.measure._regionprops import RegionProperties
 
-from .. import io, utils
+from .. import io
 from ..datamodels import (
     FloatArray,
     IntArray,
@@ -54,9 +55,39 @@ def preprocess(
     return PreprocessResult(volume_array, mask_array, cropped_affine)
 
 
-def infer(model: nn.Module, volume: np.ndarray) -> torch.Tensor:
-    model.eval()
-    model_device = utils.get_model_device(model)
-    model_input = torch.from_numpy(volume).float().unsqueeze(0)
-    with torch.no_grad():
-        return model(model_input.to(model_device))[0]
+def postprocess(
+    candidate_mask: np.ndarray,
+    volume: np.ndarray,
+    voxel_sizes: tuple[float, float, float],
+    minimum_volume_mm3: float,
+    maximum_ellipticity: float,
+    minimum_brain_distance_mm: float,
+) -> np.ndarray:
+    """Apply volume, shape, and brain-boundary filters."""
+    brain_mask = volume > 0
+    brain_distance = distance_transform_edt(brain_mask, sampling=voxel_sizes)
+    labels = label(candidate_mask > 0, connectivity=3)
+    output = np.zeros_like(candidate_mask, dtype=np.uint8)
+    voxel_volume = float(np.prod(voxel_sizes))
+    voxel_regions = regionprops(labels)
+    physical_regions = regionprops(labels, spacing=voxel_sizes)
+    for voxel_region, physical_region in zip(
+        voxel_regions, physical_regions, strict=True
+    ):
+        if voxel_region.area * voxel_volume < minimum_volume_mm3:
+            continue
+        if component_ellipticity(physical_region) > maximum_ellipticity:
+            continue
+        centroid = tuple(int(round(value)) for value in voxel_region.centroid)
+        if brain_distance[centroid] < minimum_brain_distance_mm:
+            continue
+        output[labels == voxel_region.label] = 1
+    return output
+
+
+def component_ellipticity(region: RegionProperties) -> float:
+    eigenvalues = np.asarray(region.inertia_tensor_eigvals, dtype=float)
+    maximum = float(np.max(eigenvalues)) if eigenvalues.size else 0.0
+    if maximum <= 0:
+        return 0.0
+    return 1.0 - float(np.min(eigenvalues)) / maximum

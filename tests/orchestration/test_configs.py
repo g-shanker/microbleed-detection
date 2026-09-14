@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from microbleednet.core.common.models import CandidateDetector
 from microbleednet.orchestration.configs import (
+    InferConfig,
     IndexDataConfig,
     PreprocessConfig,
     TargetCenteredPatchConfig,
@@ -217,6 +218,34 @@ def test_train_config_accepts_complete_manifest_without_training_policy(
         subjects=missing_subjects,
     ).write(manifest_path)
     TrainConfig(dataset_dir=dataset_dir, experiment_dir=tmp_path / "experiment")
+
+
+def test_infer_config_accepts_subjects_without_rechecking_variant_paths(
+    tmp_path: Path,
+) -> None:
+    experiment_dir = tmp_path / "experiment"
+    for stage in ("detector", "student"):
+        checkpoint = ExperimentLayout(
+            experiment_dir=experiment_dir
+        ).best_checkpoint_path(stage)
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint.touch()
+
+    subject = PreprocessedSubject(
+        subject_id="subject-1",
+        variants=[
+            PreprocessedVariant(
+                volume_path=str(tmp_path / "missing-volume.nii.gz"),
+                mask_path=str(tmp_path / "missing-mask.nii.gz"),
+                frst_path=str(tmp_path / "missing-frst.nii.gz"),
+            )
+        ],
+    )
+
+    config = InferConfig(subjects=[subject], experiment_dir=experiment_dir)
+
+    assert config.subjects == [subject]
+    assert config.device == "cpu"
 
 
 def test_target_centered_config_validates_threshold(tmp_path: Path) -> None:
