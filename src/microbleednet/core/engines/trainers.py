@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 
 from .. import io, utils
 from ..common.tasks import BaseTask
-from ..datamodels import CheckpointState, EpochLoss, TrainingSettings
+from ..datamodels import CheckpointState, EpochLoss, TrainingHyperparameters
 from .evaluators import Evaluator
 
 
@@ -18,10 +18,10 @@ class Trainer:
         model: nn.Module,
         task: BaseTask,
         best_checkpoint: Path,
-        settings: TrainingSettings,
+        hyperparameters: TrainingHyperparameters,
     ):
         self.model = model
-        self.settings = settings
+        self.hyperparameters = hyperparameters
         self.best_checkpoint = best_checkpoint
         self.epochs_without_improvement = 0
 
@@ -29,22 +29,26 @@ class Trainer:
 
         self.device = utils.get_model_device(self.model)
         self.task = task.to(self.device)
-        self.use_amp = bool(settings.use_amp and self.device.type == "cuda")
+        self.use_amp = bool(
+            hyperparameters.use_amp and self.device.type == "cuda"
+        )
 
         self.optimizer = optim.Adam(
             self.model.parameters(),
-            lr=settings.learning_rate,
-            eps=settings.adam_epsilon,
-            weight_decay=settings.weight_decay,
+            lr=hyperparameters.learning_rate,
+            eps=hyperparameters.adam_epsilon,
+            weight_decay=hyperparameters.weight_decay,
         )
 
-        floor_ratio = settings.minimum_learning_rate / settings.learning_rate
+        floor_ratio = (
+            hyperparameters.minimum_learning_rate / hyperparameters.learning_rate
+        )
         self.scheduler = optim.lr_scheduler.LambdaLR(
             self.optimizer,
             lambda epoch: max(
                 floor_ratio,
-                settings.learning_rate_factor
-                ** (epoch // settings.learning_rate_period),
+                hyperparameters.learning_rate_factor
+                ** (epoch // hyperparameters.learning_rate_period),
             ),
         )
 
@@ -64,7 +68,7 @@ class Trainer:
         validation_loader: DataLoader,
     ) -> list[EpochLoss]:
         history = []
-        for epoch in range(self.settings.max_epochs):
+        for epoch in range(self.hyperparameters.max_epochs):
             training_loss = self.train_epoch(train_loader)
             val_loss = self.evaluator.validation_loss(validation_loader)
             history.append(
@@ -75,7 +79,7 @@ class Trainer:
                 )
             )
             is_best = val_loss < (
-                self.best_val_loss - self.settings.minimum_improvement
+                self.best_val_loss - self.hyperparameters.minimum_improvement
             )
 
             if is_best:
@@ -86,7 +90,7 @@ class Trainer:
 
             if is_best:
                 self.save_checkpoint(epoch)
-            if self.epochs_without_improvement >= self.settings.patience:
+            if self.epochs_without_improvement >= self.hyperparameters.patience:
                 break
         return history
 
