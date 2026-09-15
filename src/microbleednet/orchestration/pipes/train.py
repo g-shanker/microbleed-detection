@@ -26,7 +26,12 @@ from ...core.dataloading.datasets import (
     SegmentationPatchDataset,
 )
 from ...core.dataloading.samplers import EqualBatchSampler
-from ...core.datamodels import EpochLoss, PatchRecord, TrainingSettings
+from ...core.datamodels import (
+    EpochLoss,
+    PatchRecord,
+    PatchSizes,
+    TrainingHyperparameters,
+)
 from ...core.engines.trainers import Trainer
 from .. import utils
 from ..configs import (
@@ -46,20 +51,14 @@ from ..manifests import (
 )
 from . import patch
 
-TRAIN_SIZE = 0.7
-VALIDATION_SIZE = 0.1
-TEST_SIZE = 0.2
-DETECTOR_CANDIDATE_THRESHOLD = 0.5
-DETECTOR_AUGMENTATION_FACTOR = 10
-DISCRIMINATOR_AUGMENTATION_FACTOR = 5
 VALIDATION_AUGMENTATION_FACTOR = 1
-DETECTOR_PATCH_SIZE = 48
-DISCRIMINATOR_PATCH_SIZE = 24
-NUM_WORKERS = 0
-PIN_MEMORY = False
 
 
 def execute(config: TrainConfig) -> None:
+    if config.seed is not None:
+        torch.manual_seed(config.seed)
+        torch.cuda.manual_seed_all(config.seed)
+
     config.experiment_dir.mkdir(parents=True, exist_ok=True)
     experiment_layout = ExperimentLayout(experiment_dir=config.experiment_dir)
     dataset_layout = DatasetLayout(dataset_dir=config.dataset_dir)
@@ -67,39 +66,43 @@ def execute(config: TrainConfig) -> None:
         dataset_layout.preprocessed_manifest_path()
     )
     train_subjects, validation_subjects, test_subjects = split_subjects(
-        preprocessed_manifest.subjects
+        preprocessed_manifest.subjects,
+        config.train_size,
+        config.validation_size,
+        config.test_size,
+        config.seed,
     )
-    settings = TrainingSettings()
     device = torch.device(config.device)
     detector_history = train_detector(
         train_subjects,
         validation_subjects,
         experiment_layout,
         device,
-        settings,
+        config,
     )
     teacher_history = train_teacher(
         train_subjects,
         validation_subjects,
         experiment_layout,
         device,
-        settings,
+        config,
     )
     student_history = train_student(
         train_subjects,
         validation_subjects,
         experiment_layout,
         device,
-        settings,
+        config,
     )
     write_train_manifest(
         experiment_layout,
         config.dataset_dir,
         config.device,
+        config.seed,
         train_subjects,
         validation_subjects,
         test_subjects,
-        settings,
+        config,
         detector_history,
         teacher_history,
         student_history,
@@ -108,18 +111,23 @@ def execute(config: TrainConfig) -> None:
 
 def split_subjects(
     subjects: list[PreprocessedSubject],
+    train_size: float,
+    validation_size: float,
+    test_size: float,
+    seed: int | None = None,
 ) -> tuple[
     list[PreprocessedSubject], list[PreprocessedSubject], list[PreprocessedSubject]
 ]:
     train_subjects, held_out_subjects = cast(
         tuple[list[PreprocessedSubject], list[PreprocessedSubject]],
-        train_test_split(subjects, train_size=TRAIN_SIZE),
+        train_test_split(subjects, train_size=train_size, random_state=seed),
     )
     validation_subjects, test_subjects = cast(
         tuple[list[PreprocessedSubject], list[PreprocessedSubject]],
         train_test_split(
             held_out_subjects,
-            train_size=VALIDATION_SIZE / (VALIDATION_SIZE + TEST_SIZE),
+            train_size=validation_size / (validation_size + test_size),
+            random_state=seed,
         ),
     )
     return train_subjects, validation_subjects, test_subjects
@@ -129,10 +137,11 @@ def write_train_manifest(
     experiment_layout: ExperimentLayout,
     dataset_dir: Path,
     device: str,
+    seed: int | None,
     train_subjects: list[PreprocessedSubject],
     validation_subjects: list[PreprocessedSubject],
     test_subjects: list[PreprocessedSubject],
-    settings: TrainingSettings,
+    config: TrainConfig,
     detector_history: list[EpochLoss],
     teacher_history: list[EpochLoss],
     student_history: list[EpochLoss],
@@ -144,21 +153,24 @@ def write_train_manifest(
         updated_at=now,
         dataset_dir=str(dataset_dir.resolve()),
         device=device,
-        train_size=TRAIN_SIZE,
+        seed=seed,
+        train_size=config.train_size,
+        validation_size=config.validation_size,
+        test_size=config.test_size,
         train_subject_ids=[subject.subject_id for subject in train_subjects],
         validation_subject_ids=[
             subject.subject_id for subject in validation_subjects
         ],
         test_subject_ids=[subject.subject_id for subject in test_subjects],
-        detector_candidate_threshold=DETECTOR_CANDIDATE_THRESHOLD,
-        detector_augmentation_factor=DETECTOR_AUGMENTATION_FACTOR,
-        discriminator_augmentation_factor=DISCRIMINATOR_AUGMENTATION_FACTOR,
+        detector_candidate_threshold=config.detector_candidate_threshold,
+        detector_augmentation_factor=config.detector_augmentation_factor,
+        discriminator_augmentation_factor=config.discriminator_augmentation_factor,
         validation_augmentation_factor=VALIDATION_AUGMENTATION_FACTOR,
-        detector_patch_size=DETECTOR_PATCH_SIZE,
-        discriminator_patch_size=DISCRIMINATOR_PATCH_SIZE,
-        num_workers=NUM_WORKERS,
-        pin_memory=PIN_MEMORY,
-        training_settings=settings,
+        detector_patch_size=PatchSizes.DETECTOR,
+        discriminator_patch_size=PatchSizes.DISCRIMINATOR,
+        num_workers=config.num_workers,
+        pin_memory=config.pin_memory,
+        training_settings=config.training_settings,
         detector_history=detector_history,
         teacher_history=teacher_history,
         student_history=student_history,
@@ -172,32 +184,34 @@ def train_stage(
     validation_dataset: BasePatchDataset,
     experiment_layout: ExperimentLayout,
     stage: str,
-    settings: TrainingSettings,
+    hyperparameters: TrainingHyperparameters,
+    num_workers: int,
+    pin_memory: bool,
 ) -> list[EpochLoss]:
     train_loader = DataLoader(
         train_dataset,
         batch_sampler=EqualBatchSampler(
             train_dataset.patches,
-            batch_size=settings.batch_size,
+            batch_size=hyperparameters.batch_size,
         ),
-        num_workers=NUM_WORKERS,
-        pin_memory=PIN_MEMORY,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
     )
     validation_loader = DataLoader(
         validation_dataset,
         batch_sampler=BatchSampler(
             SequentialSampler(validation_dataset),
-            batch_size=settings.batch_size,
+            batch_size=hyperparameters.batch_size,
             drop_last=False,
         ),
-        num_workers=NUM_WORKERS,
-        pin_memory=PIN_MEMORY,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
     )
     return Trainer(
         model,
         task,
         best_checkpoint=experiment_layout.best_checkpoint_path(stage),
-        settings=settings,
+        hyperparameters=hyperparameters,
     ).fit(train_loader, validation_loader)
 
 
@@ -213,7 +227,7 @@ def train_detector(
     validation_subjects: list[PreprocessedSubject],
     experiment_layout: ExperimentLayout,
     device: torch.device,
-    settings: TrainingSettings,
+    config: TrainConfig,
 ) -> list[EpochLoss]:
     train_records = extract_patch_records(
         NonOverlappingPatchConfig(
@@ -221,8 +235,8 @@ def train_detector(
             stage="detector",
             split="train",
             subjects=train_subjects,
-            patch_size=DETECTOR_PATCH_SIZE,
-            augmentation_factor=DETECTOR_AUGMENTATION_FACTOR,
+            patch_size=PatchSizes.DETECTOR,
+            augmentation_factor=config.detector_augmentation_factor,
         )
     )
     validation_records = extract_patch_records(
@@ -231,7 +245,7 @@ def train_detector(
             stage="detector",
             split="validation",
             subjects=validation_subjects,
-            patch_size=DETECTOR_PATCH_SIZE,
+            patch_size=PatchSizes.DETECTOR,
             augmentation_factor=VALIDATION_AUGMENTATION_FACTOR,
         )
     )
@@ -244,7 +258,9 @@ def train_detector(
             SegmentationPatchDataset(validation_records),
             experiment_layout,
             "detector",
-            settings,
+            config.training_settings,
+            config.num_workers,
+            config.pin_memory,
         )
     finally:
         del detector
@@ -257,7 +273,7 @@ def train_teacher(
     validation_subjects: list[PreprocessedSubject],
     experiment_layout: ExperimentLayout,
     device: torch.device,
-    settings: TrainingSettings,
+    config: TrainConfig,
 ) -> list[EpochLoss]:
     teacher = CandidateDiscriminatorTeacher()
     initializer = CandidateDetector()
@@ -278,8 +294,8 @@ def train_teacher(
             stage="teacher",
             split="train",
             subjects=train_subjects,
-            patch_size=DISCRIMINATOR_PATCH_SIZE,
-            augmentation_factor=DISCRIMINATOR_AUGMENTATION_FACTOR,
+            patch_size=PatchSizes.DISCRIMINATOR,
+            augmentation_factor=config.discriminator_augmentation_factor,
         )
     )
     validation_records = extract_patch_records(
@@ -288,7 +304,7 @@ def train_teacher(
             stage="teacher",
             split="validation",
             subjects=validation_subjects,
-            patch_size=DISCRIMINATOR_PATCH_SIZE,
+            patch_size=PatchSizes.DISCRIMINATOR,
             augmentation_factor=VALIDATION_AUGMENTATION_FACTOR,
         )
     )
@@ -300,7 +316,9 @@ def train_teacher(
             SegmentationClassificationPatchDataset(validation_records),
             experiment_layout,
             "teacher",
-            settings,
+            config.training_settings,
+            config.num_workers,
+            config.pin_memory,
         )
     finally:
         del teacher
@@ -313,7 +331,7 @@ def train_student(
     validation_subjects: list[PreprocessedSubject],
     experiment_layout: ExperimentLayout,
     device: torch.device,
-    settings: TrainingSettings,
+    config: TrainConfig,
 ) -> list[EpochLoss]:
     detector = CandidateDetector().to(device)
     try:
@@ -327,9 +345,9 @@ def train_student(
                 stage="student",
                 split="train",
                 subjects=train_subjects,
-                patch_size=DISCRIMINATOR_PATCH_SIZE,
-                augmentation_factor=DISCRIMINATOR_AUGMENTATION_FACTOR,
-                probability_threshold=DETECTOR_CANDIDATE_THRESHOLD,
+                patch_size=PatchSizes.DISCRIMINATOR,
+                augmentation_factor=config.discriminator_augmentation_factor,
+                probability_threshold=config.detector_candidate_threshold,
                 detector=detector,
             )
         )
@@ -339,9 +357,9 @@ def train_student(
                 stage="student",
                 split="validation",
                 subjects=validation_subjects,
-                patch_size=DISCRIMINATOR_PATCH_SIZE,
+                patch_size=PatchSizes.DISCRIMINATOR,
                 augmentation_factor=VALIDATION_AUGMENTATION_FACTOR,
-                probability_threshold=DETECTOR_CANDIDATE_THRESHOLD,
+                probability_threshold=config.detector_candidate_threshold,
                 detector=detector,
             )
         )
@@ -363,7 +381,9 @@ def train_student(
             ClassificationPatchDataset(validation_records),
             experiment_layout,
             "student",
-            settings,
+            config.training_settings,
+            config.num_workers,
+            config.pin_memory,
         )
     finally:
         del student

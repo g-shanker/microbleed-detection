@@ -35,7 +35,7 @@ from ..core.datamodels import (
     FrozenModel,
     Modality,
     PatchRecord,
-    TrainingSettings,
+    TrainingHyperparameters,
 )
 
 SCHEMA_VERSION = 1
@@ -197,8 +197,23 @@ class TrainManifest(Manifest):
         description="Absolute path to the preprocessed dataset used for training."
     )
     device: str = Field(description="Torch device requested for the training run.")
+    seed: int | None = Field(
+        default=None, ge=0, description="Random seed used for the training run."
+    )
     train_size: float = Field(
         gt=0, le=1, description="Ratio of subjects assigned to the training split."
+    )
+    validation_size: float = Field(
+        default=0.1,
+        ge=0,
+        le=1,
+        description="Ratio of subjects assigned to the validation split.",
+    )
+    test_size: float = Field(
+        default=0.2,
+        ge=0,
+        le=1,
+        description="Ratio of subjects held out for evaluation.",
     )
     train_subject_ids: list[str] = Field(
         description="Ordered subject IDs assigned to the training split."
@@ -237,7 +252,7 @@ class TrainManifest(Manifest):
     pin_memory: bool = Field(
         description="Whether training loaders pin batches in host memory."
     )
-    training_settings: TrainingSettings = Field(
+    training_settings: TrainingHyperparameters = Field(
         description="Shared optimizer and training-loop settings for all models."
     )
     detector_history: list[EpochLoss] = Field(

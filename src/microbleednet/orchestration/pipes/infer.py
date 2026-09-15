@@ -6,6 +6,7 @@ import torch
 
 from ...core import io as core_io
 from ...core.common.models import CandidateDetector, CandidateDiscriminatorStudent
+from ...core.datamodels import PatchSizes
 from ...core.engines import inference as core_inference
 from ...core.engines import processor as core_processor
 from ..configs import InferConfig
@@ -23,7 +24,6 @@ STUDENT_STAGE = "student"
 VARIANT_INDEX = 0
 DETECTOR_THRESHOLD = 0.5
 STUDENT_THRESHOLD = 0.5
-DISCRIMINATOR_PATCH_SIZE = 24
 MINIMUM_VOLUME_MM3 = 2.5
 MAXIMUM_ELLIPTICITY = 0.2
 MINIMUM_BRAIN_DISTANCE_MM = 5.0
@@ -58,7 +58,7 @@ def execute(config: InferConfig) -> None:
                 frst,
                 detector_probability,
                 DETECTOR_THRESHOLD,
-                DISCRIMINATOR_PATCH_SIZE,
+                PatchSizes.DISCRIMINATOR,
                 STUDENT_THRESHOLD,
             )
             
@@ -95,7 +95,7 @@ def execute(config: InferConfig) -> None:
             student_checkpoint_path=str(student_checkpoint.resolve()),
             detector_threshold=DETECTOR_THRESHOLD,
             student_threshold=STUDENT_THRESHOLD,
-            discriminator_patch_size=DISCRIMINATOR_PATCH_SIZE,
+            discriminator_patch_size=PatchSizes.DISCRIMINATOR,
             minimum_volume_mm3=MINIMUM_VOLUME_MM3,
             maximum_ellipticity=MAXIMUM_ELLIPTICITY,
             minimum_brain_distance_mm=MINIMUM_BRAIN_DISTANCE_MM,
