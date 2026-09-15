@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from microbleednet.core.common.tasks import BaseTask
 from microbleednet.core.dataloading.datasets import SegmentationBatch
-from microbleednet.core.datamodels import EpochLoss, TrainingSettings
+from microbleednet.core.datamodels import EpochLoss, TrainingHyperparameters
 from microbleednet.core.engines.evaluators import Evaluator
 from microbleednet.core.engines.trainers import Trainer
 
@@ -36,12 +36,12 @@ class BatchDataset(Dataset[SegmentationBatch]):
 
 
 def _trainer(tmp_path: Path, **overrides) -> Trainer:
-    settings = TrainingSettings(**overrides)
+    hyperparameters = TrainingHyperparameters(**overrides)
     return Trainer(
         nn.Linear(1, 1),
         RegressionTask(),
         tmp_path / "best.pth",
-        settings,
+        hyperparameters,
     )
 
 

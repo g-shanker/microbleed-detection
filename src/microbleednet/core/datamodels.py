@@ -41,7 +41,14 @@ class EpochLoss(FrozenModel):
     )
 
 
-class TrainingSettings(FrozenModel):
+class PatchSizes:
+    """Fixed patch dimensions shared by training and inference."""
+
+    DETECTOR = 48
+    DISCRIMINATOR = 24
+
+
+class TrainingHyperparameters(FrozenModel):
     """Optimization and training-loop settings for a model run."""
 
     batch_size: int = Field(

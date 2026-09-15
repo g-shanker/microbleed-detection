@@ -1,0 +1,32 @@
+# Paths to the preprocessed dataset and training artifacts.
+dataset_dir = "data/indexed"
+experiment_dir = "experiments/default"
+device = "cpu"
+
+# Subject split proportions. These values must sum to 1.0.
+train_size = 0.7
+validation_size = 0.1
+test_size = 0.2
+
+# Detector candidate selection and persisted-variant sampling.
+detector_candidate_threshold = 0.5
+detector_augmentation_factor = 10
+discriminator_augmentation_factor = 5
+
+# DataLoader settings. pin_memory is mainly useful for CUDA transfers.
+num_workers = 0
+pin_memory = false
+
+# Shared optimizer and training-loop settings.
+[training_settings]
+batch_size = 8
+max_epochs = 100
+patience = 20
+learning_rate = 0.001
+adam_epsilon = 0.0001
+learning_rate_factor = 0.1
+learning_rate_period = 2
+minimum_learning_rate = 0.000001
+weight_decay = 0.0
+minimum_improvement = 0.0
+use_amp = false
