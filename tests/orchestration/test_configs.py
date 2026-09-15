@@ -154,6 +154,77 @@ def test_train_config_rejects_invalid_and_unavailable_devices(
         )
 
 
+def test_train_config_defaults_preserve_training_recipe(tmp_path: Path) -> None:
+    config = TrainConfig(
+        dataset_dir=_training_dataset(tmp_path),
+        experiment_dir=tmp_path / "experiment",
+    )
+
+    assert config.train_size == 0.7
+    assert config.validation_size == 0.1
+    assert config.test_size == 0.2
+    assert config.seed is None
+    assert config.detector_candidate_threshold == 0.5
+    assert config.detector_augmentation_factor == 10
+    assert config.discriminator_augmentation_factor == 5
+    assert config.num_workers == 0
+    assert config.pin_memory is False
+    assert config.training_settings.batch_size == 8
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"train_size": 0.5},
+        {"validation_size": 0.0},
+        {"test_size": 0.3},
+        {"detector_candidate_threshold": 1.1},
+        {"detector_augmentation_factor": 0},
+        {"discriminator_augmentation_factor": 0},
+        {"num_workers": -1},
+    ],
+)
+def test_train_config_rejects_invalid_training_values(
+    tmp_path: Path, overrides: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError):
+        TrainConfig.model_validate(
+            {
+                "dataset_dir": _training_dataset(tmp_path),
+                "experiment_dir": tmp_path / "experiment",
+                **overrides,
+            }
+        )
+
+
+def test_train_config_accepts_custom_training_settings_and_pin_memory(
+    tmp_path: Path,
+) -> None:
+    config = TrainConfig.model_validate(
+        {
+            "dataset_dir": _training_dataset(tmp_path),
+            "experiment_dir": tmp_path / "experiment",
+            "pin_memory": True,
+            "training_settings": {"batch_size": 4, "max_epochs": 12},
+        }
+    )
+
+    assert config.pin_memory is True
+    assert config.training_settings.batch_size == 4
+    assert config.training_settings.max_epochs == 12
+
+
+def test_train_config_requires_split_sizes_to_sum_to_one(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="must sum to 1.0"):
+        TrainConfig(
+            dataset_dir=_training_dataset(tmp_path),
+            experiment_dir=tmp_path / "experiment",
+            train_size=0.6,
+            validation_size=0.1,
+            test_size=0.1,
+        )
+
+
 def test_train_config_requires_dataset_and_preprocessed_manifest(
     tmp_path: Path,
 ) -> None:

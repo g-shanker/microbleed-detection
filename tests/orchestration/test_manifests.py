@@ -7,7 +7,7 @@ from microbleednet.core import io as core_io
 from microbleednet.core.datamodels import (
     EvaluationAggregate,
     EvaluationMetrics,
-    TrainingSettings,
+    TrainingHyperparameters,
 )
 from microbleednet.orchestration.manifests import (
     EvaluatedSubject,
@@ -119,6 +119,7 @@ def test_train_manifest_round_trips_split_and_training_settings(
         updated_at=now,
         dataset_dir="C:/datasets/preprocessed",
         device="cuda:0",
+        seed=42,
         train_size=0.7,
         train_subject_ids=["train-1"],
         validation_subject_ids=["validation-1"],
@@ -130,7 +131,7 @@ def test_train_manifest_round_trips_split_and_training_settings(
         discriminator_patch_size=24,
         num_workers=0,
         pin_memory=False,
-        training_settings=TrainingSettings(),
+        training_settings=TrainingHyperparameters(),
         detector_history=[],
         teacher_history=[],
         student_history=[],
@@ -142,6 +143,7 @@ def test_train_manifest_round_trips_split_and_training_settings(
     loaded = TrainManifest.read(path)
     assert loaded.dataset_dir == "C:/datasets/preprocessed"
     assert loaded.device == "cuda:0"
+    assert loaded.seed == 42
     assert loaded.train_subject_ids == ["train-1"]
     assert loaded.validation_subject_ids == ["validation-1"]
     assert loaded.training_settings.batch_size == 8

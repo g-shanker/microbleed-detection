@@ -40,7 +40,7 @@ def _subjects(count: int, directory: Path) -> list[PreprocessedSubject]:
     return subjects
 
 
-def test_execute_runs_stages_with_fixed_training_values(
+def test_execute_runs_stages_with_configured_training_values(
     tmp_path: Path, monkeypatch
 ) -> None:
     dataset_dir = tmp_path / "dataset"
@@ -87,36 +87,64 @@ def test_execute_runs_stages_with_fixed_training_values(
     )
     experiment_dir = tmp_path / "experiment"
 
-    train.execute(
-        TrainConfig(
-            dataset_dir=dataset_dir,
-            experiment_dir=experiment_dir,
-        )
+    settings = train.TrainingHyperparameters(batch_size=3, max_epochs=7)
+    config = TrainConfig(
+        dataset_dir=dataset_dir,
+        experiment_dir=experiment_dir,
+        train_size=0.6,
+        validation_size=0.2,
+        test_size=0.2,
+        seed=42,
+        detector_candidate_threshold=0.7,
+        detector_augmentation_factor=8,
+        discriminator_augmentation_factor=4,
+        num_workers=2,
+        pin_memory=True,
+        training_settings=settings,
     )
+    train.execute(config)
 
     train_manifest = train.TrainManifest.read(
         ExperimentLayout(experiment_dir=experiment_dir).train_manifest_path()
     )
     assert [call[0] for call in calls] == ["detector", "teacher", "student"]
     assert all(call[1:3] == calls[0][1:3] for call in calls)
-    assert calls[2][3] == (train.TrainingSettings(),)
+    assert calls[2][3] == (config,)
     assert train_manifest.dataset_dir == str(dataset_dir.resolve())
     assert train_manifest.device == "cpu"
-    assert train_manifest.train_size == train.TRAIN_SIZE
+    assert train_manifest.seed == config.seed
+    assert train_manifest.train_size == config.train_size
+    assert train_manifest.validation_size == config.validation_size
+    assert train_manifest.test_size == config.test_size
     assert train_manifest.train_subject_ids == calls[0][1]
     assert train_manifest.validation_subject_ids == calls[0][2]
     assert (
         train_manifest.detector_candidate_threshold
-        == train.DETECTOR_CANDIDATE_THRESHOLD
+        == config.detector_candidate_threshold
     )
-    assert (
-        train_manifest.training_settings.batch_size
-        == train.TrainingSettings().batch_size
-    )
+    assert train_manifest.detector_augmentation_factor == 8
+    assert train_manifest.discriminator_augmentation_factor == 4
+    assert train_manifest.num_workers == 2
+    assert train_manifest.pin_memory is True
+    assert train_manifest.training_settings == settings
     assert (
         ExperimentLayout(experiment_dir=experiment_dir).train_manifest_path()
         == experiment_dir / "manifests" / "train.json"
     )
+
+    unseeded_config = config.model_copy(
+        update={
+            "seed": None,
+            "experiment_dir": tmp_path / "unseeded-experiment",
+        }
+    )
+    train.execute(unseeded_config)
+    unseeded_manifest = train.TrainManifest.read(
+        ExperimentLayout(
+            experiment_dir=unseeded_config.experiment_dir
+        ).train_manifest_path()
+    )
+    assert unseeded_manifest.seed is None
 
 
 def test_stage_functions_apply_fixed_training_recipe(
@@ -133,10 +161,10 @@ def test_stage_functions_apply_fixed_training_recipe(
 
     class FakeTrainer:
         def __init__(
-            self, model, task, best_checkpoint, settings
+            self, model, task, best_checkpoint, hyperparameters
         ) -> None:
             trainer_calls.append(
-                (model, task, best_checkpoint, settings)
+                (model, task, best_checkpoint, hyperparameters)
             )
 
         def fit(self, train_loader, validation_loader) -> None:
@@ -161,7 +189,13 @@ def test_stage_functions_apply_fixed_training_recipe(
     monkeypatch.setattr(train, "EqualBatchSampler", lambda *args, **kwargs: object())
     monkeypatch.setattr(train, "SequentialSampler", lambda dataset: object())
     monkeypatch.setattr(train, "BatchSampler", lambda *args, **kwargs: object())
-    monkeypatch.setattr(train, "DataLoader", lambda *args, **kwargs: object())
+    loader_calls = []
+
+    def data_loader(*args, **kwargs):
+        loader_calls.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(train, "DataLoader", data_loader)
     monkeypatch.setattr(train, "Trainer", FakeTrainer)
     monkeypatch.setattr(train, "CandidateDetector", CandidateDetector)
     monkeypatch.setattr(
@@ -188,22 +222,42 @@ def test_stage_functions_apply_fixed_training_recipe(
     detector_checkpoint.parent.mkdir(parents=True)
     detector_checkpoint.touch()
 
-    settings = train.TrainingSettings()
-    train.train_detector(subjects, subjects, layout, device, settings)
-    train.train_teacher(subjects, subjects, layout, device, settings)
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+    now = timestamp()
+    PreprocessedDatasetManifest(
+        status=ManifestStatus.COMPLETE,
+        created_at=now,
+        updated_at=now,
+        subjects=[],
+    ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
+    config = TrainConfig(
+        dataset_dir=dataset_dir,
+        experiment_dir=tmp_path / "experiment",
+        detector_candidate_threshold=0.7,
+        detector_augmentation_factor=8,
+        discriminator_augmentation_factor=4,
+        num_workers=2,
+        pin_memory=True,
+        training_settings=train.TrainingHyperparameters(batch_size=3),
+    )
+    train.train_detector(subjects, subjects, layout, device, config)
+    train.train_teacher(subjects, subjects, layout, device, config)
     train.train_student(
         subjects,
         subjects,
         layout,
         device,
-        settings,
+        config,
     )
 
     assert [call.patch_size for call in patch_calls] == [48, 48, 24, 24, 24, 24]
-    assert [call.augmentation_factor for call in patch_calls] == [10, 1, 5, 1, 5, 1]
-    assert patch_calls[4].probability_threshold == train.DETECTOR_CANDIDATE_THRESHOLD
+    assert [call.augmentation_factor for call in patch_calls] == [8, 1, 4, 1, 4, 1]
+    assert patch_calls[4].probability_threshold == config.detector_candidate_threshold
     assert patch_calls[4].detector is patch_calls[5].detector
     assert len(trainer_calls) == 6
+    assert all(call["num_workers"] == 2 for call in loader_calls)
+    assert all(call["pin_memory"] is True for call in loader_calls)
     assert len(initialized) == 1
     assert [path for _, path in loaded] == [
         layout.best_checkpoint_path("detector"),
