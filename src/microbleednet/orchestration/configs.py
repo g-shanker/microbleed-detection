@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
-from ..core.datamodels import FrozenModel, Modality
+from ..core.datamodels import FrozenModel, Modality, TrainingHyperparameters
 from .layouts import DatasetLayout, ExperimentLayout
 from .manifests import (
     PreprocessedSubject,
@@ -149,6 +149,73 @@ class TrainConfig(FrozenModel):
         default="cpu",
         description="Torch device string, e.g. 'cpu' or 'cuda'.",
     )
+    seed: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional random seed for reproducible training runs.",
+    )
+    train_size: float = Field(
+        default=0.7,
+        ge=0,
+        le=1,
+        description="Proportion of subjects assigned to the training split.",
+    )
+    validation_size: float = Field(
+        default=0.1,
+        ge=0,
+        le=1,
+        description="Proportion of subjects assigned to the validation split.",
+    )
+    test_size: float = Field(
+        default=0.2,
+        ge=0,
+        le=1,
+        description="Proportion of subjects held out for testing.",
+    )
+    detector_candidate_threshold: float = Field(
+        default=0.5,
+        ge=0,
+        le=1,
+        description="Minimum detector probability retained as a student candidate.",
+    )
+    detector_augmentation_factor: int = Field(
+        default=10,
+        gt=0,
+        description=(
+            "Total variants used for detector training, including the original."
+        ),
+    )
+    discriminator_augmentation_factor: int = Field(
+        default=5,
+        gt=0,
+        description=(
+            "Total variants used for discriminator training, including the original."
+        ),
+    )
+    num_workers: int = Field(
+        default=0,
+        ge=0,
+        description="Number of worker processes used by training data loaders.",
+    )
+    pin_memory: bool = Field(
+        default=False,
+        description=(
+            "Whether training data loaders use page-locked host memory for transfers."
+        ),
+    )
+    training_settings: TrainingHyperparameters = Field(
+        default_factory=TrainingHyperparameters,
+        description="Optimizer and training-loop settings shared by all models.",
+    )
+
+    @model_validator(mode="after")
+    def validate_split_sizes(self) -> "TrainConfig":
+        split_total = self.train_size + self.validation_size + self.test_size
+        if abs(split_total - 1.0) > 1e-9:
+            raise ValueError(
+                "train_size, validation_size, and test_size must sum to 1.0"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_device(self) -> "TrainConfig":
