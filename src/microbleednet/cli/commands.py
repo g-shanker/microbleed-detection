@@ -25,6 +25,7 @@ from ..orchestration.configs import (
     EvaluateConfig,
     IndexDataConfig,
     PreprocessConfig,
+    SplitConfig,
     TrainConfig,
 )
 from .utils import (
@@ -33,6 +34,8 @@ from .utils import (
     parse_config,
     report,
 )
+
+COMMAND_HELP = "TODO: write a help message"
 
 
 @dataclass(frozen=True)
@@ -50,7 +53,7 @@ class CommandSpec:
 SPECS: list[CommandSpec] = [
     CommandSpec(
         name="index-data",
-        help="TODO: write a help message",
+        help=COMMAND_HELP,
         config=IndexDataConfig,
         pipe="index_data",
         dry_run_message=lambda s: (
@@ -63,7 +66,7 @@ SPECS: list[CommandSpec] = [
     ),
     CommandSpec(
         name="preprocess",
-        help="TODO: write a help message",
+        help=COMMAND_HELP,
         config=PreprocessConfig,
         pipe="preprocess",
         dry_run_message=lambda s: (
@@ -72,8 +75,19 @@ SPECS: list[CommandSpec] = [
         success_message=lambda s: f"Preprocessed dataset written under {s.dataset_dir}",
     ),
     CommandSpec(
+        name="split",
+        help=COMMAND_HELP,
+        config=SplitConfig,
+        pipe="split",
+        dry_run_message=lambda s: (
+            f"Split configuration valid; split manifest would be written under "
+            f"{s.experiment_dir} (dry run)"
+        ),
+        success_message=lambda s: f"Split manifest written under {s.experiment_dir}",
+    ),
+    CommandSpec(
         name="train",
-        help="TODO: write a help message",
+        help=COMMAND_HELP,
         config=TrainConfig,
         pipe="train",
         dry_run_message=lambda s: (
@@ -86,7 +100,7 @@ SPECS: list[CommandSpec] = [
     ),
     CommandSpec(
         name="evaluate",
-        help="TODO: write a help message",
+        help=COMMAND_HELP,
         config=EvaluateConfig,
         pipe="evaluate",
         dry_run_message=lambda s: (

@@ -2,6 +2,15 @@ import gc
 
 import torch
 
+from .manifests import PreprocessedSubject
+
+
+def resolve_subjects(
+    subjects: list[PreprocessedSubject], subject_ids: list[str]
+) -> list[PreprocessedSubject]:
+    subjects_by_id = {subject.subject_id: subject for subject in subjects}
+    return [subjects_by_id[subject_id] for subject_id in subject_ids]
+
 
 def release_gpu_memory() -> None:
     """Reclaim unreferenced GPU memory back to the CUDA driver.

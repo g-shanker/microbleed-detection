@@ -10,9 +10,11 @@ from ..manifests import (
     InferManifest,
     ManifestStatus,
     PreprocessedDatasetManifest,
+    SplitManifest,
     TrainManifest,
     timestamp,
 )
+from ..utils import resolve_subjects
 from . import infer
 
 
@@ -20,16 +22,14 @@ def execute(config: EvaluateConfig) -> None:
     """Infer once for held-out subjects, then score masks against references."""
     experiment_layout = ExperimentLayout(experiment_dir=config.experiment_dir)
     dataset_layout = DatasetLayout(dataset_dir=config.dataset_dir)
-    train_manifest = TrainManifest.read(experiment_layout.train_manifest_path())
+    TrainManifest.read(experiment_layout.train_manifest_path())
+    split_manifest = SplitManifest.read(experiment_layout.split_manifest_path())
     preprocessed_manifest = PreprocessedDatasetManifest.read(
         dataset_layout.preprocessed_manifest_path()
     )
-    subject_map = {
-        subject.subject_id: subject for subject in preprocessed_manifest.subjects
-    }
-    subjects = [
-        subject_map[subject_id] for subject_id in train_manifest.test_subject_ids
-    ]
+    subjects = resolve_subjects(
+        preprocessed_manifest.subjects, split_manifest.test_subject_ids
+    )
 
     infer.execute(
         InferConfig(
