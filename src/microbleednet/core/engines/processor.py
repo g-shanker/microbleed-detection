@@ -1,5 +1,3 @@
-from typing import cast
-
 import nibabel as nib
 import numpy as np
 from scipy.ndimage import distance_transform_edt
@@ -13,6 +11,7 @@ from ..datamodels import (
     Modality,
     PreprocessResult,
     Shape3D,
+    VoxelSpacing,
 )
 from ..transforms import inpaint_vessels, volume_ops
 
@@ -24,9 +23,9 @@ def preprocess(
 ) -> PreprocessResult:
     canonical_volume = volume_ops.reorient_to_canonical(volume)
 
-    if not np.allclose(
-        cast(FloatArray, mask.affine), cast(FloatArray, volume.affine)
-    ):
+    if mask.affine is None or volume.affine is None:
+        raise ValueError("image and mask affines do not match")
+    if not np.allclose(mask.affine, volume.affine):
         raise ValueError("image and mask affines do not match")
     mask = volume_ops.reorient_to_canonical(mask)
     if mask.shape != canonical_volume.shape:
@@ -48,8 +47,12 @@ def preprocess(
 
     volume_array = inpaint_vessels.apply(volume_array)
 
-    crop_start = cast(Shape3D, tuple(b[0] for b in bounding_box))
-    canonical_affine = cast(FloatArray, canonical_volume.affine)
+    crop_start: Shape3D = (
+        bounding_box[0][0],
+        bounding_box[1][0],
+        bounding_box[2][0],
+    )
+    canonical_affine: FloatArray = np.asarray(canonical_volume.affine, dtype=float)
     cropped_affine = volume_ops.adjust_affine_for_crop(canonical_affine, crop_start)
 
     return PreprocessResult(volume_array, mask_array, cropped_affine)
@@ -58,15 +61,15 @@ def preprocess(
 def postprocess(
     candidate_mask: np.ndarray,
     volume: np.ndarray,
-    voxel_sizes: tuple[float, float, float],
+    voxel_sizes: VoxelSpacing,
     minimum_volume_mm3: float,
     maximum_ellipticity: float,
     minimum_brain_distance_mm: float,
 ) -> np.ndarray:
     """Apply volume, shape, and brain-boundary filters."""
     brain_mask = volume > 0
-    brain_distance = cast(
-        np.ndarray, distance_transform_edt(brain_mask, sampling=voxel_sizes)
+    brain_distance = np.asarray(
+        distance_transform_edt(brain_mask, sampling=voxel_sizes)
     )
     labels = utils.label_components(candidate_mask, utils.COMPONENT_CONNECTIVITY)
     output = np.zeros_like(candidate_mask, dtype=np.uint8)
@@ -80,9 +83,10 @@ def postprocess(
             continue
         if component_ellipticity(physical_region) > maximum_ellipticity:
             continue
-        centroid = cast(
-            tuple[int, int, int],
-            tuple(int(round(value)) for value in voxel_region.centroid),
+        centroid: Shape3D = (
+            int(round(voxel_region.centroid[0])),
+            int(round(voxel_region.centroid[1])),
+            int(round(voxel_region.centroid[2])),
         )
         if brain_distance[centroid] < minimum_brain_distance_mm:
             continue

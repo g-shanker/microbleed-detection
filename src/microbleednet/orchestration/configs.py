@@ -14,7 +14,12 @@ from typing import Any
 from pydantic import Field, field_validator, model_validator
 
 from ..core.datamodels import FrozenModel, Modality, TrainingHyperparameters
-from .layouts import DatasetLayout, ExperimentLayout
+from .layouts import (
+    DETECTOR_STAGE,
+    STUDENT_STAGE,
+    DatasetLayout,
+    ExperimentLayout,
+)
 from .manifests import (
     PreprocessedSubject,
     RawDatasetManifest,
@@ -43,6 +48,15 @@ def ensure_device_available(device_name: str) -> None:
         raise ValueError(f"invalid device: {device_name}") from error
     if device.type == "cuda" and not torch.cuda.is_available():
         raise ValueError("CUDA device is not available")
+
+
+def require_manifest(
+    dataset_dir: Path, manifest_path: Path, manifest_name: str
+) -> None:
+    if not dataset_dir.is_dir():
+        raise ValueError(f"dataset_dir does not exist: {dataset_dir}")
+    if not manifest_path.is_file():
+        raise ValueError(f"{manifest_name} does not exist: {manifest_path}")
 
 
 class IndexDataConfig(FrozenModel):
@@ -127,11 +141,8 @@ class PreprocessConfig(FrozenModel):
 
     @model_validator(mode="after")
     def validate_dataset_dir(self) -> "PreprocessConfig":
-        if not self.dataset_dir.is_dir():
-            raise ValueError(f"dataset_dir does not exist: {self.dataset_dir}")
         manifest_path = DatasetLayout(dataset_dir=self.dataset_dir).raw_manifest_path()
-        if not manifest_path.is_file():
-            raise ValueError(f"raw manifest does not exist: {manifest_path}")
+        require_manifest(self.dataset_dir, manifest_path, "raw manifest")
         RawDatasetManifest.read(manifest_path)
         return self
 
@@ -178,13 +189,10 @@ class SplitConfig(FrozenModel):
 
     @model_validator(mode="after")
     def validate_dataset(self) -> "SplitConfig":
-        if not self.dataset_dir.is_dir():
-            raise ValueError(f"dataset_dir does not exist: {self.dataset_dir}")
         manifest_path = DatasetLayout(
             dataset_dir=self.dataset_dir
         ).preprocessed_manifest_path()
-        if not manifest_path.is_file():
-            raise ValueError(f"preprocessed manifest does not exist: {manifest_path}")
+        require_manifest(self.dataset_dir, manifest_path, "preprocessed manifest")
         return self
 
 
@@ -251,13 +259,10 @@ class TrainConfig(FrozenModel):
 
     @model_validator(mode="after")
     def validate_dataset(self) -> "TrainConfig":
-        if not self.dataset_dir.is_dir():
-            raise ValueError(f"dataset_dir does not exist: {self.dataset_dir}")
         manifest_path = DatasetLayout(
             dataset_dir=self.dataset_dir
         ).preprocessed_manifest_path()
-        if not manifest_path.is_file():
-            raise ValueError(f"preprocessed manifest does not exist: {manifest_path}")
+        require_manifest(self.dataset_dir, manifest_path, "preprocessed manifest")
         return self
 
     @model_validator(mode="after")
@@ -297,7 +302,7 @@ class InferConfig(FrozenModel):
     @model_validator(mode="after")
     def validate_checkpoints(self) -> "InferConfig":
         layout = ExperimentLayout(experiment_dir=self.experiment_dir)
-        for stage in ("detector", "student"):
+        for stage in (DETECTOR_STAGE, STUDENT_STAGE):
             checkpoint = layout.best_checkpoint_path(stage)
             if not checkpoint.is_file():
                 raise ValueError(f"{stage} checkpoint does not exist: {checkpoint}")
