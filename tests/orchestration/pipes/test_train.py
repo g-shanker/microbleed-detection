@@ -12,6 +12,7 @@ from microbleednet.orchestration.manifests import (
     PreprocessedDatasetManifest,
     PreprocessedSubject,
     PreprocessedVariant,
+    SplitManifest,
     timestamp,
 )
 from microbleednet.orchestration.pipes import train
@@ -86,14 +87,27 @@ def test_execute_runs_stages_with_configured_training_values(
         train, "train_student", record_stage("student", "student")
     )
     experiment_dir = tmp_path / "experiment"
+    split_manifest = SplitManifest(
+        status=ManifestStatus.COMPLETE,
+        created_at=now,
+        updated_at=now,
+        dataset_dir=str(dataset_dir.resolve()),
+        seed=7,
+        train_size=0.6,
+        validation_size=0.2,
+        test_size=0.2,
+        train_subject_ids=[subject.subject_id for subject in subjects[:6]],
+        validation_subject_ids=[subject.subject_id for subject in subjects[6:8]],
+        test_subject_ids=[subject.subject_id for subject in subjects[8:]],
+    )
+    split_manifest.write(
+        ExperimentLayout(experiment_dir=experiment_dir).split_manifest_path()
+    )
 
     settings = train.TrainingHyperparameters(batch_size=3, max_epochs=7)
     config = TrainConfig(
         dataset_dir=dataset_dir,
         experiment_dir=experiment_dir,
-        train_size=0.6,
-        validation_size=0.2,
-        test_size=0.2,
         seed=42,
         detector_candidate_threshold=0.7,
         detector_augmentation_factor=8,
@@ -113,11 +127,6 @@ def test_execute_runs_stages_with_configured_training_values(
     assert train_manifest.dataset_dir == str(dataset_dir.resolve())
     assert train_manifest.device == "cpu"
     assert train_manifest.seed == config.seed
-    assert train_manifest.train_size == config.train_size
-    assert train_manifest.validation_size == config.validation_size
-    assert train_manifest.test_size == config.test_size
-    assert train_manifest.train_subject_ids == calls[0][1]
-    assert train_manifest.validation_subject_ids == calls[0][2]
     assert (
         train_manifest.detector_candidate_threshold
         == config.detector_candidate_threshold
@@ -137,6 +146,11 @@ def test_execute_runs_stages_with_configured_training_values(
             "seed": None,
             "experiment_dir": tmp_path / "unseeded-experiment",
         }
+    )
+    split_manifest.write(
+        ExperimentLayout(
+            experiment_dir=unseeded_config.experiment_dir
+        ).split_manifest_path()
     )
     train.execute(unseeded_config)
     unseeded_manifest = train.TrainManifest.read(

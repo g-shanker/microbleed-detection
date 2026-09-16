@@ -81,6 +81,15 @@ def test_describe_index_data_lists_config_keys() -> None:
     assert "extension" in result.output
 
 
+def test_describe_split_lists_partition_keys() -> None:
+    result = runner.invoke(app, ["describe", "split"])
+    assert result.exit_code == 0, result.output
+    assert "train_size" in result.output
+    assert "validation_size" in result.output
+    assert "test_size" in result.output
+    assert "seed" in result.output
+
+
 def test_describe_rejects_unknown_command() -> None:
     result = runner.invoke(app, ["describe", "bogus"])
     assert result.exit_code != 0

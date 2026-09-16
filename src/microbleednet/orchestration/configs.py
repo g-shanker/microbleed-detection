@@ -18,6 +18,7 @@ from .layouts import DatasetLayout, ExperimentLayout
 from .manifests import (
     PreprocessedSubject,
     RawDatasetManifest,
+    SplitManifest,
 )
 
 # Token a volume/mask filename pattern must contain at least once; the text it
@@ -29,6 +30,7 @@ SOURCE_ID_PLACEHOLDER = "{source_id}"
 # A source_id namespaces subject IDs and becomes part of on-disk paths, so it is
 # restricted to filesystem-safe characters.
 SOURCE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+DEVICE_DESCRIPTION = "Torch device string, e.g. 'cpu' or 'cuda'."
 
 
 def ensure_device_available(device_name: str) -> None:
@@ -134,6 +136,58 @@ class PreprocessConfig(FrozenModel):
         return self
 
 
+class SplitConfig(FrozenModel):
+    dataset_dir: Path = Field(
+        description="Preprocessed dataset directory containing subjects to split."
+    )
+    experiment_dir: Path = Field(
+        description="Experiment directory to receive the split manifest."
+    )
+    train_size: float = Field(
+        default=0.7,
+        gt=0,
+        le=1,
+        description="Proportion of subjects assigned to the training split.",
+    )
+    validation_size: float = Field(
+        default=0.1,
+        gt=0,
+        le=1,
+        description="Proportion of subjects assigned to the validation split.",
+    )
+    test_size: float = Field(
+        default=0.2,
+        gt=0,
+        le=1,
+        description="Proportion of subjects held out for testing.",
+    )
+    seed: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional random seed for reproducible subject splitting.",
+    )
+
+    @model_validator(mode="after")
+    def validate_split_sizes(self) -> "SplitConfig":
+        split_total = self.train_size + self.validation_size + self.test_size
+        if abs(split_total - 1.0) > 1e-9:
+            raise ValueError(
+                "train_size, validation_size, and test_size must sum to 1.0"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_dataset(self) -> "SplitConfig":
+        if not self.dataset_dir.is_dir():
+            raise ValueError(f"dataset_dir does not exist: {self.dataset_dir}")
+        manifest_path = DatasetLayout(
+            dataset_dir=self.dataset_dir
+        ).preprocessed_manifest_path()
+        if not manifest_path.is_file():
+            raise ValueError(f"preprocessed manifest does not exist: {manifest_path}")
+        return self
+
+
 class TrainConfig(FrozenModel):
     dataset_dir: Path = Field(
         description=(
@@ -147,30 +201,12 @@ class TrainConfig(FrozenModel):
     )
     device: str = Field(
         default="cpu",
-        description="Torch device string, e.g. 'cpu' or 'cuda'.",
+        description=DEVICE_DESCRIPTION,
     )
     seed: int | None = Field(
         default=None,
         ge=0,
         description="Optional random seed for reproducible training runs.",
-    )
-    train_size: float = Field(
-        default=0.7,
-        ge=0,
-        le=1,
-        description="Proportion of subjects assigned to the training split.",
-    )
-    validation_size: float = Field(
-        default=0.1,
-        ge=0,
-        le=1,
-        description="Proportion of subjects assigned to the validation split.",
-    )
-    test_size: float = Field(
-        default=0.2,
-        ge=0,
-        le=1,
-        description="Proportion of subjects held out for testing.",
     )
     detector_candidate_threshold: float = Field(
         default=0.5,
@@ -209,15 +245,6 @@ class TrainConfig(FrozenModel):
     )
 
     @model_validator(mode="after")
-    def validate_split_sizes(self) -> "TrainConfig":
-        split_total = self.train_size + self.validation_size + self.test_size
-        if abs(split_total - 1.0) > 1e-9:
-            raise ValueError(
-                "train_size, validation_size, and test_size must sum to 1.0"
-            )
-        return self
-
-    @model_validator(mode="after")
     def validate_device(self) -> "TrainConfig":
         ensure_device_available(self.device)
         return self
@@ -233,6 +260,19 @@ class TrainConfig(FrozenModel):
             raise ValueError(f"preprocessed manifest does not exist: {manifest_path}")
         return self
 
+    @model_validator(mode="after")
+    def validate_split_manifest_dataset(self) -> "TrainConfig":
+        split_manifest_path = ExperimentLayout(
+            experiment_dir=self.experiment_dir
+        ).split_manifest_path()
+        if split_manifest_path.is_file():
+            split_manifest = SplitManifest.read(split_manifest_path)
+            if split_manifest.dataset_dir != str(self.dataset_dir.resolve()):
+                raise ValueError(
+                    "split manifest dataset_dir does not match the training dataset"
+                )
+        return self
+
 
 class InferConfig(FrozenModel):
     """Configuration for the internal preprocessed-subject inference pipe."""
@@ -246,7 +286,7 @@ class InferConfig(FrozenModel):
     )
     device: str = Field(
         default="cpu",
-        description="Torch device string, e.g. 'cpu' or 'cuda'.",
+        description=DEVICE_DESCRIPTION,
     )
 
     @model_validator(mode="after")
@@ -275,7 +315,7 @@ class EvaluateConfig(FrozenModel):
     )
     device: str = Field(
         default="cpu",
-        description="Torch device string, e.g. 'cpu' or 'cuda'.",
+        description=DEVICE_DESCRIPTION,
     )
 
     @model_validator(mode="after")
