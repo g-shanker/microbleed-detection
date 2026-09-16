@@ -36,7 +36,14 @@ from ..configs import (
     TargetCenteredPatchConfig,
     TrainConfig,
 )
-from ..layouts import DatasetLayout, ExperimentLayout
+from ..layouts import (
+    DETECTOR_STAGE,
+    STUDENT_STAGE,
+    TEACHER_STAGE,
+    DatasetLayout,
+    ExperimentLayout,
+    StageName,
+)
 from ..manifests import (
     ManifestStatus,
     PatchManifest,
@@ -131,7 +138,7 @@ def train_stage(
     train_dataset: BasePatchDataset,
     validation_dataset: BasePatchDataset,
     experiment_layout: ExperimentLayout,
-    stage: str,
+    stage: StageName,
     hyperparameters: TrainingHyperparameters,
     num_workers: int,
     pin_memory: bool,
@@ -180,7 +187,7 @@ def train_detector(
     train_records = extract_patch_records(
         NonOverlappingPatchConfig(
             experiment_layout=experiment_layout,
-            stage="detector",
+            stage=DETECTOR_STAGE,
             split="train",
             subjects=train_subjects,
             patch_size=PatchSizes.DETECTOR,
@@ -190,7 +197,7 @@ def train_detector(
     validation_records = extract_patch_records(
         NonOverlappingPatchConfig(
             experiment_layout=experiment_layout,
-            stage="detector",
+            stage=DETECTOR_STAGE,
             split="validation",
             subjects=validation_subjects,
             patch_size=PatchSizes.DETECTOR,
@@ -205,7 +212,7 @@ def train_detector(
             SegmentationPatchDataset(train_records),
             SegmentationPatchDataset(validation_records),
             experiment_layout,
-            "detector",
+            DETECTOR_STAGE,
             config.training_settings,
             config.num_workers,
             config.pin_memory,
@@ -228,7 +235,7 @@ def train_teacher(
     try:
         core_io.load_model_weights(
             initializer,
-            experiment_layout.best_checkpoint_path("detector"),
+            experiment_layout.best_checkpoint_path(DETECTOR_STAGE),
         )
         core_utils.initialize_teacher_from_detector(initializer, teacher)
     finally:
@@ -239,7 +246,7 @@ def train_teacher(
     train_records = extract_patch_records(
         NonOverlappingPatchConfig(
             experiment_layout=experiment_layout,
-            stage="teacher",
+            stage=TEACHER_STAGE,
             split="train",
             subjects=train_subjects,
             patch_size=PatchSizes.DISCRIMINATOR,
@@ -249,7 +256,7 @@ def train_teacher(
     validation_records = extract_patch_records(
         NonOverlappingPatchConfig(
             experiment_layout=experiment_layout,
-            stage="teacher",
+            stage=TEACHER_STAGE,
             split="validation",
             subjects=validation_subjects,
             patch_size=PatchSizes.DISCRIMINATOR,
@@ -263,7 +270,7 @@ def train_teacher(
             SegmentationClassificationPatchDataset(train_records),
             SegmentationClassificationPatchDataset(validation_records),
             experiment_layout,
-            "teacher",
+            TEACHER_STAGE,
             config.training_settings,
             config.num_workers,
             config.pin_memory,
@@ -285,12 +292,12 @@ def train_student(
     try:
         core_io.load_model_weights(
             detector,
-            experiment_layout.best_checkpoint_path("detector"),
+            experiment_layout.best_checkpoint_path(DETECTOR_STAGE),
         )
         train_records = extract_patch_records(
             TargetCenteredPatchConfig(
                 experiment_layout=experiment_layout,
-                stage="student",
+                stage=STUDENT_STAGE,
                 split="train",
                 subjects=train_subjects,
                 patch_size=PatchSizes.DISCRIMINATOR,
@@ -302,7 +309,7 @@ def train_student(
         validation_records = extract_patch_records(
             TargetCenteredPatchConfig(
                 experiment_layout=experiment_layout,
-                stage="student",
+                stage=STUDENT_STAGE,
                 split="validation",
                 subjects=validation_subjects,
                 patch_size=PatchSizes.DISCRIMINATOR,
@@ -320,7 +327,7 @@ def train_student(
     try:
         core_io.load_model_weights(
             teacher,
-            experiment_layout.best_checkpoint_path("teacher"),
+            experiment_layout.best_checkpoint_path(TEACHER_STAGE),
         )
         history = train_stage(
             student,
@@ -328,7 +335,7 @@ def train_student(
             ClassificationPatchDataset(train_records),
             ClassificationPatchDataset(validation_records),
             experiment_layout,
-            "student",
+            STUDENT_STAGE,
             config.training_settings,
             config.num_workers,
             config.pin_memory,

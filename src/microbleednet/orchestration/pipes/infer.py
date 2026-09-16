@@ -1,16 +1,18 @@
 """Run the internal detector/discriminator inference pipeline."""
 
-from typing import cast
-
 import torch
 
 from ...core import io as core_io
 from ...core.common.models import CandidateDetector, CandidateDiscriminatorStudent
-from ...core.datamodels import PatchSizes
+from ...core.datamodels import PatchSizes, VoxelSpacing
 from ...core.engines import inference as core_inference
 from ...core.engines import processor as core_processor
 from ..configs import InferConfig
-from ..layouts import ExperimentLayout
+from ..layouts import (
+    DETECTOR_STAGE,
+    STUDENT_STAGE,
+    ExperimentLayout,
+)
 from ..manifests import (
     InferManifest,
     InferredSubject,
@@ -18,8 +20,6 @@ from ..manifests import (
 )
 from ..utils import release_gpu_memory
 
-DETECTOR_STAGE = "detector"
-STUDENT_STAGE = "student"
 VARIANT_INDEX = 0
 DETECTOR_THRESHOLD = 0.5
 STUDENT_THRESHOLD = 0.5
@@ -61,10 +61,19 @@ def execute(config: InferConfig) -> None:
                 STUDENT_THRESHOLD,
             )
             
+            zooms = volume_image.header.get_zooms()
+            spacing = [float(size) for size in zooms[:3]]
+            if len(spacing) < 3:
+                raise ValueError("volume header does not contain 3D voxel spacing")
+            voxel_sizes: VoxelSpacing = (
+                spacing[0],
+                spacing[1],
+                spacing[2],
+            )
             final_mask_array = core_processor.postprocess(
                 retained_labels,
                 volume,
-                cast(tuple[float, float, float], volume_image.header.get_zooms()[:3]),
+                voxel_sizes,
                 MINIMUM_VOLUME_MM3,
                 MAXIMUM_ELLIPTICITY,
                 MINIMUM_BRAIN_DISTANCE_MM,

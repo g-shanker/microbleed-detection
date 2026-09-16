@@ -1,7 +1,5 @@
 """Create materialized training patches from preprocessed subjects."""
 
-from typing import cast
-
 import numpy as np
 
 from ...core import io, utils
@@ -25,7 +23,7 @@ def execute(
         extract = NonOverlappingExtractor(config.patch_size)
     elif isinstance(config, TargetCenteredPatchConfig):
         extract = TargetCenteredExtractor(
-            detector=cast(CandidateDetector, config.detector),
+            detector=config.detector,
             threshold=config.probability_threshold,
             patch_size=config.patch_size,
         )
