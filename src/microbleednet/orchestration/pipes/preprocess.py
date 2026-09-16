@@ -5,7 +5,6 @@ from ...core import io
 from ...core.datamodels import Modality
 from ...core.engines import processor
 from ...core.transforms import augmentations, frst
-from .. import manifests
 from ..configs import PreprocessConfig
 from ..layouts import DatasetLayout
 from ..manifests import (
@@ -88,11 +87,8 @@ def execute(config: PreprocessConfig) -> None:
         )
 
     # Publish the manifest once, after every subject is on disk.
-    now = manifests.timestamp()
     preprocessed_manifest = PreprocessedDatasetManifest(
         status=ManifestStatus.COMPLETE,
-        created_at=now,
-        updated_at=now,
         subjects=preprocessed_subjects,
         augmentation_factor=config.augmentation_factor,
     )

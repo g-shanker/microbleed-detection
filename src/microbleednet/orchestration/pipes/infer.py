@@ -15,7 +15,6 @@ from ..manifests import (
     InferManifest,
     InferredSubject,
     ManifestStatus,
-    timestamp,
 )
 from ..utils import release_gpu_memory
 
@@ -85,11 +84,8 @@ def execute(config: InferConfig) -> None:
                 )
             )
 
-        now = timestamp()
         InferManifest(
             status=ManifestStatus.COMPLETE,
-            created_at=now,
-            updated_at=now,
             device=config.device,
             detector_checkpoint_path=str(detector_checkpoint.resolve()),
             student_checkpoint_path=str(student_checkpoint.resolve()),

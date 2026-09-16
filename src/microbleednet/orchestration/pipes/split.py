@@ -8,7 +8,6 @@ from ..manifests import (
     ManifestStatus,
     PreprocessedDatasetManifest,
     SplitManifest,
-    timestamp,
 )
 
 
@@ -28,11 +27,8 @@ def execute(config: SplitConfig) -> None:
         random_state=config.seed,
     )
 
-    now = timestamp()
     SplitManifest(
         status=ManifestStatus.COMPLETE,
-        created_at=now,
-        updated_at=now,
         dataset_dir=str(config.dataset_dir.resolve()),
         seed=config.seed,
         train_size=config.train_size,

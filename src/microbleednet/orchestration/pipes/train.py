@@ -44,7 +44,6 @@ from ..manifests import (
     PreprocessedSubject,
     SplitManifest,
     TrainManifest,
-    timestamp,
 )
 from . import patch
 
@@ -107,11 +106,8 @@ def write_train_manifest(
     teacher_history: list[EpochLoss],
     student_history: list[EpochLoss],
 ) -> None:
-    now = timestamp()
     TrainManifest(
         status=ManifestStatus.COMPLETE,
-        created_at=now,
-        updated_at=now,
         dataset_dir=str(config.dataset_dir.resolve()),
         device=config.device,
         seed=config.seed,
