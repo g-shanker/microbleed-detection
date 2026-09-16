@@ -33,9 +33,9 @@ from ..core.datamodels import (
     EvaluationAggregate,
     EvaluationMetrics,
     FrozenModel,
+    Hyperparameters,
     Modality,
     PatchRecord,
-    TrainingHyperparameters,
 )
 
 SCHEMA_VERSION = 1
@@ -275,8 +275,14 @@ class TrainManifest(Manifest):
     pin_memory: bool = Field(
         description="Whether training loaders pin batches in host memory."
     )
-    training_settings: TrainingHyperparameters = Field(
-        description="Shared optimizer and training-loop settings for all models."
+    detector_hyperparameters: Hyperparameters = Field(
+        description="Optimizer and training-loop settings for detector training."
+    )
+    teacher_hyperparameters: Hyperparameters = Field(
+        description="Optimizer and training-loop settings for teacher training."
+    )
+    student_hyperparameters: Hyperparameters = Field(
+        description="Optimizer and training-loop settings for student training."
     )
     detector_history: list[EpochLoss] = Field(
         description="Epoch loss history for candidate detector training."

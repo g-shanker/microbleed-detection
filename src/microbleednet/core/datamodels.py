@@ -51,7 +51,7 @@ class PatchSizes:
     DISCRIMINATOR = 24
 
 
-class TrainingHyperparameters(FrozenModel):
+class Hyperparameters(FrozenModel):
     """Optimization and training-loop settings for a model run."""
 
     batch_size: int = Field(

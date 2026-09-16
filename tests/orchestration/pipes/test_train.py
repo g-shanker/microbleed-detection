@@ -110,7 +110,9 @@ def test_execute_runs_stages_with_configured_training_values(
         ExperimentLayout(experiment_dir=experiment_dir).split_manifest_path()
     )
 
-    settings = train.TrainingHyperparameters(batch_size=3, max_epochs=7)
+    detector_hyperparameters = train.Hyperparameters(batch_size=3, max_epochs=7)
+    teacher_hyperparameters = train.Hyperparameters(batch_size=4, max_epochs=8)
+    student_hyperparameters = train.Hyperparameters(batch_size=5, max_epochs=9)
     config = TrainConfig(
         dataset_dir=dataset_dir,
         experiment_dir=experiment_dir,
@@ -120,7 +122,9 @@ def test_execute_runs_stages_with_configured_training_values(
         discriminator_augmentation_factor=4,
         num_workers=2,
         pin_memory=True,
-        training_settings=settings,
+        detector_hyperparameters=detector_hyperparameters,
+        teacher_hyperparameters=teacher_hyperparameters,
+        student_hyperparameters=student_hyperparameters,
     )
     train.execute(config)
 
@@ -145,7 +149,9 @@ def test_execute_runs_stages_with_configured_training_values(
     assert train_manifest.discriminator_augmentation_factor == 4
     assert train_manifest.num_workers == 2
     assert train_manifest.pin_memory is True
-    assert train_manifest.training_settings == settings
+    assert train_manifest.detector_hyperparameters == detector_hyperparameters
+    assert train_manifest.teacher_hyperparameters == teacher_hyperparameters
+    assert train_manifest.student_hyperparameters == student_hyperparameters
     assert (
         ExperimentLayout(experiment_dir=experiment_dir).train_manifest_path()
         == experiment_dir / "manifests" / "train.json"
@@ -263,7 +269,9 @@ def test_stage_functions_apply_fixed_training_recipe(
         discriminator_augmentation_factor=4,
         num_workers=2,
         pin_memory=True,
-        training_settings=train.TrainingHyperparameters(batch_size=3),
+        detector_hyperparameters=train.Hyperparameters(batch_size=3),
+        teacher_hyperparameters=train.Hyperparameters(batch_size=4),
+        student_hyperparameters=train.Hyperparameters(batch_size=5),
     )
     train.train_detector(subjects, subjects, layout, device, config)
     train.train_teacher(subjects, subjects, layout, device, config)
