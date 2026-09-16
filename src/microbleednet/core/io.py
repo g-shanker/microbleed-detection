@@ -3,8 +3,9 @@
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Generator, cast
 
 import nibabel as nib
 import numpy as np
@@ -15,23 +16,30 @@ from . import utils
 from .datamodels import CheckpointState
 
 
-def write_json_atomic(path: Path, data: dict[str, Any] | list[Any]) -> None:
-    """Serialize ``data`` to ``path`` as JSON, replacing it atomically."""
+@contextmanager
+def atomic_path(path: Path, suffix: str = "") -> Generator[Path, None, None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=path.parent, delete=False
+            dir=path.parent, suffix=suffix, delete=False
         ) as temporary_file:
             temporary_path = Path(temporary_file.name)
-            json.dump(data, temporary_file, indent=2, sort_keys=True)
-            temporary_file.write("\n")
-            temporary_file.flush()
-            os.fsync(temporary_file.fileno())
+        yield temporary_path
         os.replace(temporary_path, path)
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+
+
+def write_json(path: Path, data: dict[str, Any] | list[Any]) -> None:
+    """Serialize ``data`` to ``path`` as JSON, replacing it atomically."""
+    with atomic_path(path) as temporary_path:
+        with temporary_path.open("w", encoding="utf-8") as temporary_file:
+            json.dump(data, temporary_file, indent=2, sort_keys=True)
+            temporary_file.write("\n")
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
 
 
 def read_json(path: Path) -> Any:
@@ -45,7 +53,8 @@ def load_volume(path: Path | str) -> nib.Nifti1Image:
 
 
 def save_volume(volume: nib.Nifti1Image, path: Path) -> None:
-    nib.save(volume, path)
+    with atomic_path(path, suffix="".join(path.suffixes)) as temporary_path:
+        nib.save(volume, temporary_path)
 
 
 def nifti_to_numpy(volume: nib.Nifti1Image) -> np.ndarray:
@@ -69,21 +78,14 @@ def load_model_weights(
     target_model.load_state_dict(checkpoint["model_state_dict"])
 
 
-def save_array_atomic(array: np.ndarray, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        dir=path.parent, suffix=".npy", delete=False
-    ) as file:
-        temporary_path = Path(file.name)
-    try:
+def save_array(array: np.ndarray, path: Path) -> None:
+    with atomic_path(path, suffix=".npy") as temporary_path:
         np.save(temporary_path, array)
-        os.replace(temporary_path, path)
-    finally:
-        temporary_path.unlink(missing_ok=True)
 
 
-def save_checkpoint_atomic(state: CheckpointState, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = path.with_suffix(path.suffix + ".tmp")
-    torch.save(state, temporary_path)
-    os.replace(temporary_path, path)
+def save_checkpoint(state: CheckpointState, path: Path) -> None:
+    with atomic_path(path, suffix=path.suffix + ".tmp") as temporary_path:
+        with temporary_path.open("wb") as temporary_file:
+            torch.save(state, temporary_file)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())

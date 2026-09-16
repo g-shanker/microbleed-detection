@@ -55,7 +55,6 @@ def execute(config: TrainConfig) -> None:
         torch.manual_seed(config.seed)
         torch.cuda.manual_seed_all(config.seed)
 
-    config.experiment_dir.mkdir(parents=True, exist_ok=True)
     experiment_layout = ExperimentLayout(experiment_dir=config.experiment_dir)
     dataset_layout = DatasetLayout(dataset_dir=config.dataset_dir)
     preprocessed_manifest = PreprocessedDatasetManifest.read(

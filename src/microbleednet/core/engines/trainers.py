@@ -25,8 +25,6 @@ class Trainer:
         self.best_checkpoint = best_checkpoint
         self.epochs_without_improvement = 0
 
-        self.best_checkpoint.parent.mkdir(parents=True, exist_ok=True)
-
         self.device = utils.get_model_device(self.model)
         self.task = task.to(self.device)
         self.use_amp = bool(
@@ -133,5 +131,5 @@ class Trainer:
             "epochs_without_improvement": self.epochs_without_improvement,
         }
 
-        io.save_checkpoint_atomic(state, self.best_checkpoint)
+        io.save_checkpoint(state, self.best_checkpoint)
 
