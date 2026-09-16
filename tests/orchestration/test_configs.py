@@ -184,7 +184,9 @@ def test_train_config_defaults_preserve_training_recipe(tmp_path: Path) -> None:
     assert config.discriminator_augmentation_factor == 5
     assert config.num_workers == 0
     assert config.pin_memory is False
-    assert config.training_settings.batch_size == 8
+    assert config.detector_hyperparameters.batch_size == 8
+    assert config.teacher_hyperparameters.batch_size == 8
+    assert config.student_hyperparameters.batch_size == 8
 
 
 @pytest.mark.parametrize(
@@ -212,7 +214,7 @@ def test_split_config_rejects_invalid_split_values(
         )
 
 
-def test_train_config_accepts_custom_training_settings_and_pin_memory(
+def test_train_config_accepts_stage_training_settings_and_pin_memory(
     tmp_path: Path,
 ) -> None:
     config = TrainConfig.model_validate(
@@ -220,13 +222,19 @@ def test_train_config_accepts_custom_training_settings_and_pin_memory(
             "dataset_dir": _training_dataset(tmp_path),
             "experiment_dir": tmp_path / "experiment",
             "pin_memory": True,
-            "training_settings": {"batch_size": 4, "max_epochs": 12},
+            "detector_hyperparameters": {"batch_size": 4, "max_epochs": 12},
+            "teacher_hyperparameters": {"batch_size": 5, "max_epochs": 13},
+            "student_hyperparameters": {"batch_size": 6, "max_epochs": 14},
         }
     )
 
     assert config.pin_memory is True
-    assert config.training_settings.batch_size == 4
-    assert config.training_settings.max_epochs == 12
+    assert config.detector_hyperparameters.batch_size == 4
+    assert config.detector_hyperparameters.max_epochs == 12
+    assert config.teacher_hyperparameters.batch_size == 5
+    assert config.teacher_hyperparameters.max_epochs == 13
+    assert config.student_hyperparameters.batch_size == 6
+    assert config.student_hyperparameters.max_epochs == 14
 
 
 def test_split_config_requires_split_sizes_to_sum_to_one(tmp_path: Path) -> None:

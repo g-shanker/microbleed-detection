@@ -16,20 +16,45 @@ from ..datamodels import (
 from ..transforms import inpaint_vessels, volume_ops
 
 
+def validate_volume_pair(
+    volume: nib.Nifti1Image, mask: nib.Nifti1Image
+) -> None:
+    """Validate all image and mask invariants required by downstream stages."""
+    if len(volume.shape) != 3:
+        raise ValueError("image and mask must be 3D")
+    if volume.shape != mask.shape:
+        raise ValueError("image and mask shapes do not match")
+    if volume.affine is None or mask.affine is None or not np.allclose(
+        volume.affine, mask.affine
+    ):
+        raise ValueError("image and mask affines do not match")
+
+    for name, image in (("image", volume), ("mask", mask)):
+        spacing = np.asarray(image.header.get_zooms()[:3], dtype=float)
+        if spacing.shape != (3,) or not np.isfinite(spacing).all() or np.any(
+            spacing <= 0
+        ):
+            raise ValueError(f"{name} voxel spacing must be positive and finite")
+
+    volume_data = io.nifti_to_numpy(volume)
+    mask_data = io.nifti_to_numpy(mask)
+    if not np.isfinite(volume_data).all():
+        raise ValueError("image contains non-finite values")
+    if not np.isfinite(mask_data).all():
+        raise ValueError("mask contains non-finite values")
+    if np.max(volume_data) <= 0:
+        raise ValueError("image is empty or its maximum is not positive")
+
+
 def preprocess(
     volume: nib.Nifti1Image,
     mask: nib.Nifti1Image,
     modality: Modality,
 ) -> PreprocessResult:
+    validate_volume_pair(volume, mask)
     canonical_volume = volume_ops.reorient_to_canonical(volume)
 
-    if mask.affine is None or volume.affine is None:
-        raise ValueError("image and mask affines do not match")
-    if not np.allclose(mask.affine, volume.affine):
-        raise ValueError("image and mask affines do not match")
     mask = volume_ops.reorient_to_canonical(mask)
-    if mask.shape != canonical_volume.shape:
-        raise ValueError("reoriented image and mask shapes do not match")
 
     processed_volume = volume_ops.extract_brain(canonical_volume)
     if modality in {"T2*-GRE", "SWI"}:
