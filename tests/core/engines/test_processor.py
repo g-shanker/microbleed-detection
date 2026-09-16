@@ -10,11 +10,20 @@ import torch.nn as nn
 from skimage.measure._regionprops import RegionProperties
 
 from microbleednet.core import utils
+from microbleednet.core.datamodels import PreprocessInput
 from microbleednet.core.engines import inference, processor
 
 
 def _volume(shape: tuple[int, int, int] = (2, 2, 2), affine=None) -> nib.Nifti1Image:
     return nib.Nifti1Image(np.ones(shape), np.eye(4) if affine is None else affine)
+
+
+def _preprocess(
+    volume: nib.Nifti1Image,
+    mask: nib.Nifti1Image | None,
+    modality: str,
+):
+    return processor.preprocess(PreprocessInput(volume, mask, modality))
 
 
 def _stub_processing_steps(monkeypatch) -> tuple[Mock, Mock]:
@@ -23,10 +32,12 @@ def _stub_processing_steps(monkeypatch) -> tuple[Mock, Mock]:
     )
     monkeypatch.setattr(processor.volume_ops, "extract_brain", lambda value: value)
     monkeypatch.setattr(processor.volume_ops, "normalize_volume", lambda value: value)
+    bounding_box = ((0, 2), (0, 2), (0, 2))
     monkeypatch.setattr(
-        processor.volume_ops,
-        "tight_crop_volume",
-        lambda value: (value, ((0, 2), (0, 2), (0, 2))),
+        processor.volume_ops, "get_bounding_box", lambda value: bounding_box
+    )
+    monkeypatch.setattr(
+        processor.volume_ops, "apply_bounding_box", lambda value, box: value
     )
     monkeypatch.setattr(processor.inpaint_vessels, "apply", lambda value: value)
     bias_correct = Mock(side_effect=lambda value: value)
@@ -40,11 +51,12 @@ def test_preprocess_qsm_skips_contrast_operations(monkeypatch) -> None:
     bias_correct, invert = _stub_processing_steps(monkeypatch)
     mask = nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.uint8), np.eye(4))
 
-    result = processor.preprocess(_volume(), mask, "QSM")
+    image, result_mask, affine = _preprocess(_volume(), mask, "QSM")
 
-    assert result.mask.dtype == np.uint8
-    np.testing.assert_array_equal(result.image, np.ones((2, 2, 2)))
-    np.testing.assert_array_equal(result.affine, np.eye(4))
+    assert result_mask is not None
+    assert result_mask.dtype == np.uint8
+    np.testing.assert_array_equal(image, np.ones((2, 2, 2)))
+    np.testing.assert_array_equal(affine, np.eye(4))
     bias_correct.assert_not_called()
     invert.assert_not_called()
 
@@ -53,32 +65,41 @@ def test_preprocess_swi_processes_and_crops_mask(monkeypatch) -> None:
     bias_correct, invert = _stub_processing_steps(monkeypatch)
     mask = nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.uint8), np.eye(4))
 
-    result = processor.preprocess(_volume(), mask, "SWI")
+    _, result_mask, _ = _preprocess(_volume(), mask, "SWI")
 
-    assert result.mask is not None
-    np.testing.assert_array_equal(result.mask, np.ones((2, 2, 2), dtype=int))
-    assert result.mask.dtype == np.uint8
+    assert result_mask is not None
+    np.testing.assert_array_equal(result_mask, np.ones((2, 2, 2), dtype=int))
+    assert result_mask.dtype == np.uint8
     bias_correct.assert_called_once()
     invert.assert_called_once()
+
+
+def test_preprocess_supports_missing_mask(monkeypatch) -> None:
+    _stub_processing_steps(monkeypatch)
+
+    image, result_mask, _ = _preprocess(_volume(), None, "QSM")
+
+    assert result_mask is None
+    np.testing.assert_array_equal(image, np.ones((2, 2, 2)))
 
 
 def test_preprocess_rejects_mask_with_different_affine() -> None:
     mask = _volume(affine=np.diag([2.0, 1.0, 1.0, 1.0]))
 
     with pytest.raises(ValueError, match="affines do not match"):
-        processor.preprocess(_volume(), mask, "QSM")
+        _preprocess(_volume(), mask, "QSM")
 
 
 def test_preprocess_rejects_non_3d_volume() -> None:
     volume = _volume((2, 2, 2, 1))
 
     with pytest.raises(ValueError, match="must be 3D"):
-        processor.preprocess(volume, volume, "QSM")
+        _preprocess(volume, volume, "QSM")
 
 
 def test_preprocess_rejects_reoriented_mask_with_different_shape() -> None:
     with pytest.raises(ValueError, match="shapes do not match"):
-        processor.preprocess(_volume(), _volume((1, 2, 2)), "QSM")
+        _preprocess(_volume(), _volume((1, 2, 2)), "QSM")
 
 
 def test_preprocess_rejects_invalid_voxel_spacing() -> None:
@@ -86,28 +107,39 @@ def test_preprocess_rejects_invalid_voxel_spacing() -> None:
     volume.header.set_zooms((0.0, 1.0, 1.0))
 
     with pytest.raises(ValueError, match="voxel spacing must be positive"):
-        processor.preprocess(volume, _volume(), "QSM")
+        _preprocess(volume, _volume(), "QSM")
 
 
 def test_preprocess_rejects_non_finite_volume_data() -> None:
     volume = nib.Nifti1Image(np.full((2, 2, 2), np.nan), np.eye(4))
 
     with pytest.raises(ValueError, match="image contains non-finite values"):
-        processor.preprocess(volume, _volume(), "QSM")
+        _preprocess(volume, _volume(), "QSM")
 
 
 def test_preprocess_rejects_non_finite_mask_data() -> None:
     mask = nib.Nifti1Image(np.full((2, 2, 2), np.nan), np.eye(4))
 
     with pytest.raises(ValueError, match="mask contains non-finite values"):
-        processor.preprocess(_volume(), mask, "QSM")
+        _preprocess(_volume(), mask, "QSM")
+
+
+def test_preprocess_rejects_non_binary_mask() -> None:
+    mask_data = np.zeros((2, 2, 2), dtype=np.uint8)
+    mask_data[0, 0, 0] = 2
+    mask = nib.Nifti1Image(mask_data, np.eye(4))
+
+    with pytest.raises(ValueError, match="mask must be binary"):
+        _preprocess(_volume(), mask, "QSM")
 
 
 def test_preprocess_rejects_empty_volume() -> None:
     volume = nib.Nifti1Image(np.zeros((2, 2, 2)), np.eye(4))
 
-    with pytest.raises(ValueError, match="image is empty"):
-        processor.preprocess(volume, _volume(), "QSM")
+    with pytest.raises(
+        ValueError, match="image must contain at least one positive voxel"
+    ):
+        _preprocess(volume, _volume(), "QSM")
 
 
 def test_predict_logits_builds_batched_volume_on_model_device() -> None:

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
+import nibabel as nib
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field
@@ -13,6 +14,7 @@ VolumeArray = FloatArray
 MaskArray = IntArray
 VoxelSpacing = tuple[float, float, float]
 Modality = Literal["T2*-GRE", "SWI", "QSM"]
+INVERTED_MODALITIES: frozenset[Modality] = frozenset({"T2*-GRE", "SWI"})
 TorchStateDict = dict[str, Any]
 
 
@@ -141,18 +143,56 @@ class EvaluationAggregate(EvaluationMetrics):
 
 
 @dataclass(frozen=True)
-class PreprocessResult:
-    image: VolumeArray
-    mask: MaskArray
-    affine: FloatArray
+class PreprocessInput:
+    volume: nib.Nifti1Image
+    mask: nib.Nifti1Image | None
+    modality: Modality
 
     def __post_init__(self) -> None:
-        if self.image.ndim != 3:
-            raise ValueError("image must be a 3D array")
-        if not np.isfinite(self.image).all():
-            raise ValueError("image must contain only finite values")
-        if self.mask.shape != self.image.shape:
-            raise ValueError("mask must match image shape")
+        if len(self.volume.shape) != 3:
+            raise ValueError("image must be 3D")
+        if self.mask is not None and self.volume.shape != self.mask.shape:
+            raise ValueError("image and mask shapes do not match")
+
+        if self.volume.affine is None:
+            raise ValueError("affine must be provided")
+        if not np.isfinite(np.asarray(self.volume.affine)).all():
+            raise ValueError("affine must contain only finite values")
+        if self.mask is not None:
+            if self.mask.affine is None:
+                raise ValueError("affine must be provided")
+            if not np.isfinite(np.asarray(self.mask.affine)).all():
+                raise ValueError("affine must contain only finite values")
+            if not np.allclose(self.volume.affine, self.mask.affine):
+                raise ValueError("image and mask affines do not match")
+
+        volume_spacing = np.asarray(self.volume.header.get_zooms()[:3], dtype=float)
+        if (
+            volume_spacing.shape != (3,)
+            or not np.isfinite(volume_spacing).all()
+            or np.any(volume_spacing <= 0)
+        ):
+            raise ValueError("image voxel spacing must be positive and finite")
+        if self.mask is not None:
+            mask_spacing = np.asarray(self.mask.header.get_zooms()[:3], dtype=float)
+            if (
+                mask_spacing.shape != (3,)
+                or not np.isfinite(mask_spacing).all()
+                or np.any(mask_spacing <= 0)
+            ):
+                raise ValueError("mask voxel spacing must be positive and finite")
+
+        volume_data = np.asarray(self.volume.get_fdata())
+        if not np.isfinite(volume_data).all():
+            raise ValueError("image contains non-finite values")
+        if not np.any(volume_data > 0):
+            raise ValueError("image must contain at least one positive voxel")
+        if self.mask is not None:
+            mask_data = np.asarray(self.mask.get_fdata())
+            if not np.isfinite(mask_data).all():
+                raise ValueError("mask contains non-finite values")
+            if not np.isin(mask_data, [0, 1]).all():
+                raise ValueError("mask must be binary with values 0 or 1")
 
 
 @dataclass(frozen=True)

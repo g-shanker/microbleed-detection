@@ -71,3 +71,17 @@ def test_intensity_augmentations_do_not_change_mask(monkeypatch) -> None:
     assert blurred_mask is mask
     assert not np.array_equal(noisy_volume, volume)
     assert blurred_volume.shape == volume.shape
+
+
+def test_translate_supports_missing_mask(monkeypatch) -> None:
+    volume = np.zeros((32, 32, 1))
+    monkeypatch.setattr(
+        augmentations.np.random,
+        "default_rng",
+        lambda: ControlledGenerator("translate"),
+    )
+
+    translated_volume, translated_mask = augmentations.augment(volume, None)
+
+    assert translated_volume.shape == volume.shape
+    assert translated_mask is None

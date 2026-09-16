@@ -187,10 +187,13 @@ class PreprocessedSubject(FrozenModel):
 
 
 class PreprocessedVariant(FrozenModel):
-    """One persisted volume, mask, and FRST result for a subject."""
+    """One persisted volume, optional mask, and FRST result for a subject."""
 
     volume_path: str = Field(description="Absolute path to the variant volume.")
-    mask_path: str = Field(description="Absolute path to the variant mask.")
+    mask_path: str | None = Field(
+        default=None,
+        description="Absolute path to the variant mask, when available.",
+    )
     frst_path: str = Field(description="Absolute path to the variant FRST volume.")
 
 

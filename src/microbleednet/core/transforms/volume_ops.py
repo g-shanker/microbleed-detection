@@ -44,7 +44,7 @@ def blur(volume: np.ndarray, sigma: float) -> np.ndarray:
 def normalize_volume(volume: np.ndarray) -> np.ndarray:
     maximum = np.max(volume)
     if not np.isfinite(maximum) or maximum <= 0:
-        raise ValueError("volume is empty or its maximum is not positive and finite")
+        raise ValueError("cannot normalize a volume without a finite positive maximum")
     return volume / maximum
 
 
@@ -53,16 +53,6 @@ def invert_volume(volume: np.ndarray) -> np.ndarray:
     volume = np.max(volume) - volume
     volume = volume * brain_mask
     return volume
-
-
-def tight_crop_volume(
-    volume: np.ndarray,
-) -> tuple[np.ndarray, BoundingBox]:
-    bounding_box = get_bounding_box(volume)
-
-    cropped_volume = apply_bounding_box(volume, bounding_box)
-
-    return cropped_volume, bounding_box
 
 
 def get_bounding_box(volume: np.ndarray) -> BoundingBox:
