@@ -32,7 +32,6 @@ def execute(config: IndexDataConfig) -> None:
         existing,
         source=source,
         subjects=subjects,
-        now=now,
     )
     raw_manifest.write(manifest_path)
 
@@ -91,7 +90,6 @@ def merge_source(
     *,  # to force following arguments to be called using keywords
     source: RawSource,
     subjects: list[RawSubject],
-    now: str,
 ) -> RawDatasetManifest:
     """Append a freshly indexed source to ``existing`` (or build the first one).
 
@@ -112,8 +110,6 @@ def merge_source(
 
     return RawDatasetManifest(
         status=ManifestStatus.COMPLETE,
-        created_at=existing.created_at if existing else now,
-        updated_at=now,
         sources=[*(existing.sources if existing else []), source],
         subjects=natsorted(
             [*prior_subjects, *subjects], key=lambda subject: subject.subject_id
