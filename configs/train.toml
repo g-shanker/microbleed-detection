@@ -18,7 +18,36 @@ num_workers = 0
 pin_memory = false
 
 # Shared optimizer and training-loop settings.
-[training_settings]
+# Detector optimizer and training-loop settings.
+[detector_hyperparameters]
+batch_size = 8
+max_epochs = 100
+patience = 20
+learning_rate = 0.001
+adam_epsilon = 0.0001
+learning_rate_factor = 0.1
+learning_rate_period = 2
+minimum_learning_rate = 0.000001
+weight_decay = 0.0
+minimum_improvement = 0.0
+use_amp = false
+
+# Teacher optimizer and training-loop settings.
+[teacher_hyperparameters]
+batch_size = 8
+max_epochs = 100
+patience = 20
+learning_rate = 0.001
+adam_epsilon = 0.0001
+learning_rate_factor = 0.1
+learning_rate_period = 2
+minimum_learning_rate = 0.000001
+weight_decay = 0.0
+minimum_improvement = 0.0
+use_amp = false
+
+# Student optimizer and training-loop settings.
+[student_hyperparameters]
 batch_size = 8
 max_epochs = 100
 patience = 20

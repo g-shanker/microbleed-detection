@@ -74,6 +74,28 @@ def test_preprocess_rejects_reoriented_mask_with_different_shape() -> None:
         processor.preprocess(_volume(), _volume((1, 2, 2)), "QSM")
 
 
+def test_preprocess_rejects_invalid_voxel_spacing() -> None:
+    volume = _volume()
+    volume.header.set_zooms((0.0, 1.0, 1.0))
+
+    with pytest.raises(ValueError, match="voxel spacing must be positive"):
+        processor.preprocess(volume, _volume(), "QSM")
+
+
+def test_preprocess_rejects_non_finite_volume_data() -> None:
+    volume = nib.Nifti1Image(np.full((2, 2, 2), np.nan), np.eye(4))
+
+    with pytest.raises(ValueError, match="image contains non-finite values"):
+        processor.preprocess(volume, _volume(), "QSM")
+
+
+def test_preprocess_rejects_empty_volume() -> None:
+    volume = nib.Nifti1Image(np.zeros((2, 2, 2)), np.eye(4))
+
+    with pytest.raises(ValueError, match="image is empty"):
+        processor.preprocess(volume, _volume(), "QSM")
+
+
 def test_predict_logits_builds_batched_volume_on_model_device() -> None:
     model = nn.Conv3d(2, 2, kernel_size=1)
 
