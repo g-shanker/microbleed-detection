@@ -2,9 +2,10 @@ import nibabel as nib
 import numpy as np
 
 from ...core import io
-from ...core.datamodels import Modality
+from ...core.datamodels import Modality, PreprocessInput
 from ...core.engines import processor
 from ...core.transforms import augmentations, frst
+from ...progress import progress
 from ..configs import PreprocessConfig
 from ..layouts import DatasetLayout
 from ..manifests import (
@@ -26,18 +27,20 @@ def execute(config: PreprocessConfig) -> None:
     }
     preprocessed_subjects: list[PreprocessedSubject] = []
 
-    for subject in raw_manifest.subjects:
+    for subject in progress.track(raw_manifest.subjects, "Preprocessing subjects"):
         subject_id = subject.subject_id
 
         raw_volume = io.load_volume(subject.volume_path)
-        raw_mask = io.load_volume(subject.mask_path)
+        raw_mask = io.load_volume(subject.mask_path) if subject.mask_path else None
 
         modality = source_modalities[subject.source_id]
-        preprocess_result = processor.preprocess(raw_volume, raw_mask, modality)
+        processed_volume, processed_mask, processed_affine = processor.preprocess(
+            PreprocessInput(raw_volume, raw_mask, modality)
+        )
 
         variants: list[PreprocessedVariant] = []
-        original_volume = preprocess_result.image
-        original_mask = preprocess_result.mask
+        original_volume = processed_volume
+        original_mask = processed_mask
         for variant_index in range(config.augmentation_factor):
             variant_input_volume = original_volume
             variant_input_mask = original_mask
@@ -47,27 +50,34 @@ def execute(config: PreprocessConfig) -> None:
                 )
 
             variant_volume = nib.Nifti1Image(
-                variant_input_volume, preprocess_result.affine
-            )
-            variant_mask = nib.Nifti1Image(
-                variant_input_mask, preprocess_result.affine
+                variant_input_volume, processed_affine
             )
             variant_frst = frst.apply(np.asarray(variant_input_volume))
-            variant_frst = nib.Nifti1Image(variant_frst, preprocess_result.affine)
+            variant_frst = nib.Nifti1Image(variant_frst, processed_affine)
 
             volume_path = layout.variant_volume_path(subject_id, variant_index)
-            mask_path = layout.variant_mask_path(subject_id, variant_index)
             frst_path = layout.variant_frst_path(subject_id, variant_index)
-            
+
             io.save_volume(variant_volume, volume_path)
-            io.save_volume(variant_mask, mask_path)
             io.save_volume(variant_frst, frst_path)
-            
+
+            mask_path = None
+            if variant_input_mask is not None:
+                variant_mask = nib.Nifti1Image(
+                    variant_input_mask, processed_affine
+                )
+                mask_path = layout.variant_mask_path(subject_id, variant_index)
+                io.save_volume(variant_mask, mask_path)
+
             variants.append(
                 PreprocessedVariant(
                     volume_path=resolve_path_string(volume_path),
-                    mask_path=resolve_path_string(mask_path),
                     frst_path=resolve_path_string(frst_path),
+                    mask_path=(
+                        resolve_path_string(mask_path)
+                        if mask_path is not None
+                        else None
+                    ),
                 )
             )
 

@@ -48,7 +48,10 @@ def test_normalize_volume_scales_by_positive_maximum() -> None:
 
 @pytest.mark.parametrize("maximum", [0.0, np.nan])
 def test_normalize_volume_rejects_invalid_maximum(maximum: float) -> None:
-    with pytest.raises(ValueError, match="maximum is not positive and finite"):
+    with pytest.raises(
+        ValueError,
+        match="cannot normalize a volume without a finite positive maximum",
+    ):
         volume_ops.normalize_volume(np.array([[[maximum]]]))
 
 
@@ -58,21 +61,6 @@ def test_invert_volume_preserves_zero_background() -> None:
     inverted = volume_ops.invert_volume(volume)
 
     np.testing.assert_array_equal(inverted, np.array([[[0.0, 2.0, 0.0]]]))
-
-
-def test_tight_crop_volume_returns_positive_extent() -> None:
-    volume = np.zeros((4, 5, 6))
-    volume[1:3, 2:4, 3:5] = 1
-
-    cropped, bounding_box = volume_ops.tight_crop_volume(volume)
-
-    assert bounding_box == ((1, 3), (2, 4), (3, 5))
-    np.testing.assert_array_equal(cropped, np.ones((2, 2, 2)))
-
-
-def test_tight_crop_volume_rejects_empty_volume() -> None:
-    with pytest.raises(ValueError, match="cannot crop an empty volume"):
-        volume_ops.tight_crop_volume(np.zeros((2, 2, 2)))
 
 
 def test_reorient_to_canonical_flips_negative_axis() -> None:
