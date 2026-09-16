@@ -15,7 +15,7 @@ from ..configs import (
     NonOverlappingPatchConfig,
     TargetCenteredPatchConfig,
 )
-from ..manifests import ManifestStatus, PatchManifest, timestamp
+from ..manifests import ManifestStatus, PatchManifest
 
 
 def execute(
@@ -74,8 +74,6 @@ def execute(
 
     PatchManifest(
         status=ManifestStatus.COMPLETE,
-        created_at=timestamp(),
-        updated_at=timestamp(),
         stage=config.stage,
         split=config.split,
         subject_ids=[subject.subject_id for subject in config.subjects],

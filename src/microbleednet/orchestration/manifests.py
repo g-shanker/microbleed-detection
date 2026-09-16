@@ -41,6 +41,11 @@ from ..core.datamodels import (
 SCHEMA_VERSION = 1
 
 
+def timestamp() -> str:
+    """Return an ISO-8601 UTC timestamp for manifest lifecycle fields."""
+    return datetime.now(timezone.utc).isoformat()
+
+
 class ManifestStatus(str, Enum):
     """Lifecycle state of the stage that produced a manifest."""
 
@@ -59,8 +64,14 @@ class Manifest(FrozenModel):
     status: ManifestStatus = Field(
         description="Whether the producing stage is running, complete, or failed.",
     )
-    created_at: str = Field(description="ISO-8601 UTC time the manifest was created.")
-    updated_at: str = Field(description="ISO-8601 UTC time of the last write.")
+    created_at: str = Field(
+        default_factory=timestamp,
+        description="ISO-8601 UTC time the manifest was created.",
+    )
+    updated_at: str = Field(
+        default_factory=timestamp,
+        description="ISO-8601 UTC time of the last write.",
+    )
     error: str | None = Field(
         default=None,
         description="Failure detail; required when status is failed, otherwise unset.",
@@ -76,7 +87,12 @@ class Manifest(FrozenModel):
 
     def write(self, path: Path) -> None:
         """Serialize this manifest to ``path`` atomically as versioned JSON."""
-        core_io.write_json_atomic(path, self.model_dump(mode="json"))
+        payload = self.model_dump(mode="json")
+        if path.exists():
+            existing = core_io.read_json(path)
+            payload["created_at"] = existing.get("created_at", timestamp())
+        payload["updated_at"] = timestamp()
+        core_io.write_json_atomic(path, payload)
 
     @classmethod
     def read[ManifestType: Manifest](
@@ -385,10 +401,5 @@ def reject_duplicate_ids(ids, entity_name: str) -> None:
         if entity_id in seen:
             raise ValueError(f"duplicate {entity_name} ID in manifest: {entity_id!r}")
         seen.add(entity_id)
-
-
-def timestamp() -> str:
-    """Return an ISO-8601 UTC timestamp for manifest ``created_at``/``updated_at``."""
-    return datetime.now(timezone.utc).isoformat()
 
 

@@ -12,7 +12,6 @@ from ..manifests import (
     PreprocessedDatasetManifest,
     SplitManifest,
     TrainManifest,
-    timestamp,
 )
 from ..utils import resolve_subjects
 from . import infer
@@ -61,11 +60,8 @@ def execute(config: EvaluateConfig) -> None:
         )
 
     aggregate = aggregate_metrics(subject.metrics for subject in per_subject)
-    now = timestamp()
     EvaluateManifest(
         status=ManifestStatus.COMPLETE,
-        created_at=now,
-        updated_at=now,
         dataset_dir=str(config.dataset_dir.resolve()),
         device=config.device,
         inference_manifest_path=str(

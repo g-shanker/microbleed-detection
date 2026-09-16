@@ -133,11 +133,8 @@ def test_merge_source_preserves_creation_and_combines_state() -> None:
                 mask_path="/mask_2",
             )
         ],
-        now="2026-01-02T00:00:00+00:00",
     )
 
-    assert merged.created_at == existing.created_at
-    assert merged.updated_at == "2026-01-02T00:00:00+00:00"
     assert [subject.subject_id for subject in merged.subjects] == [
         "subject_2",
         "subject_10",

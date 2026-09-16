@@ -34,6 +34,36 @@ def _envelope(**overrides: object) -> dict:
     return base
 
 
+def test_manifest_owns_lifecycle_timestamps(tmp_path: Path) -> None:
+    manifest = Manifest(status=ManifestStatus.COMPLETE)
+    path = tmp_path / "manifest.json"
+
+    manifest.write(path)
+    first = core_io.read_json(path)
+    manifest.write(path)
+    second = core_io.read_json(path)
+
+    assert first["created_at"] == manifest.created_at
+    assert first["updated_at"] != manifest.updated_at
+    assert second["created_at"] == manifest.created_at
+    assert second["updated_at"] != first["updated_at"]
+
+
+def test_manifest_write_preserves_creation_timestamp_on_replacement(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "manifest.json"
+    first = Manifest(status=ManifestStatus.COMPLETE)
+    first.write(path)
+
+    replacement = Manifest(status=ManifestStatus.COMPLETE)
+    replacement.write(path)
+    persisted = core_io.read_json(path)
+
+    assert persisted["created_at"] == first.created_at
+    assert persisted["created_at"] != replacement.created_at
+
+
 def test_failed_manifest_requires_error_message() -> None:
     with pytest.raises(ValidationError, match="nonempty error string"):
         Manifest.model_validate(_envelope(status=ManifestStatus.FAILED.value))
