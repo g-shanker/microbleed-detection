@@ -186,6 +186,38 @@ class PreprocessedDatasetManifest(Manifest):
     )
 
 
+class SplitManifest(Manifest):
+    """Manifest ``split`` writes before training begins."""
+
+    manifest_type: Literal["split"] = Field(
+        default="split",
+        description="Stable discriminator for a subject split manifest.",
+    )
+    dataset_dir: str = Field(
+        description="Absolute path to the preprocessed dataset that was split."
+    )
+    seed: int | None = Field(
+        default=None, ge=0, description="Random seed used for subject splitting."
+    )
+    train_size: float = Field(
+        gt=0, le=1, description="Ratio of subjects assigned to training."
+    )
+    validation_size: float = Field(
+        gt=0, le=1, description="Ratio of subjects assigned to validation."
+    )
+    test_size: float = Field(
+        gt=0, le=1, description="Ratio of subjects held out for testing."
+    )
+    train_subject_ids: list[str] = Field(
+        description="Ordered subject IDs assigned to training."
+    )
+    validation_subject_ids: list[str] = Field(
+        description="Ordered subject IDs assigned to validation."
+    )
+    test_subject_ids: list[str] = Field(
+        description="Ordered subject IDs assigned to testing."
+    )
+
 class TrainManifest(Manifest):
     """Manifest ``train`` writes for the selected subjects and recipe."""
 
@@ -199,31 +231,6 @@ class TrainManifest(Manifest):
     device: str = Field(description="Torch device requested for the training run.")
     seed: int | None = Field(
         default=None, ge=0, description="Random seed used for the training run."
-    )
-    train_size: float = Field(
-        gt=0, le=1, description="Ratio of subjects assigned to the training split."
-    )
-    validation_size: float = Field(
-        default=0.1,
-        ge=0,
-        le=1,
-        description="Ratio of subjects assigned to the validation split.",
-    )
-    test_size: float = Field(
-        default=0.2,
-        ge=0,
-        le=1,
-        description="Ratio of subjects held out for evaluation.",
-    )
-    train_subject_ids: list[str] = Field(
-        description="Ordered subject IDs assigned to the training split."
-    )
-    validation_subject_ids: list[str] = Field(
-        description="Ordered subject IDs assigned to the validation split."
-    )
-    test_subject_ids: list[str] = Field(
-        default_factory=list,
-        description="Ordered subject IDs held out for evaluation."
     )
     detector_candidate_threshold: float = Field(
         ge=0,

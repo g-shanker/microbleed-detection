@@ -8,6 +8,7 @@ from microbleednet.orchestration.configs import (
     IndexDataConfig,
     InferConfig,
     PreprocessConfig,
+    SplitConfig,
     TargetCenteredPatchConfig,
     TrainConfig,
 )
@@ -17,6 +18,7 @@ from microbleednet.orchestration.manifests import (
     PreprocessedDatasetManifest,
     PreprocessedSubject,
     PreprocessedVariant,
+    SplitManifest,
     timestamp,
 )
 from tests.support import make_index_config
@@ -154,8 +156,8 @@ def test_train_config_rejects_invalid_and_unavailable_devices(
         )
 
 
-def test_train_config_defaults_preserve_training_recipe(tmp_path: Path) -> None:
-    config = TrainConfig(
+def test_split_config_defaults_preserve_split_recipe(tmp_path: Path) -> None:
+    config = SplitConfig(
         dataset_dir=_training_dataset(tmp_path),
         experiment_dir=tmp_path / "experiment",
     )
@@ -164,6 +166,14 @@ def test_train_config_defaults_preserve_training_recipe(tmp_path: Path) -> None:
     assert config.validation_size == 0.1
     assert config.test_size == 0.2
     assert config.seed is None
+
+
+def test_train_config_defaults_preserve_training_recipe(tmp_path: Path) -> None:
+    config = TrainConfig(
+        dataset_dir=_training_dataset(tmp_path),
+        experiment_dir=tmp_path / "experiment",
+    )
+
     assert config.detector_candidate_threshold == 0.5
     assert config.detector_augmentation_factor == 10
     assert config.discriminator_augmentation_factor == 5
@@ -184,11 +194,11 @@ def test_train_config_defaults_preserve_training_recipe(tmp_path: Path) -> None:
         {"num_workers": -1},
     ],
 )
-def test_train_config_rejects_invalid_training_values(
+def test_split_config_rejects_invalid_split_values(
     tmp_path: Path, overrides: dict[str, object]
 ) -> None:
     with pytest.raises(ValidationError):
-        TrainConfig.model_validate(
+        SplitConfig.model_validate(
             {
                 "dataset_dir": _training_dataset(tmp_path),
                 "experiment_dir": tmp_path / "experiment",
@@ -214,14 +224,30 @@ def test_train_config_accepts_custom_training_settings_and_pin_memory(
     assert config.training_settings.max_epochs == 12
 
 
-def test_train_config_requires_split_sizes_to_sum_to_one(tmp_path: Path) -> None:
+def test_split_config_requires_split_sizes_to_sum_to_one(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="must sum to 1.0"):
-        TrainConfig(
+        SplitConfig(
             dataset_dir=_training_dataset(tmp_path),
             experiment_dir=tmp_path / "experiment",
             train_size=0.6,
             validation_size=0.1,
             test_size=0.1,
+        )
+
+
+def test_split_config_requires_preprocessed_manifest(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+
+    with pytest.raises(ValidationError, match="preprocessed manifest does not exist"):
+        SplitConfig(dataset_dir=dataset_dir, experiment_dir=tmp_path / "experiment")
+
+
+def test_split_config_requires_dataset_dir(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="dataset_dir does not exist"):
+        SplitConfig(
+            dataset_dir=tmp_path / "missing",
+            experiment_dir=tmp_path / "experiment",
         )
 
 
@@ -233,6 +259,28 @@ def test_train_config_requires_dataset_and_preprocessed_manifest(
             dataset_dir=tmp_path / "missing",
             experiment_dir=tmp_path / "experiment",
         )
+
+
+def test_train_config_rejects_split_manifest_for_another_dataset(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = _training_dataset(tmp_path)
+    experiment_dir = tmp_path / "experiment"
+    SplitManifest(
+        status=ManifestStatus.COMPLETE,
+        created_at=timestamp(),
+        updated_at=timestamp(),
+        dataset_dir=str((tmp_path / "other-dataset").resolve()),
+        train_size=0.6,
+        validation_size=0.2,
+        test_size=0.2,
+        train_subject_ids=["subject-0"],
+        validation_subject_ids=["subject-1"],
+        test_subject_ids=["subject-2"],
+    ).write(ExperimentLayout(experiment_dir=experiment_dir).split_manifest_path())
+
+    with pytest.raises(ValidationError, match="does not match"):
+        TrainConfig(dataset_dir=dataset_dir, experiment_dir=experiment_dir)
 
     dataset_dir = tmp_path / "empty-dataset"
     dataset_dir.mkdir()
