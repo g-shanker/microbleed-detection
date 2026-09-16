@@ -120,9 +120,6 @@ def test_train_manifest_round_trips_split_and_training_settings(
         dataset_dir="C:/datasets/preprocessed",
         device="cuda:0",
         seed=42,
-        train_size=0.7,
-        train_subject_ids=["train-1"],
-        validation_subject_ids=["validation-1"],
         detector_candidate_threshold=0.5,
         detector_augmentation_factor=10,
         discriminator_augmentation_factor=5,
@@ -144,8 +141,6 @@ def test_train_manifest_round_trips_split_and_training_settings(
     assert loaded.dataset_dir == "C:/datasets/preprocessed"
     assert loaded.device == "cuda:0"
     assert loaded.seed == 42
-    assert loaded.train_subject_ids == ["train-1"]
-    assert loaded.validation_subject_ids == ["validation-1"]
     assert loaded.training_settings.batch_size == 8
     assert loaded.detector_history == []
 

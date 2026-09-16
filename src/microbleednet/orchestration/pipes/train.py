@@ -1,9 +1,5 @@
-from pathlib import Path
-from typing import cast
-
 import torch
 import torch.nn as nn
-from sklearn.model_selection import train_test_split
 from torch.utils.data import BatchSampler, DataLoader, SequentialSampler
 
 from ...core import io as core_io
@@ -46,6 +42,7 @@ from ..manifests import (
     PatchManifest,
     PreprocessedDatasetManifest,
     PreprocessedSubject,
+    SplitManifest,
     TrainManifest,
     timestamp,
 )
@@ -65,12 +62,12 @@ def execute(config: TrainConfig) -> None:
     preprocessed_manifest = PreprocessedDatasetManifest.read(
         dataset_layout.preprocessed_manifest_path()
     )
-    train_subjects, validation_subjects, test_subjects = split_subjects(
-        preprocessed_manifest.subjects,
-        config.train_size,
-        config.validation_size,
-        config.test_size,
-        config.seed,
+    split_manifest = SplitManifest.read(experiment_layout.split_manifest_path())
+    train_subjects = utils.resolve_subjects(
+        preprocessed_manifest.subjects, split_manifest.train_subject_ids
+    )
+    validation_subjects = utils.resolve_subjects(
+        preprocessed_manifest.subjects, split_manifest.validation_subject_ids
     )
     device = torch.device(config.device)
     detector_history = train_detector(
@@ -96,12 +93,6 @@ def execute(config: TrainConfig) -> None:
     )
     write_train_manifest(
         experiment_layout,
-        config.dataset_dir,
-        config.device,
-        config.seed,
-        train_subjects,
-        validation_subjects,
-        test_subjects,
         config,
         detector_history,
         teacher_history,
@@ -109,38 +100,8 @@ def execute(config: TrainConfig) -> None:
     )
 
 
-def split_subjects(
-    subjects: list[PreprocessedSubject],
-    train_size: float,
-    validation_size: float,
-    test_size: float,
-    seed: int | None = None,
-) -> tuple[
-    list[PreprocessedSubject], list[PreprocessedSubject], list[PreprocessedSubject]
-]:
-    train_subjects, held_out_subjects = cast(
-        tuple[list[PreprocessedSubject], list[PreprocessedSubject]],
-        train_test_split(subjects, train_size=train_size, random_state=seed),
-    )
-    validation_subjects, test_subjects = cast(
-        tuple[list[PreprocessedSubject], list[PreprocessedSubject]],
-        train_test_split(
-            held_out_subjects,
-            train_size=validation_size / (validation_size + test_size),
-            random_state=seed,
-        ),
-    )
-    return train_subjects, validation_subjects, test_subjects
-
-
 def write_train_manifest(
     experiment_layout: ExperimentLayout,
-    dataset_dir: Path,
-    device: str,
-    seed: int | None,
-    train_subjects: list[PreprocessedSubject],
-    validation_subjects: list[PreprocessedSubject],
-    test_subjects: list[PreprocessedSubject],
     config: TrainConfig,
     detector_history: list[EpochLoss],
     teacher_history: list[EpochLoss],
@@ -151,17 +112,9 @@ def write_train_manifest(
         status=ManifestStatus.COMPLETE,
         created_at=now,
         updated_at=now,
-        dataset_dir=str(dataset_dir.resolve()),
-        device=device,
-        seed=seed,
-        train_size=config.train_size,
-        validation_size=config.validation_size,
-        test_size=config.test_size,
-        train_subject_ids=[subject.subject_id for subject in train_subjects],
-        validation_subject_ids=[
-            subject.subject_id for subject in validation_subjects
-        ],
-        test_subject_ids=[subject.subject_id for subject in test_subjects],
+        dataset_dir=str(config.dataset_dir.resolve()),
+        device=config.device,
+        seed=config.seed,
         detector_candidate_threshold=config.detector_candidate_threshold,
         detector_augmentation_factor=config.detector_augmentation_factor,
         discriminator_augmentation_factor=config.discriminator_augmentation_factor,
