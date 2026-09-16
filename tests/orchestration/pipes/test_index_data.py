@@ -71,14 +71,24 @@ def test_build_subject_map_rejects_empty_subject_id(tmp_path: Path) -> None:
     path = tmp_path / "_volume.nii.gz"
     path.write_bytes(b"")
     with pytest.raises(ValueError, match="empty ID"):
-        build_subject_map(tmp_path, [path], "{subject_id}_volume.nii.gz")
+        build_subject_map(
+            tmp_path,
+            [path],
+            "{subject_id}_volume.nii.gz",
+            "Indexing volumes",
+        )
 
 
 def test_build_subject_map_rejects_duplicate_subject_id(tmp_path: Path) -> None:
     path = tmp_path / "subject_1_volume.nii.gz"
     path.write_bytes(b"")
     with pytest.raises(ValueError, match="duplicate subject ID"):
-        build_subject_map(tmp_path, [path, path], "{subject_id}_volume.nii.gz")
+        build_subject_map(
+            tmp_path,
+            [path, path],
+            "{subject_id}_volume.nii.gz",
+            "Indexing volumes",
+        )
 
 
 def test_index_source_sorts_naturally_and_namespaces_subjects(tmp_path: Path) -> None:

@@ -5,13 +5,18 @@ command it currently registers.
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import typer
 from click.testing import Result
 from pydantic import BaseModel, Field
 from typer.testing import CliRunner
 
-from microbleednet.cli.commands import CommandSpec, build_describe_command
+from microbleednet.cli.commands import (
+    CommandSpec,
+    build_command,
+    build_describe_command,
+)
 from microbleednet.cli.entrypoint import app
 from microbleednet.orchestration.layouts import DatasetLayout
 from microbleednet.orchestration.manifests import (
@@ -63,6 +68,36 @@ def test_describe_renders_a_section_header_for_nested_config() -> None:
     assert "nested" in result.output
     assert "knob" in result.output
     assert "trailing" in result.output
+
+
+def test_build_command_runs_without_progress_reporter(
+    tmp_path: Path, monkeypatch
+) -> None:
+    scratch_app = typer.Typer()
+    executed: list[str] = []
+    fake_pipe = SimpleNamespace(
+        execute=lambda config: executed.append(config.top_level)
+    )
+    monkeypatch.setattr(
+        "microbleednet.cli.commands.import_module",
+        lambda *args, **kwargs: fake_pipe,
+    )
+    spec = CommandSpec(
+        name="fake",
+        help="Fake command for testing.",
+        config=_FakeConfig,
+        pipe="unused",
+        dry_run_message=lambda s: "",
+        success_message=lambda s: "",
+    )
+    build_command(scratch_app, spec)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('top_level = "value"', encoding="utf-8")
+
+    result = runner.invoke(scratch_app, ["--config", str(config_path)])
+
+    assert result.exit_code == 0, result.output
+    assert executed == ["value"]
 
 
 def test_index_data_help_points_to_describe() -> None:
