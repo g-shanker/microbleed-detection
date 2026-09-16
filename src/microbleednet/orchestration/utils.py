@@ -1,8 +1,13 @@
 import gc
+from pathlib import Path
 
 import torch
 
 from .manifests import PreprocessedSubject
+
+
+def resolve_path_string(path: Path) -> str:
+    return str(path.resolve())
 
 
 def resolve_subjects(

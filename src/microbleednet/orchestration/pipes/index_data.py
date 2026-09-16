@@ -1,11 +1,11 @@
 import glob
+import logging
 import re
 from pathlib import Path
 from typing import Optional
 
 from natsort import natsorted
 
-from .. import manifests
 from ..configs import SUBJECT_ID_PLACEHOLDER, IndexDataConfig
 from ..layouts import DatasetLayout
 from ..manifests import (
@@ -14,50 +14,70 @@ from ..manifests import (
     RawSource,
     RawSubject,
 )
+from ..utils import resolve_path_string
+
+logger = logging.getLogger(__name__)
 
 
 def execute(config: IndexDataConfig) -> None:
-    now = manifests.timestamp()
-    source, subjects = index_source(config, now)
+    source, subjects = index_source(config)
 
     layout = DatasetLayout(dataset_dir=config.dataset_dir)
     manifest_path = layout.raw_manifest_path()
-    existing = (
+
+    existing_manifest = (
         RawDatasetManifest.read(manifest_path) if manifest_path.is_file() else None
     )
 
-    raw_manifest = merge_source(
-        existing,
-        source=source,
-        subjects=subjects,
-    )
+    if existing_manifest is None:
+        raw_manifest = RawDatasetManifest(
+            status=ManifestStatus.COMPLETE,
+            sources=[source],
+            subjects=subjects,
+        )
+    else:
+        logger.info(
+            "Existing raw manifest found at %s; merging source '%s'.",
+            manifest_path,
+            source.source_id,
+        )
+        raw_manifest = merge_source(
+            existing_manifest,
+            source=source,
+            subjects=subjects,
+        )
+
     raw_manifest.write(manifest_path)
 
 
-def index_source(
-    config: IndexDataConfig, now: str
-) -> tuple[RawSource, list[RawSubject]]:
+def index_source(config: IndexDataConfig) -> tuple[RawSource, list[RawSubject]]:
     """
     Index one input/mask directory pair into a source and its subjects.
     """
-    volume_paths = compute_paths(config.input_dir, config.volume_pattern)
-    mask_paths = compute_paths(config.mask_dir, config.mask_pattern)
-
+    volume_paths = find_matching_paths(config.input_dir, config.volume_pattern)
     volume_subject_map = build_subject_map(
         config.input_dir, volume_paths, config.volume_pattern
     )
-    mask_subject_map = build_subject_map(
-        config.mask_dir, mask_paths, config.mask_pattern
-    )
 
-    volume_ids = set(volume_subject_map)
-    mask_ids = set(mask_subject_map)
-    unmatched_volumes = sorted(volume_ids - mask_ids)
-    unmatched_masks = sorted(mask_ids - volume_ids)
-    if unmatched_volumes or unmatched_masks:
-        raise ValueError(
-            f"unmatched subjects: volumes={unmatched_volumes}, masks={unmatched_masks}"
+    mask_subject_map: dict[str, Path] = {}
+    if config.mask_dir is not None and config.mask_pattern is not None:
+        mask_paths = find_matching_paths(config.mask_dir, config.mask_pattern)
+        mask_subject_map = build_subject_map(
+            config.mask_dir, mask_paths, config.mask_pattern
         )
+
+        volume_ids = set(volume_subject_map)
+        mask_ids = set(mask_subject_map)
+        unmatched_volumes = natsorted(volume_ids - mask_ids)
+        unmatched_masks = natsorted(mask_ids - volume_ids)
+        if unmatched_volumes or unmatched_masks:
+            raise ValueError(
+                "unmatched subjects between volumes and masks:\n"
+                "  volumes without masks: "
+                f"{', '.join(unmatched_volumes) or 'none'}\n"
+                "  masks without volumes: "
+                f"{', '.join(unmatched_masks) or 'none'}"
+            )
 
     def namespaced(subject_id: str) -> str:
         return f"{config.source_id}_{subject_id}"
@@ -66,48 +86,53 @@ def index_source(
         RawSubject(
             subject_id=namespaced(subject_id),
             source_id=config.source_id,
-            volume_path=str(volume_subject_map[subject_id].resolve()),
-            mask_path=str(mask_subject_map[subject_id].resolve()),
+            volume_path=resolve_path_string(volume_subject_map[subject_id]),
+            mask_path=(
+                resolve_path_string(mask_subject_map[subject_id])
+                if mask_subject_map
+                else None
+            ),
         )
         for subject_id in natsorted(volume_subject_map)
     ]
     source = RawSource(
-        input_dir=str(config.input_dir.resolve()),
-        mask_dir=str(config.mask_dir.resolve()),
+        input_dir=resolve_path_string(config.input_dir),
+        mask_dir=(
+            resolve_path_string(config.mask_dir)
+            if config.mask_dir is not None
+            else None
+        ),
         volume_pattern=config.volume_pattern,
         mask_pattern=config.mask_pattern,
         source_id=config.source_id,
         modality=config.modality,
-        added_on=now,
     )
     return source, subjects
 
 
 def merge_source(
-    existing: RawDatasetManifest | None,
+    existing: RawDatasetManifest,
     source: RawSource,
     subjects: list[RawSubject],
 ) -> RawDatasetManifest:
-    """Append a freshly indexed source to ``existing`` (or build the first one).
+    """Append a freshly indexed source to an existing manifest.
 
-    Subject IDs are globally unique across sources: a new subject that collides
-    with one already indexed is a hard error, so accumulation never silently
-    drops or overwrites prior data.
+    Source IDs are unique across the manifest, which keeps the namespaced
+    subject IDs unique as sources are accumulated.
     """
-    prior_subjects = existing.subjects if existing else []
-    collisions = {subject.subject_id for subject in prior_subjects} & {
-        subject.subject_id for subject in subjects
-    }
-    if collisions:
+    prior_subjects = existing.subjects
+    prior_sources = existing.sources
+    if any(
+        prior_source.source_id == source.source_id for prior_source in prior_sources
+    ):
         raise ValueError(
-            "subjects already indexed in this dataset: "
-            f"{sorted(collisions)}; index them into a fresh dataset directory "
-            "or use a different source_id."
+            f"source already indexed in this dataset: {source.source_id}; "
+            "use a different source_id."
         )
 
     return RawDatasetManifest(
         status=ManifestStatus.COMPLETE,
-        sources=[*(existing.sources if existing else []), source],
+        sources=[*prior_sources, source],
         subjects=natsorted(
             [*prior_subjects, *subjects], key=lambda subject: subject.subject_id
         ),
@@ -130,7 +155,7 @@ def build_subject_map(
     return subject_map
 
 
-def compute_paths(root_dir: Path, pattern: str) -> list[Path]:
+def find_matching_paths(root_dir: Path, pattern: str) -> list[Path]:
     pattern_parts = pattern.split(SUBJECT_ID_PLACEHOLDER)
     glob_pattern = "*".join(glob.escape(part) for part in pattern_parts)
     return list(root_dir.rglob(glob_pattern))
@@ -148,7 +173,5 @@ def extract_subject_id(root_dir: Path, path: Path, pattern: str) -> Optional[str
 
     subject_ids = match.groups()
     if len(set(subject_ids)) != 1:
-        raise ValueError(
-            f"subject ID placeholders do not match in path: {path}"
-        )
+        raise ValueError(f"subject ID placeholders do not match in path: {path}")
     return subject_ids[0]

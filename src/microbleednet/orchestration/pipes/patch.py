@@ -14,6 +14,7 @@ from ..configs import (
     TargetCenteredPatchConfig,
 )
 from ..manifests import ManifestStatus, PatchManifest
+from ..utils import resolve_path_string
 
 
 def execute(
@@ -59,9 +60,9 @@ def execute(
 
             records.extend(
                 PatchRecord(
-                    volume_path=str(volume_path.resolve()),
-                    mask_path=str(mask_path.resolve()),
-                    frst_path=str(frst_path.resolve()),
+                    volume_path=resolve_path_string(volume_path),
+                    mask_path=resolve_path_string(mask_path),
+                    frst_path=resolve_path_string(frst_path),
                     patch_index=index,
                     has_microbleed=bool(np.any(mask_array > 0)),
                 )
