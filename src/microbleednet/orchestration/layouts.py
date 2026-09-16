@@ -8,12 +8,17 @@ pipes.
 """
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 
 from ..core.datamodels import FrozenModel
 
 DEFAULT_NIFTI_SUFFIX = ".nii.gz"
+StageName = Literal["detector", "teacher", "student"]
+DETECTOR_STAGE: StageName = "detector"
+TEACHER_STAGE: StageName = "teacher"
+STUDENT_STAGE: StageName = "student"
 
 
 class DatasetLayout(FrozenModel):

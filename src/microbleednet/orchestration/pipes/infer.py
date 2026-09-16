@@ -1,26 +1,25 @@
 """Run the internal detector/discriminator inference pipeline."""
 
-from typing import cast
-
 import torch
 
 from ...core import io as core_io
 from ...core.common.models import CandidateDetector, CandidateDiscriminatorStudent
-from ...core.datamodels import PatchSizes
+from ...core.datamodels import PatchSizes, VoxelSpacing
 from ...core.engines import inference as core_inference
 from ...core.engines import processor as core_processor
 from ..configs import InferConfig
-from ..layouts import ExperimentLayout
+from ..layouts import (
+    DETECTOR_STAGE,
+    STUDENT_STAGE,
+    ExperimentLayout,
+)
 from ..manifests import (
     InferManifest,
     InferredSubject,
     ManifestStatus,
-    timestamp,
 )
 from ..utils import release_gpu_memory
 
-DETECTOR_STAGE = "detector"
-STUDENT_STAGE = "student"
 VARIANT_INDEX = 0
 DETECTOR_THRESHOLD = 0.5
 STUDENT_THRESHOLD = 0.5
@@ -62,10 +61,16 @@ def execute(config: InferConfig) -> None:
                 STUDENT_THRESHOLD,
             )
             
+            zooms = list(volume_image.header.get_zooms())
+            voxel_sizes: VoxelSpacing = (
+                float(zooms[0]),
+                float(zooms[1]),
+                float(zooms[2]),
+            )
             final_mask_array = core_processor.postprocess(
                 retained_labels,
                 volume,
-                cast(tuple[float, float, float], volume_image.header.get_zooms()[:3]),
+                voxel_sizes,
                 MINIMUM_VOLUME_MM3,
                 MAXIMUM_ELLIPTICITY,
                 MINIMUM_BRAIN_DISTANCE_MM,
@@ -74,8 +79,6 @@ def execute(config: InferConfig) -> None:
             final_mask_image = core_io.numpy_to_nifti(final_mask_array, volume_image)
 
             output_path = layout.inference_output_path(subject.subject_id)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-
             core_io.save_volume(final_mask_image, output_path)
 
             results.append(
@@ -85,11 +88,8 @@ def execute(config: InferConfig) -> None:
                 )
             )
 
-        now = timestamp()
         InferManifest(
             status=ManifestStatus.COMPLETE,
-            created_at=now,
-            updated_at=now,
             device=config.device,
             detector_checkpoint_path=str(detector_checkpoint.resolve()),
             student_checkpoint_path=str(student_checkpoint.resolve()),

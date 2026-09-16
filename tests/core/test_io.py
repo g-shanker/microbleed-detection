@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 
 from microbleednet.core import io
+from microbleednet.core.datamodels import CheckpointState
 
 
 def test_numpy_to_nifti_preserves_reference_geometry() -> None:
@@ -48,15 +49,46 @@ def test_save_volume_preserves_geometry_and_binary_dtype(tmp_path: Path) -> None
     assert set(np.unique(saved.get_fdata())) == {1.0}
 
 
-def test_save_array_atomic_cleans_temporary_file_on_failure(
+def test_save_volume_cleans_temporary_file_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(io.nib, "save", lambda *args: (_ for _ in ()).throw(OSError()))
+
+    with pytest.raises(OSError):
+        io.save_volume(
+            nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4)),
+            tmp_path / "volume.nii.gz",
+        )
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_save_array_cleans_temporary_file_on_failure(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(io.np, "save", lambda *args: (_ for _ in ()).throw(OSError()))
 
     with pytest.raises(OSError):
-        io.save_array_atomic(np.ones(1), tmp_path / "array.npy")
+        io.save_array(np.ones(1), tmp_path / "array.npy")
 
     assert list(tmp_path.iterdir()) == []
+
+
+def test_save_checkpoint_cleans_temporary_file_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        io.torch,
+        "save",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError()),
+    )
+
+    with pytest.raises(OSError):
+        io.save_checkpoint(
+            cast(CheckpointState, {}), tmp_path / "nested" / "model.pth"
+        )
+
+    assert list((tmp_path / "nested").iterdir()) == []
 
 
 def test_load_model_weights_restores_checkpoint_state(tmp_path: Path) -> None:
@@ -71,38 +103,38 @@ def test_load_model_weights_restores_checkpoint_state(tmp_path: Path) -> None:
     torch.testing.assert_close(target.bias, source.bias)
 
 
-def test_write_json_atomic_creates_parent_and_stable_json(tmp_path: Path) -> None:
+def test_write_json_creates_parent_and_stable_json(tmp_path: Path) -> None:
     path = tmp_path / "nested" / "data.json"
 
-    io.write_json_atomic(path, {"zebra": 1, "apple": "microbleed"})
+    io.write_json(path, {"zebra": 1, "apple": "microbleed"})
 
     content = path.read_text(encoding="utf-8")
     assert content == '{\n  "apple": "microbleed",\n  "zebra": 1\n}\n'
 
 
-def test_write_json_atomic_replaces_existing_file(tmp_path: Path) -> None:
+def test_write_json_replaces_existing_file(tmp_path: Path) -> None:
     path = tmp_path / "data.json"
     path.write_text("old content", encoding="utf-8")
 
-    io.write_json_atomic(path, ["new", "content"])
+    io.write_json(path, ["new", "content"])
 
     assert io.read_json(path) == ["new", "content"]
     assert list(tmp_path.iterdir()) == [path]
 
 
-def test_write_json_atomic_removes_temporary_file_on_serialization_failure(
+def test_write_json_removes_temporary_file_on_serialization_failure(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "nested" / "manifest.json"
 
     with pytest.raises(TypeError):
-        io.write_json_atomic(path, {"invalid": object()})
+        io.write_json(path, {"invalid": object()})
 
     assert list(path.parent.glob("tmp*")) == []
     assert not path.exists()
 
 
-def test_write_json_atomic_handles_temporary_file_creation_failure(
+def test_write_json_handles_temporary_file_creation_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -114,7 +146,7 @@ def test_write_json_atomic_handles_temporary_file_creation_failure(
     monkeypatch.setattr(io.tempfile, "NamedTemporaryFile", raise_creation_error)
 
     with pytest.raises(OSError, match="could not create temporary file"):
-        io.write_json_atomic(path, {"key": "value"})
+        io.write_json(path, {"key": "value"})
 
     assert not path.exists()
 

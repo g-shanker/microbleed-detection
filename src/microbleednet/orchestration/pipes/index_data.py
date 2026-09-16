@@ -17,8 +17,6 @@ from ..manifests import (
 
 
 def execute(config: IndexDataConfig) -> None:
-    config.dataset_dir.mkdir(parents=True, exist_ok=True)
-
     now = manifests.timestamp()
     source, subjects = index_source(config, now)
 
@@ -32,7 +30,6 @@ def execute(config: IndexDataConfig) -> None:
         existing,
         source=source,
         subjects=subjects,
-        now=now,
     )
     raw_manifest.write(manifest_path)
 
@@ -88,10 +85,8 @@ def index_source(
 
 def merge_source(
     existing: RawDatasetManifest | None,
-    *,  # to force following arguments to be called using keywords
     source: RawSource,
     subjects: list[RawSubject],
-    now: str,
 ) -> RawDatasetManifest:
     """Append a freshly indexed source to ``existing`` (or build the first one).
 
@@ -112,8 +107,6 @@ def merge_source(
 
     return RawDatasetManifest(
         status=ManifestStatus.COMPLETE,
-        created_at=existing.created_at if existing else now,
-        updated_at=now,
         sources=[*(existing.sources if existing else []), source],
         subjects=natsorted(
             [*prior_subjects, *subjects], key=lambda subject: subject.subject_id

@@ -9,6 +9,9 @@ FloatArray = NDArray[np.floating]
 IntArray = NDArray[np.integer]
 Shape3D = tuple[int, int, int]
 BoundingBox = tuple[tuple[int, int], tuple[int, int], tuple[int, int]]
+VolumeArray = FloatArray
+MaskArray = IntArray
+VoxelSpacing = tuple[float, float, float]
 Modality = Literal["T2*-GRE", "SWI", "QSM"]
 TorchStateDict = dict[str, Any]
 
@@ -48,7 +51,7 @@ class PatchSizes:
     DISCRIMINATOR = 24
 
 
-class TrainingHyperparameters(FrozenModel):
+class Hyperparameters(FrozenModel):
     """Optimization and training-loop settings for a model run."""
 
     batch_size: int = Field(
@@ -139,8 +142,8 @@ class EvaluationAggregate(EvaluationMetrics):
 
 @dataclass(frozen=True)
 class PreprocessResult:
-    image: FloatArray
-    mask: IntArray
+    image: VolumeArray
+    mask: MaskArray
     affine: FloatArray
 
     def __post_init__(self) -> None:
@@ -161,8 +164,8 @@ class ExtractedPatches:
 
 @dataclass(frozen=True)
 class LoadedPatch:
-    volume: FloatArray
-    mask: IntArray
+    volume: VolumeArray
+    mask: MaskArray
     has_microbleed: bool
 
 

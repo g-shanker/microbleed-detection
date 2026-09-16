@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 
 from .. import io, utils
 from ..common.tasks import BaseTask
-from ..datamodels import CheckpointState, EpochLoss, TrainingHyperparameters
+from ..datamodels import CheckpointState, EpochLoss, Hyperparameters
 from .evaluators import Evaluator
 
 
@@ -18,14 +18,12 @@ class Trainer:
         model: nn.Module,
         task: BaseTask,
         best_checkpoint: Path,
-        hyperparameters: TrainingHyperparameters,
+        hyperparameters: Hyperparameters,
     ):
         self.model = model
         self.hyperparameters = hyperparameters
         self.best_checkpoint = best_checkpoint
         self.epochs_without_improvement = 0
-
-        self.best_checkpoint.parent.mkdir(parents=True, exist_ok=True)
 
         self.device = utils.get_model_device(self.model)
         self.task = task.to(self.device)
@@ -133,5 +131,5 @@ class Trainer:
             "epochs_without_improvement": self.epochs_without_improvement,
         }
 
-        io.save_checkpoint_atomic(state, self.best_checkpoint)
+        io.save_checkpoint(state, self.best_checkpoint)
 

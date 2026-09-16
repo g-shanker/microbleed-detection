@@ -1,5 +1,3 @@
-from typing import cast
-
 import numpy as np
 from joblib import Parallel, delayed
 from scipy.ndimage import binary_dilation, convolve
@@ -84,13 +82,11 @@ def get_slice_vessel_mask(image_slice: np.ndarray) -> np.ndarray:
     vessel_cluster_label = 1 if (clusters == 1).sum() < (clusters == 0).sum() else 0
 
     vessel_mask = np.reshape(clusters == vessel_cluster_label, image_slice.shape)
-    labeled_vessel_mask = cast(
-        np.ndarray, utils.label_components(vessel_mask, VESSEL_CONNECTIVITY)
-    )
+    labeled_vessel_mask = utils.label_components(vessel_mask, VESSEL_CONNECTIVITY)
     vessel_mask_props = regionprops(labeled_vessel_mask)
 
     valid_vessel_regions: list[int] = [
-        cast(int, prop.label)
+        int(prop.label)
         for prop in vessel_mask_props
         if not (
             prop.eccentricity < MINIMUM_VESSEL_ECCENTRICITY

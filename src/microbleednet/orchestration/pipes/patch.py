@@ -1,21 +1,19 @@
 """Create materialized training patches from preprocessed subjects."""
 
-from typing import cast
-
 import numpy as np
 
 from ...core import io, utils
 from ...core.common.models import CandidateDetector
 from ...core.datamodels import ExtractedPatches, PatchRecord
 from ...core.engines import inference as core_inference
-from ...core.io import save_array_atomic
+from ...core.io import save_array
 from ...core.transforms import patch as patch_transforms
 from ..configs import (
     BasePatchConfig,
     NonOverlappingPatchConfig,
     TargetCenteredPatchConfig,
 )
-from ..manifests import ManifestStatus, PatchManifest, timestamp
+from ..manifests import ManifestStatus, PatchManifest
 
 
 def execute(
@@ -25,7 +23,7 @@ def execute(
         extract = NonOverlappingExtractor(config.patch_size)
     elif isinstance(config, TargetCenteredPatchConfig):
         extract = TargetCenteredExtractor(
-            detector=cast(CandidateDetector, config.detector),
+            detector=config.detector,
             threshold=config.probability_threshold,
             patch_size=config.patch_size,
         )
@@ -33,8 +31,6 @@ def execute(
         raise TypeError(f"unsupported patch configuration: {type(config).__name__}")
 
     records: list[PatchRecord] = []
-    patch_dir = config.experiment_layout.patch_dir_path(config.stage, config.split)
-    patch_dir.mkdir(parents=True, exist_ok=True)
 
     for subject in config.subjects:
         subject_id = subject.subject_id
@@ -57,9 +53,9 @@ def execute(
             frst_path = config.experiment_layout.patch_frst_path(
                 config.stage, config.split, subject_id, variant_index
             )
-            save_array_atomic(extracted.volumes, volume_path)
-            save_array_atomic(extracted.masks, mask_path)
-            save_array_atomic(extracted.frst, frst_path)
+            save_array(extracted.volumes, volume_path)
+            save_array(extracted.masks, mask_path)
+            save_array(extracted.frst, frst_path)
 
             records.extend(
                 PatchRecord(
@@ -74,8 +70,6 @@ def execute(
 
     PatchManifest(
         status=ManifestStatus.COMPLETE,
-        created_at=timestamp(),
-        updated_at=timestamp(),
         stage=config.stage,
         split=config.split,
         subject_ids=[subject.subject_id for subject in config.subjects],
