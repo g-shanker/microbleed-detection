@@ -47,6 +47,9 @@ persistence, or algorithm boundary. Add verification for processed data and
 related artifacts, including expected shapes, values, alignment, manifests, and
 other cross-file invariants.
 
+* Revisit volume validation in preprocessing and remove any checks that are
+  redundant across the input, transform, and output boundaries.
+
 ## 6. Consolidate third-party typing boundaries
 
 Replace repeated casts around third-party APIs with small typed adapters where
@@ -82,3 +85,10 @@ After the execution and persistence workflows stabilize, consider replacing the
 fixed `DatasetLayout` and `ExperimentLayout` Pydantic models with frozen
 dataclasses. Preserve the existing serialization and path contracts while doing
 so.
+
+## 9. Support nested progress contexts
+
+Refactor the project-wide progress service to own a progress-session context so
+one Rich progress instance can manage nested tasks, such as preprocessing
+subjects and their augmentation variants. Provide an equivalent silent context
+for `--quiet` mode and keep orchestration code independent of Rich.
