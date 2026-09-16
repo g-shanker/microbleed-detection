@@ -5,7 +5,7 @@ import os
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator, cast
+from typing import Any, Generator
 
 import nibabel as nib
 import numpy as np
@@ -49,7 +49,10 @@ def read_json(path: Path) -> Any:
 
 
 def load_volume(path: Path | str) -> nib.Nifti1Image:
-    return cast(nib.Nifti1Image, nib.load(path))
+    volume = nib.load(path)
+    if not isinstance(volume, nib.Nifti1Image):
+        raise TypeError(f"expected a NIfTI-1 image, got {type(volume).__name__}")
+    return volume
 
 
 def save_volume(volume: nib.Nifti1Image, path: Path) -> None:

@@ -6,7 +6,11 @@ import numpy as np
 
 from microbleednet.core.common.metrics import aggregate_metrics, score_masks
 from microbleednet.orchestration.configs import EvaluateConfig
-from microbleednet.orchestration.layouts import ExperimentLayout
+from microbleednet.orchestration.layouts import (
+    DETECTOR_STAGE,
+    STUDENT_STAGE,
+    ExperimentLayout,
+)
 from microbleednet.orchestration.manifests import (
     EvaluateManifest,
     PreprocessedSubject,
@@ -80,7 +84,7 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
         ],
     )
     experiment_layout = ExperimentLayout(experiment_dir=experiment_dir)
-    for stage in ("detector", "student"):
+    for stage in (DETECTOR_STAGE, STUDENT_STAGE):
         checkpoint = experiment_layout.best_checkpoint_path(stage)
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         checkpoint.write_bytes(b"checkpoint")

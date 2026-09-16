@@ -6,7 +6,11 @@ import torch.nn as nn
 
 from microbleednet.core.engines import processor
 from microbleednet.orchestration.configs import InferConfig
-from microbleednet.orchestration.layouts import ExperimentLayout
+from microbleednet.orchestration.layouts import (
+    DETECTOR_STAGE,
+    STUDENT_STAGE,
+    ExperimentLayout,
+)
 from microbleednet.orchestration.manifests import (
     InferManifest,
     ManifestStatus,
@@ -108,7 +112,7 @@ def test_inference_manifest_round_trip(tmp_path: Path) -> None:
 def test_execute_writes_inference_manifest(tmp_path: Path, monkeypatch) -> None:
     experiment_dir = tmp_path / "experiment"
     layout = ExperimentLayout(experiment_dir=experiment_dir)
-    for stage in ("detector", "student"):
+    for stage in (DETECTOR_STAGE, STUDENT_STAGE):
         checkpoint = layout.best_checkpoint_path(stage)
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         checkpoint.write_bytes(b"checkpoint")

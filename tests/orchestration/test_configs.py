@@ -12,7 +12,12 @@ from microbleednet.orchestration.configs import (
     TargetCenteredPatchConfig,
     TrainConfig,
 )
-from microbleednet.orchestration.layouts import DatasetLayout, ExperimentLayout
+from microbleednet.orchestration.layouts import (
+    DETECTOR_STAGE,
+    STUDENT_STAGE,
+    DatasetLayout,
+    ExperimentLayout,
+)
 from microbleednet.orchestration.manifests import (
     ManifestStatus,
     PreprocessedDatasetManifest,
@@ -343,7 +348,7 @@ def test_infer_config_accepts_subjects_without_rechecking_variant_paths(
     tmp_path: Path,
 ) -> None:
     experiment_dir = tmp_path / "experiment"
-    for stage in ("detector", "student"):
+    for stage in (DETECTOR_STAGE, STUDENT_STAGE):
         checkpoint = ExperimentLayout(
             experiment_dir=experiment_dir
         ).best_checkpoint_path(stage)
@@ -371,7 +376,7 @@ def test_infer_config_rejects_missing_student_checkpoint(tmp_path: Path) -> None
     experiment_dir = tmp_path / "experiment"
     detector_checkpoint = ExperimentLayout(
         experiment_dir=experiment_dir
-    ).best_checkpoint_path("detector")
+    ).best_checkpoint_path(DETECTOR_STAGE)
     detector_checkpoint.parent.mkdir(parents=True, exist_ok=True)
     detector_checkpoint.touch()
 

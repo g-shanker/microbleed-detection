@@ -1,5 +1,3 @@
-from typing import cast
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -14,7 +12,7 @@ COMPONENT_CONNECTIVITY = 3
 
 def label_components(mask: np.ndarray, connectivity: int) -> np.ndarray:
     """Label connected components in a binary mask."""
-    return cast(np.ndarray, label(mask, connectivity=connectivity))
+    return np.asarray(label(mask, connectivity=connectivity))
 
 
 def stack_volume_and_frst(volume: np.ndarray, frst: np.ndarray) -> np.ndarray:
@@ -23,7 +21,8 @@ def stack_volume_and_frst(volume: np.ndarray, frst: np.ndarray) -> np.ndarray:
 
 
 def unwrap_model(model: nn.Module) -> nn.Module:
-    return cast(nn.Module, model._orig_mod if hasattr(model, "_orig_mod") else model)
+    original_model = getattr(model, "_orig_mod", None)
+    return original_model if isinstance(original_model, nn.Module) else model
 
 
 def get_model_device(model: nn.Module) -> torch.device:

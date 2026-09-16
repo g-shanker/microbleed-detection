@@ -6,7 +6,13 @@ import torch.nn as nn
 
 from microbleednet.core.common.models import CandidateDetector
 from microbleednet.orchestration.configs import TrainConfig
-from microbleednet.orchestration.layouts import DatasetLayout, ExperimentLayout
+from microbleednet.orchestration.layouts import (
+    DETECTOR_STAGE,
+    STUDENT_STAGE,
+    TEACHER_STAGE,
+    DatasetLayout,
+    ExperimentLayout,
+)
 from microbleednet.orchestration.manifests import (
     ManifestStatus,
     PreprocessedDatasetManifest,
@@ -78,13 +84,13 @@ def test_execute_runs_stages_with_configured_training_values(
         return stage
 
     monkeypatch.setattr(
-        train, "train_detector", record_stage("detector", "detector")
+        train, "train_detector", record_stage(DETECTOR_STAGE, DETECTOR_STAGE)
     )
     monkeypatch.setattr(
-        train, "train_teacher", record_stage("teacher", "teacher")
+        train, "train_teacher", record_stage(TEACHER_STAGE, TEACHER_STAGE)
     )
     monkeypatch.setattr(
-        train, "train_student", record_stage("student", "student")
+        train, "train_student", record_stage(STUDENT_STAGE, STUDENT_STAGE)
     )
     experiment_dir = tmp_path / "experiment"
     split_manifest = SplitManifest(
@@ -121,7 +127,11 @@ def test_execute_runs_stages_with_configured_training_values(
     train_manifest = train.TrainManifest.read(
         ExperimentLayout(experiment_dir=experiment_dir).train_manifest_path()
     )
-    assert [call[0] for call in calls] == ["detector", "teacher", "student"]
+    assert [call[0] for call in calls] == [
+        DETECTOR_STAGE,
+        TEACHER_STAGE,
+        STUDENT_STAGE,
+    ]
     assert all(call[1:3] == calls[0][1:3] for call in calls)
     assert calls[2][3] == (config,)
     assert train_manifest.dataset_dir == str(dataset_dir.resolve())
