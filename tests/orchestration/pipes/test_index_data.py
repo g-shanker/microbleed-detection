@@ -10,8 +10,8 @@ from microbleednet.orchestration.manifests import (
 )
 from microbleednet.orchestration.pipes.index_data import (
     build_subject_map,
-    compute_paths,
     extract_subject_id,
+    find_matching_paths,
     index_source,
     merge_source,
 )
@@ -57,12 +57,12 @@ def test_extract_subject_id_rejects_mismatched_repeated_placeholders(
         )
 
 
-def test_compute_paths_treats_pattern_text_literally(tmp_path: Path) -> None:
+def test_find_matching_paths_treats_pattern_text_literally(tmp_path: Path) -> None:
     expected = tmp_path / "scan[1]_subject_1.nii.gz"
     expected.write_bytes(b"")
     (tmp_path / "scan1_subject_2.nii.gz").write_bytes(b"")
 
-    paths = compute_paths(tmp_path, "scan[1]_{subject_id}.nii.gz")
+    paths = find_matching_paths(tmp_path, "scan[1]_{subject_id}.nii.gz")
 
     assert paths == [expected]
 
@@ -91,9 +91,7 @@ def test_index_source_sorts_naturally_and_namespaces_subjects(tmp_path: Path) ->
         modality="SWI",
     )
 
-    source, subjects = index_source(
-        config, "2026-01-01T00:00:00+00:00"
-    )
+    source, subjects = index_source(config)
 
     assert [subject.subject_id for subject in subjects] == [
         "siteA_subject_2",
@@ -102,6 +100,24 @@ def test_index_source_sorts_naturally_and_namespaces_subjects(tmp_path: Path) ->
     assert source.source_id == "siteA"
     assert source.modality == "SWI"
     assert {subject.source_id for subject in subjects} == {"siteA"}
+
+
+def test_index_source_allows_missing_masks(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "subject_1_volume.nii.gz").write_bytes(b"")
+    config = make_index_config(
+        tmp_path,
+        input_dir=source_dir,
+        mask_dir=None,
+        mask_pattern=None,
+    )
+
+    source, subjects = index_source(config)
+
+    assert source.mask_dir is None
+    assert source.mask_pattern is None
+    assert subjects[0].mask_path is None
 
 
 def test_merge_source_preserves_creation_and_combines_state() -> None:
@@ -139,6 +155,33 @@ def test_merge_source_preserves_creation_and_combines_state() -> None:
         "subject_2",
         "subject_10",
     ]
+
+
+def test_merge_source_rejects_existing_source_id() -> None:
+    existing = RawDatasetManifest(
+        status=ManifestStatus.COMPLETE,
+        sources=[_source("first", "2026-01-01T00:00:00+00:00")],
+        subjects=[
+            RawSubject(
+                subject_id="first_subject_1",
+                source_id="first",
+                volume_path="/subject_1",
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="source already indexed"):
+        merge_source(
+            existing,
+            source=_source("first", "2026-01-02T00:00:00+00:00"),
+            subjects=[
+                RawSubject(
+                    subject_id="first_subject_2",
+                    source_id="first",
+                    volume_path="/subject_2",
+                )
+            ],
+        )
 
 
 def _source(name: str, added_on: str) -> RawSource:

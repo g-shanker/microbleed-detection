@@ -125,16 +125,22 @@ class RawSubject(FrozenModel):
         description="Identifier of the source that contributed this subject.",
     )
     volume_path: str = Field(description="Absolute path to the raw volume.")
-    mask_path: str = Field(description="Absolute path to the lesion mask.")
+    mask_path: str | None = Field(
+        default=None, description="Absolute path to the lesion mask, when provided."
+    )
 
 
 class RawSource(FrozenModel):
     """A directory pair and filename patterns that contributed subjects."""
 
     input_dir: str = Field(description="Directory the volumes were indexed from.")
-    mask_dir: str = Field(description="Directory the mask volumes were indexed from.")
+    mask_dir: str | None = Field(
+        default=None, description="Directory the mask volumes were indexed from."
+    )
     volume_pattern: str = Field(description="Glob/regex pattern matching volumes.")
-    mask_pattern: str = Field(description="Pattern matching masks.")
+    mask_pattern: str | None = Field(
+        default=None, description="Pattern matching masks, when provided."
+    )
     source_id: str = Field(
         description="Namespace prepended to this source's subject IDs.",
     )
@@ -142,7 +148,10 @@ class RawSource(FrozenModel):
         default="T2*-GRE",
         description="Imaging modality used to select preprocessing operations.",
     )
-    added_on: str = Field(description="ISO-8601 time this source was indexed.")
+    added_on: str = Field(
+        default_factory=timestamp,
+        description="ISO-8601 time this source was indexed.",
+    )
 
 
 class RawDatasetManifest(Manifest):

@@ -18,7 +18,7 @@ from ..manifests import (
     InferredSubject,
     ManifestStatus,
 )
-from ..utils import release_gpu_memory
+from ..utils import release_gpu_memory, resolve_path_string
 
 VARIANT_INDEX = 0
 DETECTOR_THRESHOLD = 0.5
@@ -84,15 +84,15 @@ def execute(config: InferConfig) -> None:
             results.append(
                 InferredSubject(
                     subject_id=subject.subject_id,
-                    output_path=str(output_path.resolve()),
+                    output_path=resolve_path_string(output_path),
                 )
             )
 
         InferManifest(
             status=ManifestStatus.COMPLETE,
             device=config.device,
-            detector_checkpoint_path=str(detector_checkpoint.resolve()),
-            student_checkpoint_path=str(student_checkpoint.resolve()),
+            detector_checkpoint_path=resolve_path_string(detector_checkpoint),
+            student_checkpoint_path=resolve_path_string(student_checkpoint),
             detector_threshold=DETECTOR_THRESHOLD,
             student_threshold=STUDENT_THRESHOLD,
             discriminator_patch_size=PatchSizes.DISCRIMINATOR,

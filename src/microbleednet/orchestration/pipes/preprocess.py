@@ -14,6 +14,7 @@ from ..manifests import (
     PreprocessedVariant,
     RawDatasetManifest,
 )
+from ..utils import resolve_path_string
 
 
 def execute(config: PreprocessConfig) -> None:
@@ -64,9 +65,9 @@ def execute(config: PreprocessConfig) -> None:
             
             variants.append(
                 PreprocessedVariant(
-                    volume_path=str(volume_path.resolve()),
-                    mask_path=str(mask_path.resolve()),
-                    frst_path=str(frst_path.resolve()),
+                    volume_path=resolve_path_string(volume_path),
+                    mask_path=resolve_path_string(mask_path),
+                    frst_path=resolve_path_string(frst_path),
                 )
             )
 

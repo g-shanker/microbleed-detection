@@ -224,7 +224,7 @@ def test_index_data_accumulates_sources(tmp_path: Path) -> None:
     assert manifest["created_at"] <= manifest["updated_at"]
 
 
-def test_index_data_rejects_duplicate_subject_across_sources(tmp_path: Path) -> None:
+def test_index_data_rejects_duplicate_source_id(tmp_path: Path) -> None:
     dataset_dir = tmp_path / "dataset"
     first = create_volume_source(tmp_path, "first", ["subject_1"])
     second = create_volume_source(tmp_path, "second", ["subject_1"])
@@ -232,7 +232,7 @@ def test_index_data_rejects_duplicate_subject_across_sources(tmp_path: Path) -> 
     assert _run_index_data(tmp_path, dataset_dir, first).exit_code == 0
     result = _run_index_data(tmp_path, dataset_dir, second)
     assert result.exit_code != 0
-    assert "source_subject_1" in str(result.exception)
+    assert "source already indexed" in str(result.exception)
 
     # The failed run must not have clobbered the existing manifest.
     manifest = _read_raw_manifest(dataset_dir)

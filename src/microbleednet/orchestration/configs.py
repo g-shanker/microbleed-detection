@@ -73,12 +73,14 @@ class IndexDataConfig(FrozenModel):
             "the complete filename extension, such as '.nii.gz'."
         ),
     )
-    mask_dir: Path = Field(
-        description="Directory containing the complete mask volumes to index.",
+    mask_dir: Path | None = Field(
+        default=None,
+        description="Optional directory containing the complete mask volumes to index.",
     )
-    mask_pattern: str = Field(
+    mask_pattern: str | None = Field(
+        default=None,
         description=(
-            "Naming pattern of masks in the mask directory. "
+            "Optional naming pattern of masks in the mask directory. "
             f"Must contain the '{SUBJECT_ID_PLACEHOLDER}' placeholder and "
             "the complete filename extension, such as '.nii.gz'."
         ),
@@ -93,7 +95,6 @@ class IndexDataConfig(FrozenModel):
         ),
     )
     modality: Modality = Field(
-        default="T2*-GRE",
         description="Imaging modality of this source's volumes.",
     )
 
@@ -108,10 +109,10 @@ class IndexDataConfig(FrozenModel):
 
     @model_validator(mode="after")
     def validate_patterns(self) -> "IndexDataConfig":
-        for name, pattern in (
-            ("volume_pattern", self.volume_pattern),
-            ("mask_pattern", self.mask_pattern),
-        ):
+        patterns = [("volume_pattern", self.volume_pattern)]
+        if self.mask_pattern is not None:
+            patterns.append(("mask_pattern", self.mask_pattern))
+        for name, pattern in patterns:
             if pattern.count(SUBJECT_ID_PLACEHOLDER) < 1:
                 raise ValueError(
                     f"{name} must contain the '{SUBJECT_ID_PLACEHOLDER}' "
@@ -123,7 +124,9 @@ class IndexDataConfig(FrozenModel):
     def validate_directories(self) -> "IndexDataConfig":
         if not self.input_dir.is_dir():
             raise ValueError(f"input_dir does not exist: {self.input_dir}")
-        if not self.mask_dir.is_dir():
+        if (self.mask_dir is None) != (self.mask_pattern is None):
+            raise ValueError("mask_dir and mask_pattern must be provided together")
+        if self.mask_dir is not None and not self.mask_dir.is_dir():
             raise ValueError(f"mask_dir does not exist: {self.mask_dir}")
         return self
 

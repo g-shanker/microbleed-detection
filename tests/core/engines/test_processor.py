@@ -69,6 +69,13 @@ def test_preprocess_rejects_mask_with_different_affine() -> None:
         processor.preprocess(_volume(), mask, "QSM")
 
 
+def test_preprocess_rejects_non_3d_volume() -> None:
+    volume = _volume((2, 2, 2, 1))
+
+    with pytest.raises(ValueError, match="must be 3D"):
+        processor.preprocess(volume, volume, "QSM")
+
+
 def test_preprocess_rejects_reoriented_mask_with_different_shape() -> None:
     with pytest.raises(ValueError, match="shapes do not match"):
         processor.preprocess(_volume(), _volume((1, 2, 2)), "QSM")
@@ -87,6 +94,13 @@ def test_preprocess_rejects_non_finite_volume_data() -> None:
 
     with pytest.raises(ValueError, match="image contains non-finite values"):
         processor.preprocess(volume, _volume(), "QSM")
+
+
+def test_preprocess_rejects_non_finite_mask_data() -> None:
+    mask = nib.Nifti1Image(np.full((2, 2, 2), np.nan), np.eye(4))
+
+    with pytest.raises(ValueError, match="mask contains non-finite values"):
+        processor.preprocess(_volume(), mask, "QSM")
 
 
 def test_preprocess_rejects_empty_volume() -> None:

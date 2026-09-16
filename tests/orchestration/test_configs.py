@@ -55,6 +55,20 @@ def test_source_id_is_required(tmp_path) -> None:
         )
 
 
+def test_modality_is_required(tmp_path) -> None:
+    with pytest.raises(ValidationError, match="modality"):
+        IndexDataConfig.model_validate(
+            {
+                "dataset_dir": tmp_path / "dataset",
+                "input_dir": tmp_path,
+                "volume_pattern": "{subject_id}.nii.gz",
+                "mask_dir": tmp_path / "masks",
+                "mask_pattern": "{subject_id}.nii.gz",
+                "source_id": "test-source",
+            }
+        )
+
+
 @pytest.mark.parametrize(
     ("overrides", "field"),
     [
@@ -83,14 +97,31 @@ def test_pattern_accepts_multiple_subject_id_placeholders(tmp_path) -> None:
     assert config.volume_pattern == pattern
 
 
-def test_mask_inputs_are_required(tmp_path) -> None:
-    with pytest.raises(ValidationError, match="mask_dir|mask_pattern"):
+def test_mask_inputs_are_optional(tmp_path) -> None:
+    config = IndexDataConfig.model_validate(
+        {
+            "dataset_dir": tmp_path / "dataset",
+            "input_dir": tmp_path,
+            "volume_pattern": "{subject_id}.nii.gz",
+            "source_id": "test-source",
+            "modality": "T2*-GRE",
+        }
+    )
+
+    assert config.mask_dir is None
+    assert config.mask_pattern is None
+
+
+def test_mask_inputs_must_be_provided_together(tmp_path) -> None:
+    with pytest.raises(ValidationError, match="provided together"):
         IndexDataConfig.model_validate(
             {
                 "dataset_dir": tmp_path / "dataset",
                 "input_dir": tmp_path,
                 "volume_pattern": "{subject_id}.nii.gz",
+                "mask_dir": tmp_path,
                 "source_id": "test-source",
+                "modality": "T2*-GRE",
             }
         )
 
