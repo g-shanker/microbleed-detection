@@ -6,6 +6,7 @@ from typing import Optional
 
 from natsort import natsorted
 
+from ...progress import progress
 from ..configs import SUBJECT_ID_PLACEHOLDER, IndexDataConfig
 from ..layouts import DatasetLayout
 from ..manifests import (
@@ -56,14 +57,20 @@ def index_source(config: IndexDataConfig) -> tuple[RawSource, list[RawSubject]]:
     """
     volume_paths = find_matching_paths(config.input_dir, config.volume_pattern)
     volume_subject_map = build_subject_map(
-        config.input_dir, volume_paths, config.volume_pattern
+        config.input_dir,
+        volume_paths,
+        config.volume_pattern,
+        description="Indexing volumes",
     )
 
     mask_subject_map: dict[str, Path] = {}
     if config.mask_dir is not None and config.mask_pattern is not None:
         mask_paths = find_matching_paths(config.mask_dir, config.mask_pattern)
         mask_subject_map = build_subject_map(
-            config.mask_dir, mask_paths, config.mask_pattern
+            config.mask_dir,
+            mask_paths,
+            config.mask_pattern,
+            description="Indexing masks",
         )
 
         volume_ids = set(volume_subject_map)
@@ -143,9 +150,10 @@ def build_subject_map(
     root_dir: Path,
     paths: list[Path],
     pattern: str,
+    description: str,
 ) -> dict[str, Path]:
     subject_map: dict[str, Path] = {}
-    for path in paths:
+    for path in progress.track(paths, description):
         subject_id = extract_subject_id(root_dir, path, pattern) or ""
         if not subject_id.strip():
             raise ValueError(f"path has an empty ID: {path}")
