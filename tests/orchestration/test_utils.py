@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 
 from microbleednet.orchestration import utils
@@ -5,6 +7,12 @@ from microbleednet.orchestration.manifests import (
     PreprocessedSubject,
     PreprocessedVariant,
 )
+
+
+def test_resolve_path_string_returns_absolute_string(tmp_path: Path) -> None:
+    path = tmp_path / "nested" / "manifest.json"
+
+    assert utils.resolve_path_string(path) == str(path.resolve())
 
 
 def test_release_gpu_memory_collects_and_clears_cuda(monkeypatch) -> None:

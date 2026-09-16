@@ -13,7 +13,7 @@ from ..manifests import (
     SplitManifest,
     TrainManifest,
 )
-from ..utils import resolve_subjects
+from ..utils import resolve_path_string, resolve_subjects
 from . import infer
 
 
@@ -62,10 +62,10 @@ def execute(config: EvaluateConfig) -> None:
     aggregate = aggregate_metrics(subject.metrics for subject in per_subject)
     EvaluateManifest(
         status=ManifestStatus.COMPLETE,
-        dataset_dir=str(config.dataset_dir.resolve()),
+        dataset_dir=resolve_path_string(config.dataset_dir),
         device=config.device,
-        inference_manifest_path=str(
-            experiment_layout.inference_manifest_path().resolve()
+        inference_manifest_path=resolve_path_string(
+            experiment_layout.inference_manifest_path()
         ),
         subjects=per_subject,
         aggregate=aggregate,

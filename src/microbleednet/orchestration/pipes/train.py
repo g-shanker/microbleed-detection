@@ -114,7 +114,7 @@ def write_train_manifest(
 ) -> None:
     TrainManifest(
         status=ManifestStatus.COMPLETE,
-        dataset_dir=str(config.dataset_dir.resolve()),
+        dataset_dir=utils.resolve_path_string(config.dataset_dir),
         device=config.device,
         seed=config.seed,
         detector_candidate_threshold=config.detector_candidate_threshold,

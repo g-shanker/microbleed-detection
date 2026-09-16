@@ -120,21 +120,21 @@ def build_command(app: typer.Typer, spec: CommandSpec) -> None:
 
     @app.command(spec.name, help=spec.help, epilog=describe_hint(spec.name))
     def command(
-        config: Annotated[Path, typer.Option(...)],
+        config_path: Annotated[Path, typer.Option(..., "--config")],
         dry_run: Annotated[
             bool, typer.Option(help="Validate configuration without writing outputs.")
         ] = False,
     ) -> None:
-        settings = parse_config(config, spec.config)
+        config = parse_config(config_path, spec.config)
         if dry_run:
-            report(spec.dry_run_message(settings))
+            report(spec.dry_run_message(config))
             return
         # Imported lazily, by module name, so torch stays out of --help/describe.
         pipe = import_module(
             f"..orchestration.pipes.{spec.pipe}", package=__package__
         )
-        pipe.execute(settings)
-        report(spec.success_message(settings))
+        pipe.execute(config)
+        report(spec.success_message(config))
 
 
 def build_describe_command(app: typer.Typer, specs: list[CommandSpec]) -> None:

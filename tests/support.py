@@ -16,6 +16,7 @@ def make_index_config(tmp_path: Path, **overrides: object) -> IndexDataConfig:
         "mask_dir": tmp_path / "masks",
         "mask_pattern": "{subject_id}_mask.nii.gz",
         "source_id": "test-source",
+        "modality": "T2*-GRE",
     }
     values.update(overrides)
     return IndexDataConfig.model_validate(values)
@@ -30,6 +31,7 @@ def write_index_config(path: Path, **overrides: object) -> Path:
         "mask_dir": path.parent / "masks",
         "mask_pattern": "{subject_id}_mask.nii.gz",
         "source_id": "test-source",
+        "modality": "T2*-GRE",
     }
     values.update(overrides)
 

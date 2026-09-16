@@ -9,6 +9,7 @@ from ..manifests import (
     PreprocessedDatasetManifest,
     SplitManifest,
 )
+from ..utils import resolve_path_string
 
 
 def execute(config: SplitConfig) -> None:
@@ -29,7 +30,7 @@ def execute(config: SplitConfig) -> None:
 
     SplitManifest(
         status=ManifestStatus.COMPLETE,
-        dataset_dir=str(config.dataset_dir.resolve()),
+        dataset_dir=resolve_path_string(config.dataset_dir),
         seed=config.seed,
         train_size=config.train_size,
         validation_size=config.validation_size,
