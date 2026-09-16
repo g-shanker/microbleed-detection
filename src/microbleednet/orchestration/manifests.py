@@ -92,7 +92,7 @@ class Manifest(FrozenModel):
             existing = core_io.read_json(path)
             payload["created_at"] = existing.get("created_at", timestamp())
         payload["updated_at"] = timestamp()
-        core_io.write_json_atomic(path, payload)
+        core_io.write_json(path, payload)
 
     @classmethod
     def read[ManifestType: Manifest](

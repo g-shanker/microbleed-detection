@@ -20,15 +20,6 @@ def execute(config: PreprocessConfig) -> None:
     layout = DatasetLayout(dataset_dir=config.dataset_dir)
     raw_manifest = RawDatasetManifest.read(layout.raw_manifest_path())
 
-    volumes_dir = layout.preprocessed_volumes_path()
-    volumes_dir.mkdir(parents=True, exist_ok=True)
-
-    masks_dir = layout.preprocessed_masks_path()
-    masks_dir.mkdir(parents=True, exist_ok=True)
-
-    frst_dir = layout.preprocessed_frst_path()
-    frst_dir.mkdir(parents=True, exist_ok=True)
-
     source_modalities: dict[str, Modality] = {
         source.source_id: source.modality for source in raw_manifest.sources
     }
