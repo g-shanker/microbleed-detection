@@ -61,14 +61,11 @@ def execute(config: InferConfig) -> None:
                 STUDENT_THRESHOLD,
             )
             
-            zooms = volume_image.header.get_zooms()
-            spacing = [float(size) for size in zooms[:3]]
-            if len(spacing) < 3:
-                raise ValueError("volume header does not contain 3D voxel spacing")
+            zooms = list(volume_image.header.get_zooms())
             voxel_sizes: VoxelSpacing = (
-                spacing[0],
-                spacing[1],
-                spacing[2],
+                float(zooms[0]),
+                float(zooms[1]),
+                float(zooms[2]),
             )
             final_mask_array = core_processor.postprocess(
                 retained_labels,

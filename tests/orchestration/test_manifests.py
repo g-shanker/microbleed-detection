@@ -7,7 +7,7 @@ from microbleednet.core import io as core_io
 from microbleednet.core.datamodels import (
     EvaluationAggregate,
     EvaluationMetrics,
-    TrainingHyperparameters,
+    Hyperparameters,
 )
 from microbleednet.orchestration.manifests import (
     EvaluatedSubject,
@@ -158,7 +158,9 @@ def test_train_manifest_round_trips_split_and_training_settings(
         discriminator_patch_size=24,
         num_workers=0,
         pin_memory=False,
-        training_settings=TrainingHyperparameters(),
+        detector_hyperparameters=Hyperparameters(batch_size=8),
+        teacher_hyperparameters=Hyperparameters(batch_size=9),
+        student_hyperparameters=Hyperparameters(batch_size=10),
         detector_history=[],
         teacher_history=[],
         student_history=[],
@@ -171,7 +173,9 @@ def test_train_manifest_round_trips_split_and_training_settings(
     assert loaded.dataset_dir == "C:/datasets/preprocessed"
     assert loaded.device == "cuda:0"
     assert loaded.seed == 42
-    assert loaded.training_settings.batch_size == 8
+    assert loaded.detector_hyperparameters.batch_size == 8
+    assert loaded.teacher_hyperparameters.batch_size == 9
+    assert loaded.student_hyperparameters.batch_size == 10
     assert loaded.detector_history == []
 
 

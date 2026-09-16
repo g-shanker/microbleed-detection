@@ -24,9 +24,9 @@ from ...core.dataloading.datasets import (
 from ...core.dataloading.samplers import EqualBatchSampler
 from ...core.datamodels import (
     EpochLoss,
+    Hyperparameters,
     PatchRecord,
     PatchSizes,
-    TrainingHyperparameters,
 )
 from ...core.engines.trainers import Trainer
 from .. import utils
@@ -125,7 +125,9 @@ def write_train_manifest(
         discriminator_patch_size=PatchSizes.DISCRIMINATOR,
         num_workers=config.num_workers,
         pin_memory=config.pin_memory,
-        training_settings=config.training_settings,
+        detector_hyperparameters=config.detector_hyperparameters,
+        teacher_hyperparameters=config.teacher_hyperparameters,
+        student_hyperparameters=config.student_hyperparameters,
         detector_history=detector_history,
         teacher_history=teacher_history,
         student_history=student_history,
@@ -139,7 +141,7 @@ def train_stage(
     validation_dataset: BasePatchDataset,
     experiment_layout: ExperimentLayout,
     stage: StageName,
-    hyperparameters: TrainingHyperparameters,
+    hyperparameters: Hyperparameters,
     num_workers: int,
     pin_memory: bool,
 ) -> list[EpochLoss]:
@@ -213,7 +215,7 @@ def train_detector(
             SegmentationPatchDataset(validation_records),
             experiment_layout,
             DETECTOR_STAGE,
-            config.training_settings,
+            config.detector_hyperparameters,
             config.num_workers,
             config.pin_memory,
         )
@@ -271,7 +273,7 @@ def train_teacher(
             SegmentationClassificationPatchDataset(validation_records),
             experiment_layout,
             TEACHER_STAGE,
-            config.training_settings,
+            config.teacher_hyperparameters,
             config.num_workers,
             config.pin_memory,
         )
@@ -336,7 +338,7 @@ def train_student(
             ClassificationPatchDataset(validation_records),
             experiment_layout,
             STUDENT_STAGE,
-            config.training_settings,
+            config.student_hyperparameters,
             config.num_workers,
             config.pin_memory,
         )

@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
-from ..core.datamodels import FrozenModel, Modality, TrainingHyperparameters
+from ..core.datamodels import FrozenModel, Hyperparameters, Modality
 from .layouts import (
     DETECTOR_STAGE,
     STUDENT_STAGE,
@@ -247,9 +247,17 @@ class TrainConfig(FrozenModel):
             "Whether training data loaders use page-locked host memory for transfers."
         ),
     )
-    training_settings: TrainingHyperparameters = Field(
-        default_factory=TrainingHyperparameters,
-        description="Optimizer and training-loop settings shared by all models.",
+    detector_hyperparameters: Hyperparameters = Field(
+        default_factory=Hyperparameters,
+        description="Optimizer and training-loop settings for detector training.",
+    )
+    teacher_hyperparameters: Hyperparameters = Field(
+        default_factory=Hyperparameters,
+        description="Optimizer and training-loop settings for teacher training.",
+    )
+    student_hyperparameters: Hyperparameters = Field(
+        default_factory=Hyperparameters,
+        description="Optimizer and training-loop settings for student training.",
     )
 
     @model_validator(mode="after")

@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 
 from .. import io, utils
 from ..common.tasks import BaseTask
-from ..datamodels import CheckpointState, EpochLoss, TrainingHyperparameters
+from ..datamodels import CheckpointState, EpochLoss, Hyperparameters
 from .evaluators import Evaluator
 
 
@@ -18,7 +18,7 @@ class Trainer:
         model: nn.Module,
         task: BaseTask,
         best_checkpoint: Path,
-        hyperparameters: TrainingHyperparameters,
+        hyperparameters: Hyperparameters,
     ):
         self.model = model
         self.hyperparameters = hyperparameters
