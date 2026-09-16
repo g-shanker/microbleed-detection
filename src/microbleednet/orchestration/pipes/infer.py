@@ -73,8 +73,6 @@ def execute(config: InferConfig) -> None:
             final_mask_image = core_io.numpy_to_nifti(final_mask_array, volume_image)
 
             output_path = layout.inference_output_path(subject.subject_id)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-
             core_io.save_volume(final_mask_image, output_path)
 
             results.append(

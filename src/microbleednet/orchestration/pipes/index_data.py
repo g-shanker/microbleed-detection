@@ -17,8 +17,6 @@ from ..manifests import (
 
 
 def execute(config: IndexDataConfig) -> None:
-    config.dataset_dir.mkdir(parents=True, exist_ok=True)
-
     now = manifests.timestamp()
     source, subjects = index_source(config, now)
 
@@ -87,7 +85,6 @@ def index_source(
 
 def merge_source(
     existing: RawDatasetManifest | None,
-    *,  # to force following arguments to be called using keywords
     source: RawSource,
     subjects: list[RawSubject],
 ) -> RawDatasetManifest:

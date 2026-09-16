@@ -109,14 +109,14 @@ def test_raw_dataset_manifest_rejects_duplicate_source_ids() -> None:
 
 def test_read_manifest_rejects_unversioned_payload(tmp_path: Path) -> None:
     path = tmp_path / "raw.json"
-    core_io.write_json_atomic(path, {"status": "complete"})
+    core_io.write_json(path, {"status": "complete"})
     with pytest.raises(ValueError, match="not a versioned manifest"):
         RawDatasetManifest.read(path)
 
 
 def test_read_manifest_rejects_incomplete_status(tmp_path: Path) -> None:
     path = tmp_path / "raw.json"
-    core_io.write_json_atomic(
+    core_io.write_json(
         path,
         _envelope(
             status=ManifestStatus.RUNNING.value,
@@ -134,7 +134,7 @@ def test_read_manifest_rejects_payload_that_fails_schema_validation(
 ) -> None:
     path = tmp_path / "raw.json"
     # schema_version is present, but required manifest fields are missing.
-    core_io.write_json_atomic(path, _envelope())
+    core_io.write_json(path, _envelope())
     with pytest.raises(ValueError, match="invalid manifest at"):
         RawDatasetManifest.read(path)
 
