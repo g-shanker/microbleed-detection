@@ -92,6 +92,11 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
     monkeypatch.setattr(
         evaluate.TrainManifest,
         "read",
+        lambda _: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        evaluate.SplitManifest,
+        "read",
         lambda _: SimpleNamespace(test_subject_ids=["subject-1"]),
     )
     monkeypatch.setattr(

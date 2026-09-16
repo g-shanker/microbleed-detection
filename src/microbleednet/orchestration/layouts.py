@@ -95,6 +95,10 @@ class ExperimentLayout(FrozenModel):
         default=Path("manifests/train.json"),
         description="Training split and recipe manifest.",
     )
+    split_manifest: Path = Field(
+        default=Path("manifests/split.json"),
+        description="Subject split manifest consumed by training.",
+    )
     patch_manifest_template: Path = Field(
         default=Path("manifests/patch_{stage}_{split}.json"),
         description="Template for a stage and split patch manifest.",
@@ -128,6 +132,9 @@ class ExperimentLayout(FrozenModel):
 
     def train_manifest_path(self) -> Path:
         return self.experiment_dir / self.train_manifest
+
+    def split_manifest_path(self) -> Path:
+        return self.experiment_dir / self.split_manifest
 
     def patch_manifest_path(self, stage: str, split: str) -> Path:
         return self.resolve(self.patch_manifest_template, stage=stage, split=split)
