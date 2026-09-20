@@ -237,6 +237,9 @@ class SplitManifest(Manifest):
     dataset_dir: str = Field(
         description="Absolute path to the preprocessed dataset that was split."
     )
+    preprocessed_manifest_fingerprint: str = Field(
+        description="Fingerprint of the preprocessed manifest used for this split."
+    )
     seed: int | None = Field(
         default=None, ge=0, description="Random seed used for subject splitting."
     )
