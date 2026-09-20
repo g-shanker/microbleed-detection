@@ -15,6 +15,7 @@ from microbleednet.orchestration.configs import (
     SplitConfig,
     TargetCenteredPatchConfig,
     TrainConfig,
+    train_manifest_for_config,
 )
 from microbleednet.orchestration.layouts import (
     DETECTOR_STAGE,
@@ -31,6 +32,7 @@ from microbleednet.orchestration.manifests import (
     RawSource,
     RawSubject,
     SplitManifest,
+    TrainStageManifest,
     content_fingerprint,
     timestamp,
 )
@@ -248,6 +250,71 @@ def test_train_config_defaults_preserve_training_recipe(tmp_path: Path) -> None:
     assert config.detector_hyperparameters.batch_size == 8
     assert config.teacher_hyperparameters.batch_size == 8
     assert config.student_hyperparameters.batch_size == 8
+
+
+def test_train_config_resume_requires_existing_stage_state(tmp_path: Path) -> None:
+    dataset_dir = _training_dataset(tmp_path)
+    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
+
+    with pytest.raises(ValidationError, match="training manifest does not exist"):
+        TrainConfig(
+            dataset_dir=dataset_dir,
+            experiment_dir=tmp_path / "experiment",
+            resume=True,
+        )
+
+
+def test_train_config_resume_rejects_running_stage_without_checkpoint(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = _training_dataset(tmp_path)
+    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
+    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
+    split_manifest = SplitManifest.read(layout.split_manifest_path())
+    config = TrainConfig(
+        dataset_dir=dataset_dir,
+        experiment_dir=tmp_path / "experiment",
+    )
+    train_manifest_for_config(
+        config, content_fingerprint(split_manifest)
+    ).write(layout.train_manifest_path())
+    TrainStageManifest(
+        status=ManifestStatus.RUNNING,
+        stage=DETECTOR_STAGE,
+        history=[],
+    ).write(layout.stage_manifest_path(DETECTOR_STAGE))
+
+    with pytest.raises(ValidationError, match="no training stage checkpoint"):
+        TrainConfig(
+            **config.model_dump(exclude={"resume"}),
+            resume=True,
+        )
+
+
+def test_train_config_resume_rejects_changed_training_settings(tmp_path: Path) -> None:
+    dataset_dir = _training_dataset(tmp_path)
+    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
+    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
+    split_manifest = SplitManifest.read(layout.split_manifest_path())
+    config = TrainConfig(
+        dataset_dir=dataset_dir,
+        experiment_dir=tmp_path / "experiment",
+    )
+    train_manifest_for_config(
+        config, content_fingerprint(split_manifest)
+    ).write(layout.train_manifest_path())
+    changed_config = config.model_dump(exclude={"resume"})
+    changed_config["detector_hyperparameters"] = (
+        config.detector_hyperparameters.model_copy(
+            update={"max_epochs": config.detector_hyperparameters.max_epochs + 1}
+        )
+    )
+
+    with pytest.raises(ValidationError, match="training configuration has changed"):
+        TrainConfig(
+            **changed_config,
+            resume=True,
+        )
 
 
 @pytest.mark.parametrize(

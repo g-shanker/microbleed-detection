@@ -2,6 +2,7 @@
 dataset_dir = "data/indexed"
 experiment_dir = "experiments/default"
 device = "cpu"
+resume = false
 
 # Subject split proportions. These values must sum to 1.0.
 train_size = 0.7

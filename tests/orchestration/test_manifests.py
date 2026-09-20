@@ -18,6 +18,7 @@ from microbleednet.orchestration.manifests import (
     ManifestStatus,
     RawDatasetManifest,
     TrainManifest,
+    TrainStageManifest,
     timestamp,
 )
 
@@ -170,9 +171,6 @@ def test_train_manifest_round_trips_split_and_training_settings(
         detector_hyperparameters=Hyperparameters(batch_size=8),
         teacher_hyperparameters=Hyperparameters(batch_size=9),
         student_hyperparameters=Hyperparameters(batch_size=10),
-        detector_history=[],
-        teacher_history=[],
-        student_history=[],
     )
     path = tmp_path / "train.json"
 
@@ -185,7 +183,26 @@ def test_train_manifest_round_trips_split_and_training_settings(
     assert loaded.detector_hyperparameters.batch_size == 8
     assert loaded.teacher_hyperparameters.batch_size == 9
     assert loaded.student_hyperparameters.batch_size == 10
-    assert loaded.detector_history == []
+
+
+def test_train_stage_manifest_round_trips_status_and_history(
+    tmp_path: Path,
+) -> None:
+    manifest = TrainStageManifest(
+        status=ManifestStatus.COMPLETE,
+        stage="detector",
+        history=[
+            {"epoch": 1, "training_loss": 2.0, "validation_loss": 1.0}
+        ],
+    )
+    path = tmp_path / "detector.json"
+
+    manifest.write(path)
+
+    loaded = TrainStageManifest.read(path)
+    assert loaded.status is ManifestStatus.COMPLETE
+    assert loaded.stage == "detector"
+    assert loaded.history == manifest.history
 
 
 def test_inference_manifest_round_trips_recipe_and_results(tmp_path: Path) -> None:

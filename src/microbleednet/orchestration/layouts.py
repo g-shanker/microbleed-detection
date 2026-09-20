@@ -112,6 +112,14 @@ class ExperimentLayout(FrozenModel):
         default=Path("train/{stage}/checkpoints/best_model.pth"),
         description="Relative template for the best checkpoint path.",
     )
+    latest_checkpoint_template: Path = Field(
+        default=Path("train/{stage}/checkpoints/latest_model.pth"),
+        description="Relative template for the latest resumable checkpoint path.",
+    )
+    stage_manifest_template: Path = Field(
+        default=Path("train/{stage}/manifest.json"),
+        description="Relative template for a training stage manifest.",
+    )
     patch_dir_template: Path = Field(
         default=Path("train/{stage}/patches/{split}"),
         description="Relative template for a stage and split's patch directory.",
@@ -134,6 +142,12 @@ class ExperimentLayout(FrozenModel):
 
     def best_checkpoint_path(self, stage: str) -> Path:
         return self.resolve(self.best_checkpoint_template, stage=stage)
+
+    def latest_checkpoint_path(self, stage: str) -> Path:
+        return self.resolve(self.latest_checkpoint_template, stage=stage)
+
+    def stage_manifest_path(self, stage: str) -> Path:
+        return self.resolve(self.stage_manifest_template, stage=stage)
 
     def train_manifest_path(self) -> Path:
         return self.experiment_dir / self.train_manifest

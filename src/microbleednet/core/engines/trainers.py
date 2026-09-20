@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import torch
 import torch.nn as nn
 from torch import optim
 from torch.amp.autocast_mode import autocast
@@ -9,7 +10,11 @@ from torch.utils.data import DataLoader
 from ...progress import progress
 from .. import io, utils
 from ..common.tasks import BaseTask
-from ..datamodels import CheckpointState, EpochLoss, Hyperparameters
+from ..datamodels import (
+    CheckpointState,
+    EpochLoss,
+    Hyperparameters,
+)
 from .evaluators import Evaluator
 
 
@@ -20,11 +25,15 @@ class Trainer:
         task: BaseTask,
         best_checkpoint: Path,
         hyperparameters: Hyperparameters,
+        latest_checkpoint: Path,
     ):
         self.model = model
         self.hyperparameters = hyperparameters
         self.best_checkpoint = best_checkpoint
+        self.latest_checkpoint = latest_checkpoint
         self.epochs_without_improvement = 0
+        self.start_epoch = 0
+        self.history: list[EpochLoss] = []
 
         self.device = utils.get_model_device(self.model)
         self.task = task.to(self.device)
@@ -67,13 +76,14 @@ class Trainer:
         validation_loader: DataLoader,
         description: str,
     ) -> list[EpochLoss]:
-        history = []
         for epoch in progress.track(
             range(self.hyperparameters.max_epochs), description
         ):
+            if epoch < self.start_epoch:
+                continue
             training_loss = self.train_epoch(train_loader)
             val_loss = self.evaluator.validation_loss(validation_loader)
-            history.append(
+            self.history.append(
                 EpochLoss(
                     epoch=epoch + 1,
                     training_loss=training_loss,
@@ -90,11 +100,29 @@ class Trainer:
             else:
                 self.epochs_without_improvement += 1
 
+            self.save_checkpoint(epoch, self.latest_checkpoint)
             if is_best:
-                self.save_checkpoint(epoch)
+                self.save_checkpoint(epoch, self.best_checkpoint)
             if self.epochs_without_improvement >= self.hyperparameters.patience:
                 break
-        return history
+        return self.history
+
+    def load_latest_checkpoint(self) -> None:
+        if self.latest_checkpoint is None:
+            raise ValueError("latest checkpoint path is not configured")
+        checkpoint = torch.load(
+            self.latest_checkpoint,
+            map_location=self.device,
+            weights_only=True,
+        )
+        utils.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
+        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        self.scaler.load_state_dict(checkpoint["scaler_state_dict"])
+        self.best_val_loss = checkpoint["best_val_loss"]
+        self.epochs_without_improvement = checkpoint["epochs_without_improvement"]
+        self.start_epoch = checkpoint["epoch"] + 1
+        self.history = checkpoint.get("history", [])
 
     def train_epoch(self, dataloader: DataLoader) -> float:
         self.model.train()
@@ -122,7 +150,7 @@ class Trainer:
         self.scheduler.step()
         return running_loss / sample_count
 
-    def save_checkpoint(self, epoch: int) -> None:
+    def save_checkpoint(self, epoch: int, path: Path) -> None:
         unwrapped_model = utils.unwrap_model(self.model)
 
         state: CheckpointState = {
@@ -133,7 +161,8 @@ class Trainer:
             "scaler_state_dict": self.scaler.state_dict(),
             "best_val_loss": self.best_val_loss,
             "epochs_without_improvement": self.epochs_without_improvement,
+            "history": self.history,
         }
 
-        io.save_checkpoint(state, self.best_checkpoint)
+        io.save_checkpoint(state, path)
 
