@@ -24,6 +24,7 @@ from microbleednet.orchestration.manifests import (
     PreprocessedSubject,
     PreprocessedVariant,
     SplitManifest,
+    content_fingerprint,
     timestamp,
 )
 from tests.support import make_index_config
@@ -173,11 +174,15 @@ def _training_dataset(tmp_path: Path) -> Path:
 
 
 def _complete_split(tmp_path: Path, subject_ids: list[str]) -> None:
+    preprocessed_manifest = PreprocessedDatasetManifest.read(
+        DatasetLayout(dataset_dir=tmp_path / "dataset").preprocessed_manifest_path()
+    )
     SplitManifest(
         status=ManifestStatus.COMPLETE,
         created_at=timestamp(),
         updated_at=timestamp(),
         dataset_dir=str((tmp_path / "dataset").resolve()),
+        preprocessed_manifest_fingerprint=content_fingerprint(preprocessed_manifest),
         train_size=0.7,
         validation_size=0.1,
         test_size=0.2,
@@ -335,6 +340,7 @@ def test_train_config_rejects_split_manifest_for_another_dataset(
         created_at=timestamp(),
         updated_at=timestamp(),
         dataset_dir=str((tmp_path / "other-dataset").resolve()),
+        preprocessed_manifest_fingerprint="different-dataset",
         train_size=0.6,
         validation_size=0.2,
         test_size=0.2,
@@ -401,7 +407,11 @@ def test_train_config_accepts_complete_manifest_without_training_policy(
         updated_at=now,
         subjects=missing_subjects,
     ).write(manifest_path)
-    TrainConfig(dataset_dir=dataset_dir, experiment_dir=tmp_path / "experiment")
+    with pytest.raises(
+        ValidationError,
+        match="different preprocessed manifest",
+    ):
+        TrainConfig(dataset_dir=dataset_dir, experiment_dir=tmp_path / "experiment")
 
 
 def test_infer_config_accepts_subjects_without_rechecking_variant_paths(

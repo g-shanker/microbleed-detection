@@ -6,6 +6,7 @@ from torch.amp.autocast_mode import autocast
 from torch.amp.grad_scaler import GradScaler
 from torch.utils.data import DataLoader
 
+from ...progress import progress
 from .. import io, utils
 from ..common.tasks import BaseTask
 from ..datamodels import CheckpointState, EpochLoss, Hyperparameters
@@ -64,9 +65,12 @@ class Trainer:
         self,
         train_loader: DataLoader,
         validation_loader: DataLoader,
+        description: str,
     ) -> list[EpochLoss]:
         history = []
-        for epoch in range(self.hyperparameters.max_epochs):
+        for epoch in progress.track(
+            range(self.hyperparameters.max_epochs), description
+        ):
             training_loss = self.train_epoch(train_loader)
             val_loss = self.evaluator.validation_loss(validation_loader)
             history.append(

@@ -169,7 +169,7 @@ def train_stage(
         task,
         best_checkpoint=experiment_layout.best_checkpoint_path(stage),
         hyperparameters=hyperparameters,
-    ).fit(train_loader, validation_loader)
+    ).fit(train_loader, validation_loader, f"Training {stage}")
 
 
 def extract_patch_records(config: BasePatchConfig) -> list[PatchRecord]:

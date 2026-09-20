@@ -75,7 +75,7 @@ def test_fit_stops_at_patience_and_saves_best(
     )
 
     empty_loader = DataLoader(BatchDataset([]), batch_size=None)
-    history = trainer.fit(empty_loader, empty_loader)
+    history = trainer.fit(empty_loader, empty_loader, "Training detector")
 
     assert trainer.best_val_loss == 1.0
     assert trainer.epochs_without_improvement == 2
@@ -86,6 +86,26 @@ def test_fit_stops_at_patience_and_saves_best(
     ]
     assert torch.load(tmp_path / "best.pth", weights_only=True)["epoch"] == 0
     assert not (tmp_path / "latest.pth").exists()
+
+
+def test_fit_tracks_epochs_with_description(tmp_path: Path, monkeypatch) -> None:
+    trainer = _trainer(tmp_path, max_epochs=2)
+    tracked = []
+
+    def track(items, description):
+        tracked.append((list(items), description))
+        return range(2)
+
+    monkeypatch.setattr(
+        "microbleednet.core.engines.trainers.progress.track", track
+    )
+    monkeypatch.setattr(trainer, "train_epoch", lambda loader: 2.0)
+    monkeypatch.setattr(trainer.evaluator, "validation_loss", lambda loader: 1.0)
+
+    empty_loader = DataLoader(BatchDataset([]), batch_size=None)
+    trainer.fit(empty_loader, empty_loader, "Training detector")
+
+    assert tracked == [([0, 1], "Training detector")]
 
 
 def test_train_epoch_rejects_empty_loader(tmp_path: Path) -> None:
@@ -152,7 +172,10 @@ def test_trainer_handles_zero_epochs_and_amp_training(
 ) -> None:
     zero_epoch_trainer = _trainer(tmp_path / "zero", max_epochs=0)
     empty_loader = DataLoader(BatchDataset([]), batch_size=None)
-    assert zero_epoch_trainer.fit(empty_loader, empty_loader) == []
+    assert (
+        zero_epoch_trainer.fit(empty_loader, empty_loader, "Training detector")
+        == []
+    )
     assert zero_epoch_trainer.best_val_loss == float("inf")
 
     calls = []
