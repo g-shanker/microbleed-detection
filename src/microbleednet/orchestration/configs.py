@@ -13,10 +13,11 @@ from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
-from ..core.datamodels import FrozenModel, Hyperparameters, Modality
+from ..core.datamodels import FrozenModel, Hyperparameters, Modality, PatchSizes
 from .layouts import (
     DETECTOR_STAGE,
     STUDENT_STAGE,
+    TEACHER_STAGE,
     DatasetLayout,
     ExperimentLayout,
 )
@@ -27,6 +28,7 @@ from .manifests import (
     RawDatasetManifest,
     SplitManifest,
     TrainManifest,
+    TrainStageManifest,
     content_fingerprint,
 )
 
@@ -261,6 +263,12 @@ class TrainConfig(FrozenModel):
         ge=0,
         description="Optional random seed for reproducible training runs.",
     )
+    resume: bool = Field(
+        default=False,
+        description=(
+            "Resume an interrupted training run from its latest stage checkpoint."
+        ),
+    )
     detector_candidate_threshold: float = Field(
         default=0.5,
         ge=0,
@@ -338,7 +346,66 @@ class TrainConfig(FrozenModel):
             raise ValueError(
                 "split manifest was created from a different preprocessed manifest"
             )
+        if self.resume:
+            layout = ExperimentLayout(experiment_dir=self.experiment_dir)
+            train_manifest_path = layout.train_manifest_path()
+            if not train_manifest_path.is_file():
+                raise ValueError(
+                    f"cannot resume: training manifest does not exist: "
+                    f"{train_manifest_path}"
+                )
+            train_manifest = TrainManifest.read(train_manifest_path)
+            if train_manifest.status is ManifestStatus.COMPLETE:
+                raise ValueError("cannot resume: the training run is already complete")
+            expected_manifest = train_manifest_for_config(
+                self, content_fingerprint(split_manifest)
+            )
+            if content_fingerprint(train_manifest) != content_fingerprint(
+                expected_manifest
+            ):
+                raise ValueError(
+                    "cannot resume: the training configuration has changed"
+                )
+            has_resume_state = any(
+                layout.latest_checkpoint_path(stage).is_file()
+                or (
+                    layout.stage_manifest_path(stage).is_file()
+                    and TrainStageManifest.read(
+                        layout.stage_manifest_path(stage)
+                    ).status
+                    is ManifestStatus.COMPLETE
+                )
+                for stage in (DETECTOR_STAGE, TEACHER_STAGE, STUDENT_STAGE)
+            )
+            if not has_resume_state:
+                raise ValueError(
+                    "cannot resume: no training stage checkpoint or completion "
+                    "manifest exists"
+                )
         return self
+
+
+def train_manifest_for_config(
+    config: TrainConfig, split_manifest_fingerprint: str
+) -> TrainManifest:
+    return TrainManifest(
+        status=ManifestStatus.RUNNING,
+        dataset_dir=str(config.dataset_dir.resolve()),
+        split_manifest_fingerprint=split_manifest_fingerprint,
+        device=config.device,
+        seed=config.seed,
+        detector_candidate_threshold=config.detector_candidate_threshold,
+        detector_augmentation_factor=config.detector_augmentation_factor,
+        discriminator_augmentation_factor=config.discriminator_augmentation_factor,
+        validation_augmentation_factor=1,
+        detector_patch_size=PatchSizes.DETECTOR,
+        discriminator_patch_size=PatchSizes.DISCRIMINATOR,
+        num_workers=config.num_workers,
+        pin_memory=config.pin_memory,
+        detector_hyperparameters=config.detector_hyperparameters,
+        teacher_hyperparameters=config.teacher_hyperparameters,
+        student_hyperparameters=config.student_hyperparameters,
+    )
 
 
 class InferExperimentConfig(FrozenModel):

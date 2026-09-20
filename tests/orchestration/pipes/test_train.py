@@ -196,14 +196,16 @@ def test_stage_functions_apply_fixed_training_recipe(
 
     class FakeTrainer:
         def __init__(
-            self, model, task, best_checkpoint, hyperparameters
+            self, model, task, best_checkpoint, hyperparameters, **kwargs
         ) -> None:
             trainer_calls.append(
                 (model, task, best_checkpoint, hyperparameters)
             )
+            self.latest_checkpoint = kwargs["latest_checkpoint"]
 
-        def fit(self, train_loader, validation_loader, description) -> None:
+        def fit(self, train_loader, validation_loader, description) -> list:
             trainer_calls.append((train_loader, validation_loader, description))
+            return []
 
     def extract(config):
         patch_calls.append(config)
