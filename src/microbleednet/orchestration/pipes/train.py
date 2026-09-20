@@ -23,7 +23,6 @@ from ...core.dataloading.datasets import (
 )
 from ...core.dataloading.samplers import EqualBatchSampler
 from ...core.datamodels import (
-    EpochLoss,
     Hyperparameters,
     PatchRecord,
     PatchSizes,
@@ -51,6 +50,7 @@ from ..manifests import (
     PreprocessedSubject,
     SplitManifest,
     TrainManifest,
+    TrainStageManifest,
     content_fingerprint,
 )
 from . import patch
@@ -76,21 +76,27 @@ def execute(config: TrainConfig) -> None:
         preprocessed_manifest.subjects, split_manifest.validation_subject_ids
     )
     device = torch.device(config.device)
-    detector_history = train_detector(
+    write_train_manifest(
+        experiment_layout,
+        config,
+        content_fingerprint(split_manifest),
+        ManifestStatus.RUNNING,
+    )
+    train_detector(
         train_subjects,
         validation_subjects,
         experiment_layout,
         device,
         config,
     )
-    teacher_history = train_teacher(
+    train_teacher(
         train_subjects,
         validation_subjects,
         experiment_layout,
         device,
         config,
     )
-    student_history = train_student(
+    train_student(
         train_subjects,
         validation_subjects,
         experiment_layout,
@@ -101,9 +107,7 @@ def execute(config: TrainConfig) -> None:
         experiment_layout,
         config,
         content_fingerprint(split_manifest),
-        detector_history,
-        teacher_history,
-        student_history,
+        ManifestStatus.COMPLETE,
     )
 
 
@@ -111,12 +115,10 @@ def write_train_manifest(
     experiment_layout: ExperimentLayout,
     config: TrainConfig,
     split_manifest_fingerprint: str,
-    detector_history: list[EpochLoss],
-    teacher_history: list[EpochLoss],
-    student_history: list[EpochLoss],
+    status: ManifestStatus,
 ) -> None:
     TrainManifest(
-        status=ManifestStatus.COMPLETE,
+        status=status,
         dataset_dir=utils.resolve_path_string(config.dataset_dir),
         split_manifest_fingerprint=split_manifest_fingerprint,
         device=config.device,
@@ -132,9 +134,6 @@ def write_train_manifest(
         detector_hyperparameters=config.detector_hyperparameters,
         teacher_hyperparameters=config.teacher_hyperparameters,
         student_hyperparameters=config.student_hyperparameters,
-        detector_history=detector_history,
-        teacher_history=teacher_history,
-        student_history=student_history,
     ).write(experiment_layout.train_manifest_path())
 
 
@@ -148,7 +147,8 @@ def train_stage(
     hyperparameters: Hyperparameters,
     num_workers: int,
     pin_memory: bool,
-) -> list[EpochLoss]:
+    resume: bool = False,
+) -> None:
     train_loader = DataLoader(
         train_dataset,
         batch_sampler=EqualBatchSampler(
@@ -168,12 +168,39 @@ def train_stage(
         num_workers=num_workers,
         pin_memory=pin_memory,
     )
-    return Trainer(
+    trainer = Trainer(
         model,
         task,
         best_checkpoint=experiment_layout.best_checkpoint_path(stage),
         hyperparameters=hyperparameters,
-    ).fit(train_loader, validation_loader, f"Training {stage}")
+        latest_checkpoint=experiment_layout.latest_checkpoint_path(stage),
+    )
+    TrainStageManifest(
+        status=ManifestStatus.RUNNING,
+        stage=stage,
+        history=[],
+    ).write(experiment_layout.stage_manifest_path(stage))
+    if resume and trainer.latest_checkpoint.is_file():
+        trainer.load_latest_checkpoint()
+    history = trainer.fit(train_loader, validation_loader, f"Training {stage}")
+    TrainStageManifest(
+        status=ManifestStatus.COMPLETE,
+        stage=stage,
+        history=history,
+    ).write(experiment_layout.stage_manifest_path(stage))
+    trainer.latest_checkpoint.unlink(missing_ok=True)
+
+
+def completed_stage(
+    experiment_layout: ExperimentLayout, stage: StageName, resume: bool
+) -> bool:
+    if not resume:
+        return False
+    stage_manifest_path = experiment_layout.stage_manifest_path(stage)
+    if not stage_manifest_path.is_file():
+        return False
+    stage_manifest = TrainStageManifest.read(stage_manifest_path)
+    return stage_manifest.status is ManifestStatus.COMPLETE
 
 
 def extract_patch_records(config: BasePatchConfig) -> list[PatchRecord]:
@@ -196,7 +223,11 @@ def train_detector(
     experiment_layout: ExperimentLayout,
     device: torch.device,
     config: TrainConfig,
-) -> list[EpochLoss]:
+) -> None:
+    if completed_stage(
+        experiment_layout, DETECTOR_STAGE, config.resume
+    ):
+        return
     train_records = extract_patch_records(
         NonOverlappingPatchConfig(
             experiment_layout=experiment_layout,
@@ -219,7 +250,7 @@ def train_detector(
     )
     detector = CandidateDetector().to(device)
     try:
-        history = train_stage(
+        train_stage(
             detector,
             SegmentationTask(),
             SegmentationPatchDataset(train_records),
@@ -229,11 +260,11 @@ def train_detector(
             config.detector_hyperparameters,
             config.num_workers,
             config.pin_memory,
+            config.resume,
         )
     finally:
         del detector
         utils.release_gpu_memory()
-    return history
 
 
 def train_teacher(
@@ -242,7 +273,11 @@ def train_teacher(
     experiment_layout: ExperimentLayout,
     device: torch.device,
     config: TrainConfig,
-) -> list[EpochLoss]:
+) -> None:
+    if completed_stage(
+        experiment_layout, TEACHER_STAGE, config.resume
+    ):
+        return
     teacher = CandidateDiscriminatorTeacher()
     initializer = CandidateDetector()
     try:
@@ -277,7 +312,7 @@ def train_teacher(
         )
     )
     try:
-        history = train_stage(
+        train_stage(
             teacher,
             SegmentationClassificationTask(),
             SegmentationClassificationPatchDataset(train_records),
@@ -287,11 +322,11 @@ def train_teacher(
             config.teacher_hyperparameters,
             config.num_workers,
             config.pin_memory,
+            config.resume,
         )
     finally:
         del teacher
         utils.release_gpu_memory()
-    return history
 
 
 def train_student(
@@ -300,7 +335,11 @@ def train_student(
     experiment_layout: ExperimentLayout,
     device: torch.device,
     config: TrainConfig,
-) -> list[EpochLoss]:
+) -> None:
+    if completed_stage(
+        experiment_layout, STUDENT_STAGE, config.resume
+    ):
+        return
     detector = CandidateDetector().to(device)
     try:
         core_io.load_model_weights(
@@ -342,7 +381,7 @@ def train_student(
             teacher,
             experiment_layout.best_checkpoint_path(TEACHER_STAGE),
         )
-        history = train_stage(
+        train_stage(
             student,
             KnowledgeDistillationClassificationTask(teacher),
             ClassificationPatchDataset(train_records),
@@ -352,9 +391,9 @@ def train_student(
             config.student_hyperparameters,
             config.num_workers,
             config.pin_memory,
+            config.resume,
         )
     finally:
         del student
         del teacher
         utils.release_gpu_memory()
-    return history

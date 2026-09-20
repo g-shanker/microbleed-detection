@@ -315,14 +315,18 @@ class TrainManifest(Manifest):
     student_hyperparameters: Hyperparameters = Field(
         description="Optimizer and training-loop settings for student training."
     )
-    detector_history: list[EpochLoss] = Field(
-        description="Epoch loss history for candidate detector training."
+class TrainStageManifest(Manifest):
+    """Manifest published when an individual training stage completes."""
+
+    manifest_type: Literal["train_stage"] = Field(
+        default="train_stage",
+        description="Stable discriminator for a training stage manifest.",
     )
-    teacher_history: list[EpochLoss] = Field(
-        description="Epoch loss history for candidate teacher training."
+    stage: Literal["detector", "teacher", "student"] = Field(
+        description="Training stage represented by this manifest."
     )
-    student_history: list[EpochLoss] = Field(
-        description="Epoch loss history for candidate student training."
+    history: list[EpochLoss] = Field(
+        description="Epoch loss history for the completed training stage."
     )
 
 

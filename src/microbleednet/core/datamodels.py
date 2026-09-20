@@ -32,18 +32,15 @@ class CheckpointState(TypedDict):
     scaler_state_dict: TorchStateDict
     best_val_loss: float
     epochs_without_improvement: int
+    history: list["EpochLoss"]
 
 
-class EpochLoss(FrozenModel):
+class EpochLoss(TypedDict):
     """Mean training and validation losses completed during one epoch."""
 
-    epoch: int = Field(gt=0, description="One-based completed epoch number.")
-    training_loss: float = Field(
-        ge=0, description="Sample-weighted mean loss on the training split."
-    )
-    validation_loss: float = Field(
-        ge=0, description="Sample-weighted mean loss on the validation split."
-    )
+    epoch: int
+    training_loss: float
+    validation_loss: float
 
 
 class PatchSizes:

@@ -42,7 +42,45 @@ def _trainer(tmp_path: Path, **overrides) -> Trainer:
         RegressionTask(),
         tmp_path / "best.pth",
         hyperparameters,
+        tmp_path / "latest.pth",
     )
+
+
+def test_fit_saves_and_restores_latest_checkpoint(tmp_path: Path, monkeypatch) -> None:
+    latest_checkpoint = tmp_path / "latest.pth"
+    trainer = Trainer(
+        nn.Linear(1, 1),
+        RegressionTask(),
+        tmp_path / "best.pth",
+        Hyperparameters(max_epochs=2, patience=5),
+        latest_checkpoint,
+    )
+    monkeypatch.setattr(trainer, "train_epoch", lambda loader: 2.0)
+    validation_losses = iter([1.0, 2.0])
+    monkeypatch.setattr(
+        trainer.evaluator,
+        "validation_loss",
+        lambda loader: next(validation_losses),
+    )
+    empty_loader = DataLoader(BatchDataset([]), batch_size=None)
+
+    history = trainer.fit(empty_loader, empty_loader, "Training detector")
+
+    assert latest_checkpoint.is_file()
+    assert [entry["epoch"] for entry in history] == [1, 2]
+    resumed = Trainer(
+        nn.Linear(1, 1),
+        RegressionTask(),
+        tmp_path / "best-resumed.pth",
+        Hyperparameters(max_epochs=3, patience=5),
+        latest_checkpoint,
+    )
+    resumed.load_latest_checkpoint()
+
+    assert resumed.start_epoch == 2
+    assert resumed.history == history
+    assert resumed.best_val_loss == 1.0
+    assert resumed.epochs_without_improvement == 1
 
 
 def test_train_epoch_updates_model_and_learning_rate(tmp_path: Path) -> None:
@@ -85,16 +123,17 @@ def test_fit_stops_at_patience_and_saves_best(
         EpochLoss(epoch=3, training_loss=2.0, validation_loss=1.0),
     ]
     assert torch.load(tmp_path / "best.pth", weights_only=True)["epoch"] == 0
-    assert not (tmp_path / "latest.pth").exists()
+    assert torch.load(tmp_path / "latest.pth", weights_only=True)["epoch"] == 2
 
 
 def test_fit_tracks_epochs_with_description(tmp_path: Path, monkeypatch) -> None:
     trainer = _trainer(tmp_path, max_epochs=2)
+    trainer.start_epoch = 1
     tracked = []
 
     def track(items, description):
         tracked.append((list(items), description))
-        return range(2)
+        return items
 
     monkeypatch.setattr(
         "microbleednet.core.engines.trainers.progress.track", track
@@ -106,6 +145,7 @@ def test_fit_tracks_epochs_with_description(tmp_path: Path, monkeypatch) -> None
     trainer.fit(empty_loader, empty_loader, "Training detector")
 
     assert tracked == [([0, 1], "Training detector")]
+    assert [entry["epoch"] for entry in trainer.history] == [2]
 
 
 def test_train_epoch_rejects_empty_loader(tmp_path: Path) -> None:
