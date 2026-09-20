@@ -81,6 +81,25 @@ def test_adjust_affine_for_crop_translates_in_voxel_coordinates() -> None:
     np.testing.assert_array_equal(adjusted[:3, 3], np.array([2.0, 6.0, 12.0]))
 
 
+def test_restore_cropped_volume_restores_shape_and_orientation() -> None:
+    original_volume = nib.Nifti1Image(
+        np.zeros((4, 3, 2), dtype=np.uint8),
+        np.diag([-1.0, 1.0, 1.0, 1.0]),
+    )
+    cropped = np.ones((2, 2, 2), dtype=np.uint8)
+
+    restored = volume_ops.restore_cropped_volume(
+        cropped,
+        ((1, 3), (1, 3), (0, 2)),
+        original_volume,
+    )
+
+    assert restored.shape == (4, 3, 2)
+    assert restored.get_data_dtype() == np.dtype(np.uint8)
+    assert restored.get_fdata().sum() == cropped.sum()
+    np.testing.assert_array_equal(restored.affine, original_volume.affine)
+
+
 def test_extract_brain_requires_valid_fsldir(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("FSLDIR", str(tmp_path / "missing"))
     volume = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))

@@ -196,6 +196,15 @@ class PreprocessInput:
 
 
 @dataclass(frozen=True)
+class PreprocessOutput:
+    volume: FloatArray
+    mask: IntArray | None
+    affine: FloatArray
+    bounding_box: BoundingBox
+    original_volume: nib.Nifti1Image
+
+
+@dataclass(frozen=True)
 class ExtractedPatches:
     volumes: np.ndarray
     masks: np.ndarray

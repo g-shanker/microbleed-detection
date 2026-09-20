@@ -21,9 +21,11 @@ from microbleednet.orchestration.layouts import (
 from microbleednet.orchestration.manifests import (
     EvaluateManifest,
     ManifestStatus,
-    PreprocessedDatasetManifest,
     PreprocessedSubject,
     PreprocessedVariant,
+    RawDatasetManifest,
+    RawSource,
+    RawSubject,
     timestamp,
 )
 from microbleednet.orchestration.pipes import evaluate
@@ -178,25 +180,29 @@ def test_execute_explicit_checkpoints_evaluates_all_subjects(
 ) -> None:
     dataset_dir = tmp_path / "dataset"
     subjects = [
-        PreprocessedSubject(
+        RawSubject(
             subject_id=f"subject-{index}",
-            variants=[
-                PreprocessedVariant(
-                    volume_path=f"volume-{index}",
-                    mask_path=f"reference-{index}",
-                    frst_path=f"frst-{index}",
-                )
-            ],
+            source_id="source",
+            volume_path=f"volume-{index}",
+            mask_path=f"reference-{index}",
         )
         for index in range(2)
     ]
     now = timestamp()
-    PreprocessedDatasetManifest(
+    RawDatasetManifest(
         status=ManifestStatus.COMPLETE,
         created_at=now,
         updated_at=now,
+        sources=[
+            RawSource(
+                input_dir=".",
+                volume_pattern="{subject_id}",
+                source_id="source",
+                modality="QSM",
+            )
+        ],
         subjects=subjects,
-    ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
+    ).write(DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path())
 
     detector_checkpoint = tmp_path / "detector.pth"
     student_checkpoint = tmp_path / "student.pth"
@@ -252,12 +258,8 @@ def test_execute_explicit_checkpoints_evaluates_all_subjects(
     )
 
     infer_config = captured["config"]
-    assert [subject.subject_id for subject in infer_config.subjects] == [
-        "subject-0",
-        "subject-1",
-    ]
     assert infer_config.explicit is not None
-    assert infer_config.explicit.output_dir == output_dir
+    assert infer_config.explicit.dataset_dir == dataset_dir
     assert infer_config.explicit.detector_checkpoint_path == detector_checkpoint
     assert infer_config.explicit.student_checkpoint_path == student_checkpoint
     manifest = EvaluateManifest.read(

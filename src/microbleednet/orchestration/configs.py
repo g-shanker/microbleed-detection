@@ -349,6 +349,10 @@ class InferExperimentConfig(FrozenModel):
             "Experiment directory containing detector and student checkpoints."
         ),
     )
+    subjects: list[PreprocessedSubject] = Field(
+        min_length=1,
+        description="Preprocessed subjects to infer.",
+    )
 
     @model_validator(mode="after")
     def validate_checkpoints(self) -> "InferExperimentConfig":
@@ -364,9 +368,12 @@ class InferExperimentConfig(FrozenModel):
 
 
 class InferExplicitConfig(FrozenModel):
-    """Inference using explicitly supplied checkpoints and output directory."""
+    """Inference from a raw dataset using explicit checkpoints."""
 
     output_dir: Path = Field(description="Directory for inference artifacts.")
+    dataset_dir: Path = Field(
+        description="Indexed dataset directory containing the raw manifest.",
+    )
     detector_checkpoint_path: Path = Field(
         description="Explicit detector checkpoint path.",
     )
@@ -383,14 +390,18 @@ class InferExplicitConfig(FrozenModel):
         for stage, checkpoint in checkpoints:
             if not checkpoint.is_file():
                 raise ValueError(f"{stage} checkpoint does not exist: {checkpoint}")
+        manifest_path = DatasetLayout(dataset_dir=self.dataset_dir).raw_manifest_path()
+        require_dataset_dir(self.dataset_dir, manifest_path, "raw manifest")
+        manifest = RawDatasetManifest.read(manifest_path)
+        if manifest.status is not ManifestStatus.COMPLETE:
+            raise ValueError(
+                f"manifest at {manifest_path} has status {manifest.status.value!r}; "
+                "a consumer may only read a complete manifest."
+            )
         return self
 
 
 class InferConfig(FrozenModel):
-    subjects: list[PreprocessedSubject] = Field(
-        min_length=1,
-        description="Preprocessed subjects to infer.",
-    )
     experiment: InferExperimentConfig | None = None
     explicit: InferExplicitConfig | None = None
     device: str = Field(default="cpu", description=DEVICE_DESCRIPTION)
@@ -464,10 +475,10 @@ class EvaluateExperimentConfig(FrozenModel):
 
 
 class EvaluateExplicitConfig(FrozenModel):
-    """Evaluation of every preprocessed subject with explicit checkpoints."""
+    """Evaluation of every raw subject with explicit checkpoints."""
 
     dataset_dir: Path = Field(
-        description="Indexed dataset directory containing preprocessed subjects."
+        description="Indexed dataset directory containing the raw manifest."
     )
     output_dir: Path = Field(description="Output directory for evaluation artifacts.")
     detector_checkpoint_path: Path = Field(
@@ -485,11 +496,9 @@ class EvaluateExplicitConfig(FrozenModel):
         ):
             if not checkpoint.is_file():
                 raise ValueError(f"{stage} checkpoint does not exist: {checkpoint}")
-        manifest_path = DatasetLayout(
-            dataset_dir=self.dataset_dir
-        ).preprocessed_manifest_path()
-        require_dataset_dir(self.dataset_dir, manifest_path, "preprocessed manifest")
-        manifest = PreprocessedDatasetManifest.read(manifest_path)
+        manifest_path = DatasetLayout(dataset_dir=self.dataset_dir).raw_manifest_path()
+        require_dataset_dir(self.dataset_dir, manifest_path, "raw manifest")
+        manifest = RawDatasetManifest.read(manifest_path)
         if manifest.status is not ManifestStatus.COMPLETE:
             raise ValueError(
                 f"manifest at {manifest_path} has status "
@@ -499,7 +508,7 @@ class EvaluateExplicitConfig(FrozenModel):
         maskless_subjects = [
             subject.subject_id
             for subject in manifest.subjects
-            if not subject.variants or not subject.variants[0].mask_path
+            if subject.mask_path is None
         ]
         if maskless_subjects:
             raise ValueError(

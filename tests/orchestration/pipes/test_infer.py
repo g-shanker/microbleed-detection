@@ -166,8 +166,10 @@ def test_execute_writes_inference_manifest(tmp_path: Path, monkeypatch) -> None:
 
     infer.execute(
         InferConfig(
-            subjects=[subject],
-            experiment=InferExperimentConfig(experiment_dir=experiment_dir),
+            experiment=InferExperimentConfig(
+                experiment_dir=experiment_dir,
+                subjects=[subject],
+            ),
             device="cpu",
         )
     )

@@ -27,6 +27,9 @@ from microbleednet.orchestration.manifests import (
     PreprocessedDatasetManifest,
     PreprocessedSubject,
     PreprocessedVariant,
+    RawDatasetManifest,
+    RawSource,
+    RawSubject,
     SplitManifest,
     content_fingerprint,
     timestamp,
@@ -441,11 +444,14 @@ def test_infer_config_accepts_subjects_without_rechecking_variant_paths(
     )
 
     config = InferConfig(
-        subjects=[subject],
-        experiment=InferExperimentConfig(experiment_dir=experiment_dir),
+        experiment=InferExperimentConfig(
+            experiment_dir=experiment_dir,
+            subjects=[subject],
+        ),
     )
 
-    assert config.subjects == [subject]
+    assert config.experiment is not None
+    assert config.experiment.subjects == [subject]
     assert config.device == "cpu"
 
 
@@ -468,58 +474,85 @@ def test_infer_config_rejects_missing_student_checkpoint(tmp_path: Path) -> None
 
     with pytest.raises(ValidationError, match="student checkpoint does not exist"):
         InferConfig(
-            subjects=[subject],
-            experiment=InferExperimentConfig(experiment_dir=experiment_dir),
+            experiment=InferExperimentConfig(
+                experiment_dir=experiment_dir,
+                subjects=[subject],
+            ),
         )
 
 
-def test_infer_config_accepts_explicit_checkpoints_without_experiment_dir(
-    tmp_path: Path,
-) -> None:
+def test_infer_config_accepts_raw_dataset_explicit_input(tmp_path: Path) -> None:
     detector_checkpoint = tmp_path / "detector.pth"
     student_checkpoint = tmp_path / "student.pth"
     detector_checkpoint.touch()
     student_checkpoint.touch()
-    subject = PreprocessedSubject(
-        subject_id="subject-1",
-        variants=[
-            PreprocessedVariant(
-                volume_path="volume", mask_path="mask", frst_path="frst"
+    dataset_dir = tmp_path / "dataset"
+    volume_path = tmp_path / "raw.nii.gz"
+    volume_path.touch()
+    RawDatasetManifest(
+        status=ManifestStatus.COMPLETE,
+        sources=[
+            RawSource(
+                input_dir=str(tmp_path),
+                volume_pattern="{subject_id}.nii.gz",
+                source_id="source",
+                modality="QSM",
             )
         ],
-    )
+        subjects=[
+            RawSubject(
+                subject_id="subject-1",
+                source_id="source",
+                volume_path=str(volume_path),
+            )
+        ],
+    ).write(DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path())
 
     config = InferConfig(
-        subjects=[subject],
         explicit=InferExplicitConfig(
             output_dir=tmp_path / "inference",
+            dataset_dir=dataset_dir,
             detector_checkpoint_path=detector_checkpoint,
             student_checkpoint_path=student_checkpoint,
-        ),
+        )
     )
 
     assert config.explicit is not None
-    assert config.explicit.output_dir == tmp_path / "inference"
+    assert config.explicit.dataset_dir == dataset_dir
 
 
 def test_infer_config_requires_experiment_dir_without_explicit_checkpoints(
     tmp_path: Path,
 ) -> None:
-    subject = PreprocessedSubject(
-        subject_id="subject-1",
-        variants=[
-            PreprocessedVariant(
-                volume_path="volume", mask_path="mask", frst_path="frst"
-            )
-        ],
-    )
-
     with pytest.raises(ValidationError, match="exactly one inference mode"):
-        InferConfig(subjects=[subject])
+        InferConfig()
 
 
 def test_evaluate_config_accepts_explicit_checkpoints(tmp_path: Path) -> None:
     dataset_dir = _training_dataset(tmp_path)
+    raw_manifest_path = DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path()
+    raw_subjects = [
+        RawSubject(
+            subject_id="subject-1",
+            source_id="source",
+            volume_path=str(tmp_path / "volume.nii.gz"),
+            mask_path=str(tmp_path / "mask.nii.gz"),
+        )
+    ]
+    (tmp_path / "volume.nii.gz").touch()
+    (tmp_path / "mask.nii.gz").touch()
+    RawDatasetManifest(
+        status=ManifestStatus.COMPLETE,
+        sources=[
+            RawSource(
+                input_dir=str(tmp_path),
+                volume_pattern="{subject_id}.nii.gz",
+                source_id="source",
+                modality="QSM",
+            )
+        ],
+        subjects=raw_subjects,
+    ).write(raw_manifest_path)
     detector_checkpoint = tmp_path / "detector.pth"
     student_checkpoint = tmp_path / "student.pth"
     detector_checkpoint.touch()
