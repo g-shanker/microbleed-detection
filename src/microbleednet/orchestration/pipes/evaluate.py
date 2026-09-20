@@ -11,7 +11,6 @@ from ..manifests import (
     ManifestStatus,
     PreprocessedDatasetManifest,
     SplitManifest,
-    TrainManifest,
 )
 from ..utils import resolve_path_string, resolve_subjects
 from . import infer
@@ -21,11 +20,10 @@ def execute(config: EvaluateConfig) -> None:
     """Infer once for held-out subjects, then score masks against references."""
     experiment_layout = ExperimentLayout(experiment_dir=config.experiment_dir)
     dataset_layout = DatasetLayout(dataset_dir=config.dataset_dir)
-    TrainManifest.read(experiment_layout.train_manifest_path())
-    split_manifest = SplitManifest.read(experiment_layout.split_manifest_path())
-    preprocessed_manifest = PreprocessedDatasetManifest.read(
-        dataset_layout.preprocessed_manifest_path()
-    )
+    split_manifest_path = experiment_layout.split_manifest_path()
+    split_manifest = SplitManifest.read(split_manifest_path)
+    preprocessed_manifest_path = dataset_layout.preprocessed_manifest_path()
+    preprocessed_manifest = PreprocessedDatasetManifest.read(preprocessed_manifest_path)
     subjects = resolve_subjects(
         preprocessed_manifest.subjects, split_manifest.test_subject_ids
     )
@@ -37,9 +35,14 @@ def execute(config: EvaluateConfig) -> None:
             device=config.device,
         )
     )
-    inference_manifest = InferManifest.read(
-        experiment_layout.inference_manifest_path()
-    )
+    inference_manifest_path = experiment_layout.inference_manifest_path()
+    inference_manifest = InferManifest.read(inference_manifest_path)
+    if inference_manifest.status is not ManifestStatus.COMPLETE:
+        raise ValueError(
+            f"manifest at {inference_manifest_path} has status "
+            f"{inference_manifest.status.value!r}; a consumer may only read a "
+            "complete manifest."
+        )
     inference_output_paths = {
         subject.subject_id: subject.output_path
         for subject in inference_manifest.subjects

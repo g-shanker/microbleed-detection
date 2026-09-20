@@ -9,8 +9,8 @@ Rules enforced here (see ``ARCHITECTURE.md``):
 
 - Every manifest carries ``schema_version``, ``manifest_type``, ``status``,
   ``created_at`` and ``updated_at``.
-- A consumer may only read a ``complete`` manifest; a ``failed`` manifest must
-  carry a nonempty error string.
+- Consumers must check that a manifest is ``complete`` before using its
+    published outputs; a ``failed`` manifest must carry a nonempty error string.
 - Models forbid unknown fields, are immutable, and never type a field as
   ``Any``.
 
@@ -20,6 +20,8 @@ intrinsic to the type and layer-agnostic: the helpers depend only on
 pull in the ML stack.
 """
 
+import hashlib
+import json
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -98,7 +100,7 @@ class Manifest(FrozenModel):
     def read[ManifestType: Manifest](
         cls: type[ManifestType], path: Path
     ) -> ManifestType:
-        """Load and validate a complete manifest from ``path``."""
+        """Load and validate a versioned manifest from ``path``."""
         payload = core_io.read_json(path)
         if not isinstance(payload, dict) or "schema_version" not in payload:
             raise ValueError(
@@ -109,12 +111,19 @@ class Manifest(FrozenModel):
             manifest = cls.model_validate(payload)
         except ValidationError as error:
             raise ValueError(f"invalid manifest at {path}:\n{error}") from error
-        if manifest.status is not ManifestStatus.COMPLETE:
-            raise ValueError(
-                f"manifest at {path} has status {manifest.status.value!r}; "
-                "a consumer may only read a complete manifest."
-            )
         return manifest
+
+
+def content_fingerprint(manifest: Manifest) -> str:
+    """Return a stable hash of manifest content excluding lifecycle fields."""
+    payload = manifest.model_dump(
+        mode="json",
+        exclude={"status", "created_at", "updated_at", "error"},
+    )
+    canonical_payload = json.dumps(
+        payload, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(canonical_payload).hexdigest()
 
 
 class RawSubject(FrozenModel):
@@ -211,6 +220,10 @@ class PreprocessedDatasetManifest(Manifest):
         default=1,
         gt=0,
         description="Total persisted variants per subject, including the original.",
+    )
+    raw_manifest_fingerprint: str | None = Field(
+        default=None,
+        description="Fingerprint of the raw manifest used to create this dataset.",
     )
 
 

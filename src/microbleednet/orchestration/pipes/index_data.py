@@ -26,9 +26,9 @@ def execute(config: IndexDataConfig) -> None:
     layout = DatasetLayout(dataset_dir=config.dataset_dir)
     manifest_path = layout.raw_manifest_path()
 
-    existing_manifest = (
-        RawDatasetManifest.read(manifest_path) if manifest_path.is_file() else None
-    )
+    existing_manifest = None
+    if manifest_path.is_file():
+        existing_manifest = RawDatasetManifest.read(manifest_path)
 
     if existing_manifest is None:
         raw_manifest = RawDatasetManifest(

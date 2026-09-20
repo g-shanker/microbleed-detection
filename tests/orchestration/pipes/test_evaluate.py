@@ -5,14 +5,17 @@ from types import SimpleNamespace
 import numpy as np
 
 from microbleednet.core.common.metrics import aggregate_metrics, score_masks
+from microbleednet.orchestration import configs
 from microbleednet.orchestration.configs import EvaluateConfig
 from microbleednet.orchestration.layouts import (
     DETECTOR_STAGE,
     STUDENT_STAGE,
+    DatasetLayout,
     ExperimentLayout,
 )
 from microbleednet.orchestration.manifests import (
     EvaluateManifest,
+    ManifestStatus,
     PreprocessedSubject,
     PreprocessedVariant,
 )
@@ -75,6 +78,7 @@ def test_aggregate_metrics_counts_subjects() -> None:
 def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> None:
     experiment_dir = tmp_path / "experiment"
     dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
     subject = PreprocessedSubject(
         subject_id="subject-1",
         variants=[
@@ -88,34 +92,52 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
         checkpoint = experiment_layout.best_checkpoint_path(stage)
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         checkpoint.write_bytes(b"checkpoint")
+    for manifest_path in (
+        experiment_layout.train_manifest_path(),
+        experiment_layout.split_manifest_path(),
+        DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path(),
+    ):
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.touch()
     prediction = np.zeros((3, 3, 3), dtype=np.uint8)
     reference = np.zeros_like(prediction)
     prediction[1, 1, 1] = 1
     reference[1, 1, 1] = 1
 
     monkeypatch.setattr(
-        evaluate.TrainManifest,
+        configs.TrainManifest,
         "read",
-        lambda _: SimpleNamespace(),
+        lambda _: SimpleNamespace(status=ManifestStatus.COMPLETE),
     )
     monkeypatch.setattr(
         evaluate.SplitManifest,
         "read",
-        lambda _: SimpleNamespace(test_subject_ids=["subject-1"]),
+        lambda _: SimpleNamespace(
+            status=ManifestStatus.COMPLETE,
+            test_subject_ids=["subject-1"],
+        ),
     )
     monkeypatch.setattr(
         evaluate.PreprocessedDatasetManifest,
         "read",
-        lambda _: SimpleNamespace(subjects=[subject]),
+        lambda _: SimpleNamespace(
+            status=ManifestStatus.COMPLETE,
+            subjects=[subject],
+        ),
     )
     monkeypatch.setattr(
         evaluate.InferManifest,
         "read",
         lambda _: SimpleNamespace(
+            status=ManifestStatus.COMPLETE,
             subjects=[SimpleNamespace(subject_id="subject-1", output_path="prediction")]
         ),
     )
-    monkeypatch.setattr(evaluate.infer, "execute", lambda _: None)
+    monkeypatch.setattr(
+        evaluate.infer,
+        "execute",
+        lambda _: experiment_layout.inference_manifest_path().touch(),
+    )
     monkeypatch.setattr(evaluate.core_io, "load_volume", lambda path: path)
     monkeypatch.setattr(
         evaluate.core_io,
