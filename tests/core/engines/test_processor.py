@@ -51,12 +51,12 @@ def test_preprocess_qsm_skips_contrast_operations(monkeypatch) -> None:
     bias_correct, invert = _stub_processing_steps(monkeypatch)
     mask = nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.uint8), np.eye(4))
 
-    image, result_mask, affine = _preprocess(_volume(), mask, "QSM")
+    output = _preprocess(_volume(), mask, "QSM")
 
-    assert result_mask is not None
-    assert result_mask.dtype == np.uint8
-    np.testing.assert_array_equal(image, np.ones((2, 2, 2)))
-    np.testing.assert_array_equal(affine, np.eye(4))
+    assert output.mask is not None
+    assert output.mask.dtype == np.uint8
+    np.testing.assert_array_equal(output.volume, np.ones((2, 2, 2)))
+    np.testing.assert_array_equal(output.affine, np.eye(4))
     bias_correct.assert_not_called()
     invert.assert_not_called()
 
@@ -65,11 +65,11 @@ def test_preprocess_swi_processes_and_crops_mask(monkeypatch) -> None:
     bias_correct, invert = _stub_processing_steps(monkeypatch)
     mask = nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.uint8), np.eye(4))
 
-    _, result_mask, _ = _preprocess(_volume(), mask, "SWI")
+    output = _preprocess(_volume(), mask, "SWI")
 
-    assert result_mask is not None
-    np.testing.assert_array_equal(result_mask, np.ones((2, 2, 2), dtype=int))
-    assert result_mask.dtype == np.uint8
+    assert output.mask is not None
+    np.testing.assert_array_equal(output.mask, np.ones((2, 2, 2), dtype=int))
+    assert output.mask.dtype == np.uint8
     bias_correct.assert_called_once()
     invert.assert_called_once()
 
@@ -77,10 +77,10 @@ def test_preprocess_swi_processes_and_crops_mask(monkeypatch) -> None:
 def test_preprocess_supports_missing_mask(monkeypatch) -> None:
     _stub_processing_steps(monkeypatch)
 
-    image, result_mask, _ = _preprocess(_volume(), None, "QSM")
+    output = _preprocess(_volume(), None, "QSM")
 
-    assert result_mask is None
-    np.testing.assert_array_equal(image, np.ones((2, 2, 2)))
+    assert output.mask is None
+    np.testing.assert_array_equal(output.volume, np.ones((2, 2, 2)))
 
 
 def test_preprocess_rejects_mask_with_different_affine() -> None:

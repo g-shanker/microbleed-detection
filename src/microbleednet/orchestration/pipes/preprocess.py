@@ -82,9 +82,12 @@ def preprocess_subject(
 ) -> PreprocessedSubject:
     raw_volume = io.load_volume(subject.volume_path)
     raw_mask = io.load_volume(subject.mask_path) if subject.mask_path else None
-    processed_volume, processed_mask, processed_affine = processor.preprocess(
+    preprocess_output = processor.preprocess(
         PreprocessInput(raw_volume, raw_mask, modality)
     )
+    processed_volume = preprocess_output.volume
+    processed_mask = preprocess_output.mask
+    processed_affine = preprocess_output.affine
 
     variants: list[PreprocessedVariant] = []
     for variant_index in range(augmentation_factor):

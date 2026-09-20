@@ -20,6 +20,8 @@ from ..manifests import (
     ManifestStatus,
     PreprocessedDatasetManifest,
     PreprocessedSubject,
+    RawDatasetManifest,
+    RawSubject,
     SplitManifest,
 )
 from ..utils import resolve_path_string, resolve_subjects
@@ -41,14 +43,18 @@ def execute_experiment(
     """Evaluate the held-out subjects from an experiment split."""
     experiment_layout = ExperimentLayout(experiment_dir=mode.experiment_dir)
     dataset_layout = DatasetLayout(dataset_dir=mode.dataset_dir)
-    preprocessed_manifest = read_preprocessed_manifest(dataset_layout)
+    preprocessed_manifest = PreprocessedDatasetManifest.read(
+        dataset_layout.preprocessed_manifest_path()
+    )
     split_manifest = SplitManifest.read(experiment_layout.split_manifest_path())
     subjects = resolve_subjects(
         preprocessed_manifest.subjects, split_manifest.test_subject_ids
     )
     infer_config = InferConfig(
-        subjects=subjects,
-        experiment=InferExperimentConfig(experiment_dir=mode.experiment_dir),
+        experiment=InferExperimentConfig(
+            experiment_dir=mode.experiment_dir,
+            subjects=subjects,
+        ),
         device=config.device,
     )
     evaluate_subjects(
@@ -59,41 +65,36 @@ def execute_experiment(
 def execute_explicit(
     config: EvaluateConfig, mode: EvaluateExplicitConfig
 ) -> None:
-    """Evaluate every preprocessed subject with explicit checkpoints."""
+    """Evaluate every raw subject with explicit checkpoints."""
     experiment_layout = ExperimentLayout(experiment_dir=mode.output_dir)
     dataset_layout = DatasetLayout(dataset_dir=mode.dataset_dir)
-    preprocessed_manifest = read_preprocessed_manifest(dataset_layout)
-    subjects = preprocessed_manifest.subjects
+    raw_manifest = RawDatasetManifest.read(dataset_layout.raw_manifest_path())
     infer_config = InferConfig(
-        subjects=subjects,
         explicit=InferExplicitConfig(
             output_dir=mode.output_dir,
+            dataset_dir=mode.dataset_dir,
             detector_checkpoint_path=mode.detector_checkpoint_path,
             student_checkpoint_path=mode.student_checkpoint_path,
         ),
         device=config.device,
     )
     evaluate_subjects(
-        config, mode.dataset_dir, experiment_layout, subjects, infer_config
+        config,
+        mode.dataset_dir,
+        experiment_layout,
+        raw_manifest.subjects,
+        infer_config,
     )
-
-
-def read_preprocessed_manifest(
-    dataset_layout: DatasetLayout,
-) -> PreprocessedDatasetManifest:
-    return PreprocessedDatasetManifest.read(dataset_layout.preprocessed_manifest_path())
 
 
 def evaluate_subjects(
     config: EvaluateConfig,
     dataset_dir: Path,
     experiment_layout: ExperimentLayout,
-    subjects: list[PreprocessedSubject],
+    subjects: list[PreprocessedSubject] | list[RawSubject],
     infer_config: InferConfig,
 ) -> None:
-    infer.execute(
-        infer_config
-    )
+    infer.execute(infer_config)
     inference_manifest_path = experiment_layout.inference_manifest_path()
     inference_manifest = InferManifest.read(inference_manifest_path)
     if inference_manifest.status is not ManifestStatus.COMPLETE:
@@ -109,11 +110,16 @@ def evaluate_subjects(
 
     per_subject: list[EvaluatedSubject] = []
     for subject in subjects:
-        variant = subject.variants[0]
         prediction = core_io.nifti_to_numpy(
             core_io.load_volume(inference_output_paths[subject.subject_id])
         )
-        reference = core_io.nifti_to_numpy(core_io.load_volume(variant.mask_path))
+        mask_path = (
+            subject.mask_path
+            if isinstance(subject, RawSubject)
+            else subject.variants[0].mask_path
+        )
+        assert mask_path is not None
+        reference = core_io.nifti_to_numpy(core_io.load_volume(mask_path))
         per_subject.append(
             EvaluatedSubject(
                 subject_id=subject.subject_id,
