@@ -64,10 +64,10 @@ def execute(config: TrainConfig) -> None:
 
     experiment_layout = ExperimentLayout(experiment_dir=config.experiment_dir)
     dataset_layout = DatasetLayout(dataset_dir=config.dataset_dir)
-    preprocessed_manifest = PreprocessedDatasetManifest.read(
-        dataset_layout.preprocessed_manifest_path()
-    )
-    split_manifest = SplitManifest.read(experiment_layout.split_manifest_path())
+    preprocessed_manifest_path = dataset_layout.preprocessed_manifest_path()
+    preprocessed_manifest = PreprocessedDatasetManifest.read(preprocessed_manifest_path)
+    split_manifest_path = experiment_layout.split_manifest_path()
+    split_manifest = SplitManifest.read(split_manifest_path)
     train_subjects = utils.resolve_subjects(
         preprocessed_manifest.subjects, split_manifest.train_subject_ids
     )
@@ -174,9 +174,16 @@ def train_stage(
 
 def extract_patch_records(config: BasePatchConfig) -> list[PatchRecord]:
     patch.execute(config)
-    return PatchManifest.read(
-        config.experiment_layout.patch_manifest_path(config.stage, config.split)
-    ).records
+    manifest_path = config.experiment_layout.patch_manifest_path(
+        config.stage, config.split
+    )
+    manifest = PatchManifest.read(manifest_path)
+    if manifest.status is not ManifestStatus.COMPLETE:
+        raise ValueError(
+            f"manifest at {manifest_path} has status {manifest.status.value!r}; "
+            "a consumer may only read a complete manifest."
+        )
+    return manifest.records
 
 
 def train_detector(

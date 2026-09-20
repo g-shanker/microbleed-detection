@@ -13,9 +13,10 @@ from ..utils import resolve_path_string
 
 
 def execute(config: SplitConfig) -> None:
-    dataset_manifest = PreprocessedDatasetManifest.read(
-        DatasetLayout(dataset_dir=config.dataset_dir).preprocessed_manifest_path()
-    )
+    manifest_path = DatasetLayout(
+        dataset_dir=config.dataset_dir
+    ).preprocessed_manifest_path()
+    dataset_manifest = PreprocessedDatasetManifest.read(manifest_path)
     train_subjects, held_out_subjects = train_test_split(
         dataset_manifest.subjects,
         train_size=config.train_size,

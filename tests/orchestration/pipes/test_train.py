@@ -202,12 +202,20 @@ def test_stage_functions_apply_fixed_training_recipe(
 
     def extract(config):
         patch_calls.append(config)
+        manifest_path = config.experiment_layout.patch_manifest_path(
+            config.stage, config.split
+        )
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.touch()
         return None
 
     monkeypatch.setattr(
         train.PatchManifest,
-        "read",
-        lambda path: SimpleNamespace(records=[object(), object()]),
+            "read",
+            lambda path: SimpleNamespace(
+                status=ManifestStatus.COMPLETE,
+                records=[object(), object()],
+            ),
     )
 
     monkeypatch.setattr(train.patch, "execute", extract)
@@ -261,6 +269,21 @@ def test_stage_functions_apply_fixed_training_recipe(
         updated_at=now,
         subjects=[],
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
+    SplitManifest(
+        status=ManifestStatus.COMPLETE,
+        created_at=now,
+        updated_at=now,
+        dataset_dir=str(dataset_dir.resolve()),
+        seed=None,
+        train_size=0.7,
+        validation_size=0.1,
+        test_size=0.2,
+        train_subject_ids=[],
+        validation_subject_ids=[],
+        test_subject_ids=[],
+    ).write(
+        ExperimentLayout(experiment_dir=tmp_path / "experiment").split_manifest_path()
+    )
     config = TrainConfig(
         dataset_dir=dataset_dir,
         experiment_dir=tmp_path / "experiment",
