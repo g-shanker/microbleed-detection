@@ -22,6 +22,7 @@ pull in the ML stack.
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -41,6 +42,8 @@ from ..core.datamodels import (
 )
 
 SCHEMA_VERSION = 1
+
+logger = logging.getLogger(__name__)
 
 
 def timestamp() -> str:
@@ -95,6 +98,12 @@ class Manifest(FrozenModel):
             payload["created_at"] = existing.get("created_at", timestamp())
         payload["updated_at"] = timestamp()
         core_io.write_json(path, payload)
+        logger.debug(
+            "Wrote %s manifest with status %s to %s.",
+            getattr(self, "manifest_type", type(self).__name__),
+            self.status.value,
+            path,
+        )
 
     @classmethod
     def read[ManifestType: Manifest](
@@ -111,6 +120,12 @@ class Manifest(FrozenModel):
             manifest = cls.model_validate(payload)
         except ValidationError as error:
             raise ValueError(f"invalid manifest at {path}:\n{error}") from error
+        logger.debug(
+            "Read %s manifest with status %s from %s.",
+            getattr(manifest, "manifest_type", type(manifest).__name__),
+            manifest.status.value,
+            path,
+        )
         return manifest
 
 

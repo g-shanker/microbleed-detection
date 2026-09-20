@@ -1,7 +1,7 @@
 """Table-driven construction of the CLI commands.
 
 Every command is the same skeleton — parse a config, honor
-``--dry-run``, defer-import one pipe, run it, report — so each is described
+``--dry-run``, defer-import one pipe, and run it — so each is described
 declaratively by a :class:`CommandSpec` and built by :func:`build_command`
 rather than hand-written in its own module. Only the per-command specifics
 (config model, help text, messages, and which pipe to run)
@@ -11,9 +11,11 @@ The pipe is imported lazily inside the command body, by module name, so
 ``--help`` and ``describe`` never pay to import torch.
 """
 
+import logging
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
+from time import perf_counter
 from typing import Annotated, Any, Callable
 
 import typer
@@ -37,6 +39,8 @@ from .utils import (
 
 COMMAND_HELP = "TODO: write a help message"
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class CommandSpec:
@@ -47,7 +51,6 @@ class CommandSpec:
     config: type[BaseModel]
     pipe: str  # module under orchestration.pipes; imported lazily to defer torch
     dry_run_message: Callable[[Any], str]
-    success_message: Callable[[Any], str]
 
 
 SPECS: list[CommandSpec] = [
@@ -60,9 +63,6 @@ SPECS: list[CommandSpec] = [
             f"Index configuration valid; manifests would be written under "
             f"{s.dataset_dir} (dry run)"
         ),
-        success_message=lambda s: (
-            f"Indexed dataset manifests written under {s.dataset_dir}"
-        ),
     ),
     CommandSpec(
         name="preprocess",
@@ -72,7 +72,6 @@ SPECS: list[CommandSpec] = [
         dry_run_message=lambda s: (
             f"Preprocess configuration valid for {s.dataset_dir} (dry run)"
         ),
-        success_message=lambda s: f"Preprocessed dataset written under {s.dataset_dir}",
     ),
     CommandSpec(
         name="split",
@@ -83,7 +82,6 @@ SPECS: list[CommandSpec] = [
             f"Split configuration valid; split manifest would be written under "
             f"{s.experiment_dir} (dry run)"
         ),
-        success_message=lambda s: f"Split manifest written under {s.experiment_dir}",
     ),
     CommandSpec(
         name="train",
@@ -93,9 +91,6 @@ SPECS: list[CommandSpec] = [
         dry_run_message=lambda s: (
             f"Training configuration valid; artifacts would be written under "
             f"{s.experiment_dir} (dry run)"
-        ),
-        success_message=lambda s: (
-            f"Training artifacts written under {s.experiment_dir}"
         ),
     ),
     CommandSpec(
@@ -107,10 +102,6 @@ SPECS: list[CommandSpec] = [
             f"Evaluation configuration valid for "
             f"{s.explicit.output_dir if s.explicit else s.experiment.experiment_dir} "
             "(dry run)"
-        ),
-        success_message=lambda s: (
-            f"Evaluation written under "
-            f"{s.explicit.output_dir if s.explicit else s.experiment.experiment_dir}"
         ),
     ),
 ]
@@ -130,16 +121,32 @@ def build_command(app: typer.Typer, spec: CommandSpec) -> None:
             bool, typer.Option(help="Validate configuration without writing outputs.")
         ] = False,
     ) -> None:
+        started_at = perf_counter()
         config = parse_config(config_path, spec.config)
+        logger.info(
+            "Starting %s with config %s%s.",
+            spec.name,
+            config_path,
+            " (dry run)" if dry_run else "",
+        )
         if dry_run:
             report(spec.dry_run_message(config))
+            logger.info(
+                "Completed %s dry run in %.2fs.",
+                spec.name,
+                perf_counter() - started_at,
+            )
             return
         # Imported lazily, by module name, so torch stays out of --help/describe.
+        logger.debug("Loading pipe %s for command %s.", spec.pipe, spec.name)
         pipe = import_module(
             f"..orchestration.pipes.{spec.pipe}", package=__package__
         )
+        logger.debug("Executing pipe %s for command %s.", spec.pipe, spec.name)
         pipe.execute(config)
-        report(spec.success_message(config))
+        logger.info(
+            "Completed %s in %.2fs.", spec.name, perf_counter() - started_at
+        )
 
 
 def build_describe_command(app: typer.Typer, specs: list[CommandSpec]) -> None:

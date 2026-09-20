@@ -1,3 +1,5 @@
+import logging
+
 import nibabel as nib
 import numpy as np
 
@@ -19,6 +21,8 @@ from ..manifests import (
 )
 from ..utils import resolve_path_string
 
+logger = logging.getLogger(__name__)
+
 
 def execute(config: PreprocessConfig) -> None:
     layout = DatasetLayout(dataset_dir=config.dataset_dir)
@@ -30,11 +34,19 @@ def execute(config: PreprocessConfig) -> None:
         source.source_id: source.modality for source in raw_manifest.sources
     }
     preprocessed_subjects: list[PreprocessedSubject] = []
+    skipped_subjects = 0
     if config.resume:
         existing_manifest = PreprocessedDatasetManifest.read(
             preprocessed_manifest_path
         )
         preprocessed_subjects.extend(existing_manifest.subjects)
+
+    logger.info(
+        "Preprocessing %d subjects with augmentation factor %d (resume=%s).",
+        len(raw_manifest.subjects),
+        config.augmentation_factor,
+        config.resume,
+    )
 
     PreprocessedDatasetManifest(
         status=ManifestStatus.RUNNING,
@@ -49,6 +61,7 @@ def execute(config: PreprocessConfig) -> None:
             completed.subject_id == subject_id
             for completed in preprocessed_subjects
         ):
+            skipped_subjects += 1
             continue
 
         preprocessed_subjects.append(
@@ -72,6 +85,12 @@ def execute(config: PreprocessConfig) -> None:
         augmentation_factor=config.augmentation_factor,
         raw_manifest_fingerprint=raw_manifest_fingerprint,
     ).write(preprocessed_manifest_path)
+    logger.info(
+        "Preprocessed %d subjects (%d skipped); manifest written to %s.",
+        len(preprocessed_subjects),
+        skipped_subjects,
+        preprocessed_manifest_path,
+    )
 
 
 def preprocess_subject(

@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 
 def execute(config: IndexDataConfig) -> None:
+    logger.info(
+        "Indexing source '%s' from %s.", config.source_id, config.input_dir
+    )
     source, subjects = index_source(config)
 
     layout = DatasetLayout(dataset_dir=config.dataset_dir)
@@ -49,6 +52,12 @@ def execute(config: IndexDataConfig) -> None:
         )
 
     raw_manifest.write(manifest_path)
+    logger.info(
+        "Indexed %d subjects from source '%s'; manifest written to %s.",
+        len(subjects),
+        source.source_id,
+        manifest_path,
+    )
 
 
 def index_source(config: IndexDataConfig) -> tuple[RawSource, list[RawSubject]]:

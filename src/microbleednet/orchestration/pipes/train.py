@@ -1,3 +1,5 @@
+import logging
+
 import torch
 import torch.nn as nn
 from torch.utils.data import BatchSampler, DataLoader, SequentialSampler
@@ -57,8 +59,16 @@ from . import patch
 
 VALIDATION_AUGMENTATION_FACTOR = 1
 
+logger = logging.getLogger(__name__)
+
 
 def execute(config: TrainConfig) -> None:
+    logger.info(
+        "Starting training in %s on %s (resume=%s).",
+        config.experiment_dir,
+        config.device,
+        config.resume,
+    )
     if config.seed is not None:
         torch.manual_seed(config.seed)
         torch.cuda.manual_seed_all(config.seed)
@@ -108,6 +118,10 @@ def execute(config: TrainConfig) -> None:
         config,
         content_fingerprint(split_manifest),
         ManifestStatus.COMPLETE,
+    )
+    logger.info(
+        "Training complete; manifest written to %s.",
+        experiment_layout.train_manifest_path(),
     )
 
 
@@ -175,6 +189,13 @@ def train_stage(
         hyperparameters=hyperparameters,
         latest_checkpoint=experiment_layout.latest_checkpoint_path(stage),
     )
+    logger.info(
+        "Training %s: %d training patches, %d validation patches, %d max epochs.",
+        stage,
+        len(train_dataset.patches),
+        len(validation_dataset.patches),
+        hyperparameters.max_epochs,
+    )
     TrainStageManifest(
         status=ManifestStatus.RUNNING,
         stage=stage,
@@ -189,6 +210,7 @@ def train_stage(
         history=history,
     ).write(experiment_layout.stage_manifest_path(stage))
     trainer.latest_checkpoint.unlink(missing_ok=True)
+    logger.info("Completed training stage %s after %d epochs.", stage, len(history))
 
 
 def completed_stage(
@@ -200,6 +222,8 @@ def completed_stage(
     if not stage_manifest_path.is_file():
         return False
     stage_manifest = TrainStageManifest.read(stage_manifest_path)
+    if stage_manifest.status is ManifestStatus.COMPLETE:
+        logger.info("Skipping completed training stage %s.", stage)
     return stage_manifest.status is ManifestStatus.COMPLETE
 
 

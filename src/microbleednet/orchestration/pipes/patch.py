@@ -1,5 +1,7 @@
 """Create materialized training patches from preprocessed subjects."""
 
+import logging
+
 import numpy as np
 
 from ...core import io, utils
@@ -8,6 +10,7 @@ from ...core.datamodels import ExtractedPatches, PatchRecord
 from ...core.engines import inference as core_inference
 from ...core.io import save_array
 from ...core.transforms import patch as patch_transforms
+from ...progress import progress
 from ..configs import (
     BasePatchConfig,
     NonOverlappingPatchConfig,
@@ -15,6 +18,8 @@ from ..configs import (
 )
 from ..manifests import ManifestStatus, PatchManifest
 from ..utils import resolve_path_string
+
+logger = logging.getLogger(__name__)
 
 
 def execute(
@@ -32,43 +37,54 @@ def execute(
         raise TypeError(f"unsupported patch configuration: {type(config).__name__}")
 
     records: list[PatchRecord] = []
+    work_items = [
+        (subject, variant_index, variant)
+        for subject in config.subjects
+        for variant_index, variant in enumerate(
+            subject.variants[: config.augmentation_factor]
+        )
+    ]
+    empty_extractions = 0
 
-    for subject in config.subjects:
+    for subject, variant_index, variant in progress.track(
+        work_items, "Extracting patches"
+    ):
         subject_id = subject.subject_id
-        variants = subject.variants[: config.augmentation_factor]
+        volume = io.nifti_to_numpy(io.load_volume(variant.volume_path))
+        mask = io.nifti_to_numpy(io.load_volume(variant.mask_path))
+        frst = io.nifti_to_numpy(io.load_volume(variant.frst_path))
+        extracted = extract(volume, mask, frst)
+        if extracted.volumes.size == 0:
+            empty_extractions += 1
+            continue
 
-        for variant_index, variant in enumerate(variants):
-            volume = io.nifti_to_numpy(io.load_volume(variant.volume_path))
-            mask = io.nifti_to_numpy(io.load_volume(variant.mask_path))
-            frst = io.nifti_to_numpy(io.load_volume(variant.frst_path))
-            extracted = extract(volume, mask, frst)
-            if extracted.volumes.size == 0:
-                continue
+        volume_path = config.experiment_layout.patch_volume_path(
+            config.stage, config.split, subject_id, variant_index
+        )
+        mask_path = config.experiment_layout.patch_mask_path(
+            config.stage, config.split, subject_id, variant_index
+        )
+        frst_path = config.experiment_layout.patch_frst_path(
+            config.stage, config.split, subject_id, variant_index
+        )
+        save_array(extracted.volumes, volume_path)
+        save_array(extracted.masks, mask_path)
+        save_array(extracted.frst, frst_path)
 
-            volume_path = config.experiment_layout.patch_volume_path(
-                config.stage, config.split, subject_id, variant_index
+        records.extend(
+            PatchRecord(
+                volume_path=resolve_path_string(volume_path),
+                mask_path=resolve_path_string(mask_path),
+                frst_path=resolve_path_string(frst_path),
+                patch_index=index,
+                has_microbleed=bool(np.any(mask_array > 0)),
             )
-            mask_path = config.experiment_layout.patch_mask_path(
-                config.stage, config.split, subject_id, variant_index
-            )
-            frst_path = config.experiment_layout.patch_frst_path(
-                config.stage, config.split, subject_id, variant_index
-            )
-            save_array(extracted.volumes, volume_path)
-            save_array(extracted.masks, mask_path)
-            save_array(extracted.frst, frst_path)
+            for index, mask_array in enumerate(extracted.masks)
+        )
 
-            records.extend(
-                PatchRecord(
-                    volume_path=resolve_path_string(volume_path),
-                    mask_path=resolve_path_string(mask_path),
-                    frst_path=resolve_path_string(frst_path),
-                    patch_index=index,
-                    has_microbleed=bool(np.any(mask_array > 0)),
-                )
-                for index, mask_array in enumerate(extracted.masks)
-            )
-
+    manifest_path = config.experiment_layout.patch_manifest_path(
+        config.stage, config.split
+    )
     PatchManifest(
         status=ManifestStatus.COMPLETE,
         stage=config.stage,
@@ -82,7 +98,15 @@ def execute(
             else None
         ),
         records=records,
-    ).write(config.experiment_layout.patch_manifest_path(config.stage, config.split))
+    ).write(manifest_path)
+    logger.info(
+        "Extracted %d patches from %d subject variants (%d empty); "
+        "manifest written to %s.",
+        len(records),
+        len(work_items),
+        empty_extractions,
+        manifest_path,
+    )
 
 
 class NonOverlappingExtractor:
