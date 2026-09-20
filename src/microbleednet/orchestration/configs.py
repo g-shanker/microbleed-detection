@@ -311,7 +311,7 @@ class TrainConfig(FrozenModel):
         return self
 
     @model_validator(mode="after")
-    def validate_dataset(self) -> "TrainConfig":
+    def validate_dataset_and_split(self) -> "TrainConfig":
         manifest_path = DatasetLayout(
             dataset_dir=self.dataset_dir
         ).preprocessed_manifest_path()
@@ -322,10 +322,6 @@ class TrainConfig(FrozenModel):
                 f"manifest at {manifest_path} has status {manifest.status.value!r}; "
                 "a consumer may only read a complete manifest."
             )
-        return self
-
-    @model_validator(mode="after")
-    def validate_split_manifest_dataset(self) -> "TrainConfig":
         split_manifest_path = ExperimentLayout(
             experiment_dir=self.experiment_dir
         ).split_manifest_path()
@@ -335,6 +331,12 @@ class TrainConfig(FrozenModel):
         if split_manifest.dataset_dir != str(self.dataset_dir.resolve()):
             raise ValueError(
                 "split manifest dataset_dir does not match the training dataset"
+            )
+        if split_manifest.preprocessed_manifest_fingerprint != content_fingerprint(
+            manifest
+        ):
+            raise ValueError(
+                "split manifest was created from a different preprocessed manifest"
             )
         return self
 

@@ -19,6 +19,7 @@ from microbleednet.orchestration.manifests import (
     PreprocessedSubject,
     PreprocessedVariant,
     SplitManifest,
+    content_fingerprint,
     timestamp,
 )
 from microbleednet.orchestration.pipes import train
@@ -93,11 +94,15 @@ def test_execute_runs_stages_with_configured_training_values(
         train, "train_student", record_stage(STUDENT_STAGE, STUDENT_STAGE)
     )
     experiment_dir = tmp_path / "experiment"
+    preprocessed_manifest = PreprocessedDatasetManifest.read(
+        DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path()
+    )
     split_manifest = SplitManifest(
         status=ManifestStatus.COMPLETE,
         created_at=now,
         updated_at=now,
         dataset_dir=str(dataset_dir.resolve()),
+        preprocessed_manifest_fingerprint=content_fingerprint(preprocessed_manifest),
         seed=7,
         train_size=0.6,
         validation_size=0.2,
@@ -197,8 +202,8 @@ def test_stage_functions_apply_fixed_training_recipe(
                 (model, task, best_checkpoint, hyperparameters)
             )
 
-        def fit(self, train_loader, validation_loader) -> None:
-            trainer_calls.append((train_loader, validation_loader))
+        def fit(self, train_loader, validation_loader, description) -> None:
+            trainer_calls.append((train_loader, validation_loader, description))
 
     def extract(config):
         patch_calls.append(config)
@@ -269,11 +274,15 @@ def test_stage_functions_apply_fixed_training_recipe(
         updated_at=now,
         subjects=[],
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
+    preprocessed_manifest = PreprocessedDatasetManifest.read(
+        DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path()
+    )
     SplitManifest(
         status=ManifestStatus.COMPLETE,
         created_at=now,
         updated_at=now,
         dataset_dir=str(dataset_dir.resolve()),
+        preprocessed_manifest_fingerprint=content_fingerprint(preprocessed_manifest),
         seed=None,
         train_size=0.7,
         validation_size=0.1,
@@ -311,6 +320,11 @@ def test_stage_functions_apply_fixed_training_recipe(
     assert patch_calls[4].probability_threshold == config.detector_candidate_threshold
     assert patch_calls[4].detector is patch_calls[5].detector
     assert len(trainer_calls) == 6
+    assert [call[2] for call in trainer_calls[1::2]] == [
+        "Training detector",
+        "Training teacher",
+        "Training student",
+    ]
     assert all(call["num_workers"] == 2 for call in loader_calls)
     assert all(call["pin_memory"] is True for call in loader_calls)
     assert len(initialized) == 1
