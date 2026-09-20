@@ -49,6 +49,8 @@ other cross-file invariants.
 
 * Revisit volume validation in preprocessing and remove any checks that are
   redundant across the input, transform, and output boundaries.
+* Simplify configuration validation checks and remove redundant mode and path
+  validation across related command configs.
 
 ## 6. Consolidate third-party typing boundaries
 

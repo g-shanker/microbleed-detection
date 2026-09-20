@@ -156,6 +156,7 @@ def test_train_manifest_round_trips_split_and_training_settings(
         created_at=now,
         updated_at=now,
         dataset_dir="C:/datasets/preprocessed",
+        split_manifest_fingerprint="split-fingerprint",
         device="cuda:0",
         seed=42,
         detector_candidate_threshold=0.5,

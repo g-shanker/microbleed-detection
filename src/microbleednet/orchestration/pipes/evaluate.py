@@ -1,8 +1,17 @@
 """Evaluate final binary detections on the held-out training split."""
 
+from pathlib import Path
+
 from ...core import io as core_io
 from ...core.common.metrics import aggregate_metrics, score_masks
-from ..configs import EvaluateConfig, InferConfig
+from ..configs import (
+    EvaluateConfig,
+    EvaluateExperimentConfig,
+    EvaluateExplicitConfig,
+    InferConfig,
+    InferExperimentConfig,
+    InferExplicitConfig,
+)
 from ..layouts import DatasetLayout, ExperimentLayout
 from ..manifests import (
     EvaluatedSubject,
@@ -10,6 +19,7 @@ from ..manifests import (
     InferManifest,
     ManifestStatus,
     PreprocessedDatasetManifest,
+    PreprocessedSubject,
     SplitManifest,
 )
 from ..utils import resolve_path_string, resolve_subjects
@@ -18,22 +28,71 @@ from . import infer
 
 def execute(config: EvaluateConfig) -> None:
     """Infer once for held-out subjects, then score masks against references."""
-    experiment_layout = ExperimentLayout(experiment_dir=config.experiment_dir)
-    dataset_layout = DatasetLayout(dataset_dir=config.dataset_dir)
-    split_manifest_path = experiment_layout.split_manifest_path()
-    split_manifest = SplitManifest.read(split_manifest_path)
-    preprocessed_manifest_path = dataset_layout.preprocessed_manifest_path()
-    preprocessed_manifest = PreprocessedDatasetManifest.read(preprocessed_manifest_path)
+    if config.experiment is not None:
+        execute_experiment(config, config.experiment)
+    else:
+        assert config.explicit is not None
+        execute_explicit(config, config.explicit)
+
+
+def execute_experiment(
+    config: EvaluateConfig, mode: EvaluateExperimentConfig
+) -> None:
+    """Evaluate the held-out subjects from an experiment split."""
+    experiment_layout = ExperimentLayout(experiment_dir=mode.experiment_dir)
+    dataset_layout = DatasetLayout(dataset_dir=mode.dataset_dir)
+    preprocessed_manifest = read_preprocessed_manifest(dataset_layout)
+    split_manifest = SplitManifest.read(experiment_layout.split_manifest_path())
     subjects = resolve_subjects(
         preprocessed_manifest.subjects, split_manifest.test_subject_ids
     )
+    infer_config = InferConfig(
+        subjects=subjects,
+        experiment=InferExperimentConfig(experiment_dir=mode.experiment_dir),
+        device=config.device,
+    )
+    evaluate_subjects(
+        config, mode.dataset_dir, experiment_layout, subjects, infer_config
+    )
 
+
+def execute_explicit(
+    config: EvaluateConfig, mode: EvaluateExplicitConfig
+) -> None:
+    """Evaluate every preprocessed subject with explicit checkpoints."""
+    experiment_layout = ExperimentLayout(experiment_dir=mode.output_dir)
+    dataset_layout = DatasetLayout(dataset_dir=mode.dataset_dir)
+    preprocessed_manifest = read_preprocessed_manifest(dataset_layout)
+    subjects = preprocessed_manifest.subjects
+    infer_config = InferConfig(
+        subjects=subjects,
+        explicit=InferExplicitConfig(
+            output_dir=mode.output_dir,
+            detector_checkpoint_path=mode.detector_checkpoint_path,
+            student_checkpoint_path=mode.student_checkpoint_path,
+        ),
+        device=config.device,
+    )
+    evaluate_subjects(
+        config, mode.dataset_dir, experiment_layout, subjects, infer_config
+    )
+
+
+def read_preprocessed_manifest(
+    dataset_layout: DatasetLayout,
+) -> PreprocessedDatasetManifest:
+    return PreprocessedDatasetManifest.read(dataset_layout.preprocessed_manifest_path())
+
+
+def evaluate_subjects(
+    config: EvaluateConfig,
+    dataset_dir: Path,
+    experiment_layout: ExperimentLayout,
+    subjects: list[PreprocessedSubject],
+    infer_config: InferConfig,
+) -> None:
     infer.execute(
-        InferConfig(
-            subjects=subjects,
-            experiment_dir=config.experiment_dir,
-            device=config.device,
-        )
+        infer_config
     )
     inference_manifest_path = experiment_layout.inference_manifest_path()
     inference_manifest = InferManifest.read(inference_manifest_path)
@@ -65,7 +124,7 @@ def execute(config: EvaluateConfig) -> None:
     aggregate = aggregate_metrics(subject.metrics for subject in per_subject)
     EvaluateManifest(
         status=ManifestStatus.COMPLETE,
-        dataset_dir=resolve_path_string(config.dataset_dir),
+        dataset_dir=resolve_path_string(dataset_dir),
         device=config.device,
         inference_manifest_path=resolve_path_string(
             experiment_layout.inference_manifest_path()

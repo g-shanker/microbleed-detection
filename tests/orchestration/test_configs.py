@@ -5,8 +5,12 @@ from pydantic import ValidationError
 
 from microbleednet.core.common.models import CandidateDetector
 from microbleednet.orchestration.configs import (
+    EvaluateConfig,
+    EvaluateExplicitConfig,
     IndexDataConfig,
     InferConfig,
+    InferExperimentConfig,
+    InferExplicitConfig,
     PreprocessConfig,
     SplitConfig,
     TargetCenteredPatchConfig,
@@ -436,7 +440,10 @@ def test_infer_config_accepts_subjects_without_rechecking_variant_paths(
         ],
     )
 
-    config = InferConfig(subjects=[subject], experiment_dir=experiment_dir)
+    config = InferConfig(
+        subjects=[subject],
+        experiment=InferExperimentConfig(experiment_dir=experiment_dir),
+    )
 
     assert config.subjects == [subject]
     assert config.device == "cpu"
@@ -460,7 +467,90 @@ def test_infer_config_rejects_missing_student_checkpoint(tmp_path: Path) -> None
     )
 
     with pytest.raises(ValidationError, match="student checkpoint does not exist"):
-        InferConfig(subjects=[subject], experiment_dir=experiment_dir)
+        InferConfig(
+            subjects=[subject],
+            experiment=InferExperimentConfig(experiment_dir=experiment_dir),
+        )
+
+
+def test_infer_config_accepts_explicit_checkpoints_without_experiment_dir(
+    tmp_path: Path,
+) -> None:
+    detector_checkpoint = tmp_path / "detector.pth"
+    student_checkpoint = tmp_path / "student.pth"
+    detector_checkpoint.touch()
+    student_checkpoint.touch()
+    subject = PreprocessedSubject(
+        subject_id="subject-1",
+        variants=[
+            PreprocessedVariant(
+                volume_path="volume", mask_path="mask", frst_path="frst"
+            )
+        ],
+    )
+
+    config = InferConfig(
+        subjects=[subject],
+        explicit=InferExplicitConfig(
+            output_dir=tmp_path / "inference",
+            detector_checkpoint_path=detector_checkpoint,
+            student_checkpoint_path=student_checkpoint,
+        ),
+    )
+
+    assert config.explicit is not None
+    assert config.explicit.output_dir == tmp_path / "inference"
+
+
+def test_infer_config_requires_experiment_dir_without_explicit_checkpoints(
+    tmp_path: Path,
+) -> None:
+    subject = PreprocessedSubject(
+        subject_id="subject-1",
+        variants=[
+            PreprocessedVariant(
+                volume_path="volume", mask_path="mask", frst_path="frst"
+            )
+        ],
+    )
+
+    with pytest.raises(ValidationError, match="exactly one inference mode"):
+        InferConfig(subjects=[subject])
+
+
+def test_evaluate_config_accepts_explicit_checkpoints(tmp_path: Path) -> None:
+    dataset_dir = _training_dataset(tmp_path)
+    detector_checkpoint = tmp_path / "detector.pth"
+    student_checkpoint = tmp_path / "student.pth"
+    detector_checkpoint.touch()
+    student_checkpoint.touch()
+
+    config = EvaluateConfig(
+        explicit=EvaluateExplicitConfig(
+            dataset_dir=dataset_dir,
+            output_dir=tmp_path / "evaluation",
+            detector_checkpoint_path=detector_checkpoint,
+            student_checkpoint_path=student_checkpoint,
+        ),
+    )
+
+    assert config.explicit is not None
+    assert config.explicit.output_dir == tmp_path / "evaluation"
+
+
+def test_evaluate_config_requires_complete_explicit_mode(tmp_path: Path) -> None:
+    dataset_dir = _training_dataset(tmp_path)
+    detector_checkpoint = tmp_path / "detector.pth"
+    detector_checkpoint.touch()
+
+    with pytest.raises(ValidationError, match="student_checkpoint_path"):
+        EvaluateConfig(
+            explicit=EvaluateExplicitConfig(
+                dataset_dir=dataset_dir,
+                output_dir=tmp_path / "evaluation",
+                detector_checkpoint_path=detector_checkpoint,
+            )
+        )
 
 
 def test_target_centered_config_validates_threshold(tmp_path: Path) -> None:

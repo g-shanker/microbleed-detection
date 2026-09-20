@@ -7,12 +7,8 @@ from ...core.common.models import CandidateDetector, CandidateDiscriminatorStude
 from ...core.datamodels import PatchSizes, VoxelSpacing
 from ...core.engines import inference as core_inference
 from ...core.engines import processor as core_processor
-from ..configs import InferConfig
-from ..layouts import (
-    DETECTOR_STAGE,
-    STUDENT_STAGE,
-    ExperimentLayout,
-)
+from ..configs import InferConfig, InferExperimentConfig, InferExplicitConfig
+from ..layouts import DETECTOR_STAGE, STUDENT_STAGE, ExperimentLayout
 from ..manifests import (
     InferManifest,
     InferredSubject,
@@ -30,15 +26,49 @@ MINIMUM_BRAIN_DISTANCE_MM = 5.0
 
 def execute(config: InferConfig) -> None:
     """Infer final binary detection masks for configured preprocessed subjects."""
-    layout = ExperimentLayout(experiment_dir=config.experiment_dir)
+    if config.experiment is not None:
+        execute_experiment(config, config.experiment)
+    else:
+        assert config.explicit is not None
+        execute_explicit(config, config.explicit)
+
+
+def execute_experiment(
+    config: InferConfig, mode: InferExperimentConfig
+) -> None:
+    """Infer using checkpoints resolved from an experiment directory."""
+    layout = ExperimentLayout(experiment_dir=mode.experiment_dir)
+    execute_inference(
+        config,
+        layout,
+        layout.best_checkpoint_path(DETECTOR_STAGE),
+        layout.best_checkpoint_path(STUDENT_STAGE),
+    )
+
+
+def execute_explicit(config: InferConfig, mode: InferExplicitConfig) -> None:
+    """Infer using explicitly supplied checkpoints and output directory."""
+    layout = ExperimentLayout(experiment_dir=mode.output_dir)
+    execute_inference(
+        config,
+        layout,
+        mode.detector_checkpoint_path,
+        mode.student_checkpoint_path,
+    )
+
+
+def execute_inference(
+    config: InferConfig,
+    output_layout: ExperimentLayout,
+    detector_checkpoint,
+    student_checkpoint,
+) -> None:
     device = torch.device(config.device)
     detector = CandidateDetector().to(device)
     student = CandidateDiscriminatorStudent().to(device)
     try:
-        detector_checkpoint = layout.best_checkpoint_path(DETECTOR_STAGE)
         core_io.load_model_weights(detector, detector_checkpoint)
 
-        student_checkpoint = layout.best_checkpoint_path(STUDENT_STAGE)
         core_io.load_model_weights(student, student_checkpoint)
 
         results: list[InferredSubject] = []
@@ -78,7 +108,7 @@ def execute(config: InferConfig) -> None:
 
             final_mask_image = core_io.numpy_to_nifti(final_mask_array, volume_image)
 
-            output_path = layout.inference_output_path(subject.subject_id)
+            output_path = output_layout.inference_output_path(subject.subject_id)
             core_io.save_volume(final_mask_image, output_path)
 
             results.append(
@@ -100,7 +130,7 @@ def execute(config: InferConfig) -> None:
             maximum_ellipticity=MAXIMUM_ELLIPTICITY,
             minimum_brain_distance_mm=MINIMUM_BRAIN_DISTANCE_MM,
             subjects=results,
-        ).write(layout.inference_manifest_path())
+        ).write(output_layout.inference_manifest_path())
     finally:
         del detector
         del student
