@@ -51,6 +51,7 @@ from ..manifests import (
     PreprocessedSubject,
     SplitManifest,
     TrainManifest,
+    content_fingerprint,
 )
 from . import patch
 
@@ -99,6 +100,7 @@ def execute(config: TrainConfig) -> None:
     write_train_manifest(
         experiment_layout,
         config,
+        content_fingerprint(split_manifest),
         detector_history,
         teacher_history,
         student_history,
@@ -108,6 +110,7 @@ def execute(config: TrainConfig) -> None:
 def write_train_manifest(
     experiment_layout: ExperimentLayout,
     config: TrainConfig,
+    split_manifest_fingerprint: str,
     detector_history: list[EpochLoss],
     teacher_history: list[EpochLoss],
     student_history: list[EpochLoss],
@@ -115,6 +118,7 @@ def write_train_manifest(
     TrainManifest(
         status=ManifestStatus.COMPLETE,
         dataset_dir=utils.resolve_path_string(config.dataset_dir),
+        split_manifest_fingerprint=split_manifest_fingerprint,
         device=config.device,
         seed=config.seed,
         detector_candidate_threshold=config.detector_candidate_threshold,

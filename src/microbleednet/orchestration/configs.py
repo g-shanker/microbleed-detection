@@ -341,62 +341,93 @@ class TrainConfig(FrozenModel):
         return self
 
 
-class InferConfig(FrozenModel):
-    """Configuration for the internal preprocessed-subject inference pipe."""
+class InferExperimentConfig(FrozenModel):
+    """Inference using checkpoints resolved from an experiment directory."""
 
-    subjects: list[PreprocessedSubject] = Field(
-        min_length=1,
-        description="Preprocessed subjects to infer.",
-    )
     experiment_dir: Path = Field(
-        description="Experiment directory containing detector and student checkpoints.",
-    )
-    device: str = Field(
-        default="cpu",
-        description=DEVICE_DESCRIPTION,
+        description=(
+            "Experiment directory containing detector and student checkpoints."
+        ),
     )
 
     @model_validator(mode="after")
-    def validate_device(self) -> "InferConfig":
-        ensure_device_available(self.device)
-        return self
-
-    @model_validator(mode="after")
-    def validate_checkpoints(self) -> "InferConfig":
+    def validate_checkpoints(self) -> "InferExperimentConfig":
         layout = ExperimentLayout(experiment_dir=self.experiment_dir)
-        for stage in (DETECTOR_STAGE, STUDENT_STAGE):
-            checkpoint = layout.best_checkpoint_path(stage)
+        checkpoints = tuple(
+            (stage, layout.best_checkpoint_path(stage))
+            for stage in (DETECTOR_STAGE, STUDENT_STAGE)
+        )
+        for stage, checkpoint in checkpoints:
             if not checkpoint.is_file():
                 raise ValueError(f"{stage} checkpoint does not exist: {checkpoint}")
         return self
 
 
-class EvaluateConfig(FrozenModel):
-    """Configuration for held-out final-pipeline evaluation."""
+class InferExplicitConfig(FrozenModel):
+    """Inference using explicitly supplied checkpoints and output directory."""
 
-    experiment_dir: Path = Field(
-        description="Experiment directory containing train and inference artifacts."
+    output_dir: Path = Field(description="Directory for inference artifacts.")
+    detector_checkpoint_path: Path = Field(
+        description="Explicit detector checkpoint path.",
     )
+    student_checkpoint_path: Path = Field(
+        description="Explicit student checkpoint path.",
+    )
+
+    @model_validator(mode="after")
+    def validate_checkpoints(self) -> "InferExplicitConfig":
+        checkpoints = (
+            (DETECTOR_STAGE, self.detector_checkpoint_path),
+            (STUDENT_STAGE, self.student_checkpoint_path),
+        )
+        for stage, checkpoint in checkpoints:
+            if not checkpoint.is_file():
+                raise ValueError(f"{stage} checkpoint does not exist: {checkpoint}")
+        return self
+
+
+class InferConfig(FrozenModel):
+    subjects: list[PreprocessedSubject] = Field(
+        min_length=1,
+        description="Preprocessed subjects to infer.",
+    )
+    experiment: InferExperimentConfig | None = None
+    explicit: InferExplicitConfig | None = None
+    device: str = Field(default="cpu", description=DEVICE_DESCRIPTION)
+
+    @model_validator(mode="after")
+    def validate(self) -> "InferConfig":
+        ensure_device_available(self.device)
+        if (self.experiment is None) == (self.explicit is None):
+            raise ValueError("exactly one inference mode must be provided")
+        return self
+
+
+class EvaluateExperimentConfig(FrozenModel):
+    """Evaluation of the held-out split using an experiment directory."""
+
     dataset_dir: Path = Field(
         description="Indexed dataset directory containing preprocessed subjects."
     )
-    device: str = Field(
-        default="cpu",
-        description=DEVICE_DESCRIPTION,
+    experiment_dir: Path = Field(
+        description="Existing experiment directory containing the held-out split.",
     )
 
     @model_validator(mode="after")
-    def validate_device(self) -> "EvaluateConfig":
-        ensure_device_available(self.device)
-        return self
-
-    @model_validator(mode="after")
-    def validate_manifests(self) -> "EvaluateConfig":
-        experiment_layout = ExperimentLayout(experiment_dir=self.experiment_dir)
+    def validate_manifests(self) -> "EvaluateExperimentConfig":
         dataset_layout = DatasetLayout(dataset_dir=self.dataset_dir)
+        experiment_layout = ExperimentLayout(experiment_dir=self.experiment_dir)
         manifest_paths = (
-            (experiment_layout.train_manifest_path(), TrainManifest, "train manifest"),
-            (experiment_layout.split_manifest_path(), SplitManifest, "split manifest"),
+            (
+                experiment_layout.train_manifest_path(),
+                TrainManifest,
+                "train manifest",
+            ),
+            (
+                experiment_layout.split_manifest_path(),
+                SplitManifest,
+                "split manifest",
+            ),
             (
                 dataset_layout.preprocessed_manifest_path(),
                 PreprocessedDatasetManifest,
@@ -412,6 +443,82 @@ class EvaluateConfig(FrozenModel):
                     f"{manifest.status.value!r}; a consumer may only read a "
                     "complete manifest."
                 )
+        split_manifest = SplitManifest.read(experiment_layout.split_manifest_path())
+        preprocessed_manifest = PreprocessedDatasetManifest.read(
+            dataset_layout.preprocessed_manifest_path()
+        )
+        if split_manifest.preprocessed_manifest_fingerprint != content_fingerprint(
+            preprocessed_manifest
+        ):
+            raise ValueError(
+                "split manifest was created from a different preprocessed manifest"
+            )
+        train_manifest = TrainManifest.read(experiment_layout.train_manifest_path())
+        if train_manifest.split_manifest_fingerprint != content_fingerprint(
+            split_manifest
+        ):
+            raise ValueError(
+                "train manifest was created from a different split manifest"
+            )
+        return self
+
+
+class EvaluateExplicitConfig(FrozenModel):
+    """Evaluation of every preprocessed subject with explicit checkpoints."""
+
+    dataset_dir: Path = Field(
+        description="Indexed dataset directory containing preprocessed subjects."
+    )
+    output_dir: Path = Field(description="Output directory for evaluation artifacts.")
+    detector_checkpoint_path: Path = Field(
+        description="Explicit detector checkpoint for full-dataset evaluation.",
+    )
+    student_checkpoint_path: Path = Field(
+        description="Explicit student checkpoint for full-dataset evaluation.",
+    )
+
+    @model_validator(mode="after")
+    def validate_checkpoints_and_manifests(self) -> "EvaluateExplicitConfig":
+        for stage, checkpoint in (
+            (DETECTOR_STAGE, self.detector_checkpoint_path),
+            (STUDENT_STAGE, self.student_checkpoint_path),
+        ):
+            if not checkpoint.is_file():
+                raise ValueError(f"{stage} checkpoint does not exist: {checkpoint}")
+        manifest_path = DatasetLayout(
+            dataset_dir=self.dataset_dir
+        ).preprocessed_manifest_path()
+        require_dataset_dir(self.dataset_dir, manifest_path, "preprocessed manifest")
+        manifest = PreprocessedDatasetManifest.read(manifest_path)
+        if manifest.status is not ManifestStatus.COMPLETE:
+            raise ValueError(
+                f"manifest at {manifest_path} has status "
+                f"{manifest.status.value!r}; a consumer may only read a "
+                "complete manifest."
+            )
+        maskless_subjects = [
+            subject.subject_id
+            for subject in manifest.subjects
+            if not subject.variants or not subject.variants[0].mask_path
+        ]
+        if maskless_subjects:
+            raise ValueError(
+                "cannot evaluate subjects without masks: "
+                + ", ".join(maskless_subjects)
+            )
+        return self
+
+
+class EvaluateConfig(FrozenModel):
+    experiment: EvaluateExperimentConfig | None = None
+    explicit: EvaluateExplicitConfig | None = None
+    device: str = Field(default="cpu", description=DEVICE_DESCRIPTION)
+
+    @model_validator(mode="after")
+    def validate(self) -> "EvaluateConfig":
+        ensure_device_available(self.device)
+        if (self.experiment is None) == (self.explicit is None):
+            raise ValueError("exactly one evaluation mode must be provided")
         return self
 
 

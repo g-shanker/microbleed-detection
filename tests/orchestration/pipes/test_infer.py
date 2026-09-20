@@ -5,7 +5,7 @@ import numpy as np
 import torch.nn as nn
 
 from microbleednet.core.engines import processor
-from microbleednet.orchestration.configs import InferConfig
+from microbleednet.orchestration.configs import InferConfig, InferExperimentConfig
 from microbleednet.orchestration.layouts import (
     DETECTOR_STAGE,
     STUDENT_STAGE,
@@ -166,7 +166,9 @@ def test_execute_writes_inference_manifest(tmp_path: Path, monkeypatch) -> None:
 
     infer.execute(
         InferConfig(
-            subjects=[subject], experiment_dir=experiment_dir, device="cpu"
+            subjects=[subject],
+            experiment=InferExperimentConfig(experiment_dir=experiment_dir),
+            device="cpu",
         )
     )
 
