@@ -272,6 +272,9 @@ class TrainManifest(Manifest):
     dataset_dir: str = Field(
         description="Absolute path to the preprocessed dataset used for training."
     )
+    split_manifest_fingerprint: str = Field(
+        description="Fingerprint of the split manifest used for training."
+    )
     device: str = Field(description="Torch device requested for the training run.")
     seed: int | None = Field(
         default=None, ge=0, description="Random seed used for the training run."

@@ -104,9 +104,14 @@ SPECS: list[CommandSpec] = [
         config=EvaluateConfig,
         pipe="evaluate",
         dry_run_message=lambda s: (
-            f"Evaluation configuration valid for {s.experiment_dir} (dry run)"
+            f"Evaluation configuration valid for "
+            f"{s.explicit.output_dir if s.explicit else s.experiment.experiment_dir} "
+            "(dry run)"
         ),
-        success_message=lambda s: f"Evaluation written under {s.experiment_dir}",
+        success_message=lambda s: (
+            f"Evaluation written under "
+            f"{s.explicit.output_dir if s.explicit else s.experiment.experiment_dir}"
+        ),
     ),
 ]
 

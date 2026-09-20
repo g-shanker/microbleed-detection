@@ -1,12 +1,17 @@
 """Tests for held-out component scoring."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 
 from microbleednet.core.common.metrics import aggregate_metrics, score_masks
 from microbleednet.orchestration import configs
-from microbleednet.orchestration.configs import EvaluateConfig
+from microbleednet.orchestration.configs import (
+    EvaluateConfig,
+    EvaluateExperimentConfig,
+    EvaluateExplicitConfig,
+)
 from microbleednet.orchestration.layouts import (
     DETECTOR_STAGE,
     STUDENT_STAGE,
@@ -16,8 +21,10 @@ from microbleednet.orchestration.layouts import (
 from microbleednet.orchestration.manifests import (
     EvaluateManifest,
     ManifestStatus,
+    PreprocessedDatasetManifest,
     PreprocessedSubject,
     PreprocessedVariant,
+    timestamp,
 )
 from microbleednet.orchestration.pipes import evaluate
 
@@ -107,16 +114,21 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
     monkeypatch.setattr(
         configs.TrainManifest,
         "read",
-        lambda _: SimpleNamespace(status=ManifestStatus.COMPLETE),
+        lambda _: SimpleNamespace(
+            status=ManifestStatus.COMPLETE,
+            split_manifest_fingerprint="fingerprint",
+        ),
     )
     monkeypatch.setattr(
         evaluate.SplitManifest,
         "read",
         lambda _: SimpleNamespace(
             status=ManifestStatus.COMPLETE,
+            preprocessed_manifest_fingerprint="fingerprint",
             test_subject_ids=["subject-1"],
         ),
     )
+    monkeypatch.setattr(configs, "content_fingerprint", lambda _: "fingerprint")
     monkeypatch.setattr(
         evaluate.PreprocessedDatasetManifest,
         "read",
@@ -146,7 +158,11 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
     )
 
     evaluate.execute(
-        EvaluateConfig(experiment_dir=experiment_dir, dataset_dir=dataset_dir)
+        EvaluateConfig(
+            experiment=EvaluateExperimentConfig(
+                experiment_dir=experiment_dir, dataset_dir=dataset_dir
+            )
+        )
     )
 
     manifest = EvaluateManifest.read(
@@ -155,3 +171,99 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
     assert [item.subject_id for item in manifest.subjects] == ["subject-1"]
     assert manifest.subjects[0].metrics.true_positive == 1
     assert manifest.aggregate.true_positive == 1
+
+
+def test_execute_explicit_checkpoints_evaluates_all_subjects(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dataset_dir = tmp_path / "dataset"
+    subjects = [
+        PreprocessedSubject(
+            subject_id=f"subject-{index}",
+            variants=[
+                PreprocessedVariant(
+                    volume_path=f"volume-{index}",
+                    mask_path=f"reference-{index}",
+                    frst_path=f"frst-{index}",
+                )
+            ],
+        )
+        for index in range(2)
+    ]
+    now = timestamp()
+    PreprocessedDatasetManifest(
+        status=ManifestStatus.COMPLETE,
+        created_at=now,
+        updated_at=now,
+        subjects=subjects,
+    ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
+
+    detector_checkpoint = tmp_path / "detector.pth"
+    student_checkpoint = tmp_path / "student.pth"
+    detector_checkpoint.touch()
+    student_checkpoint.touch()
+    output_dir = tmp_path / "evaluation"
+    captured = {}
+
+    def fake_infer(config):
+        captured["config"] = config
+
+    monkeypatch.setattr(evaluate.infer, "execute", fake_infer)
+    monkeypatch.setattr(
+        evaluate.InferManifest,
+        "read",
+        lambda _: SimpleNamespace(
+            status=ManifestStatus.COMPLETE,
+            subjects=[
+                SimpleNamespace(
+                    subject_id=subject.subject_id,
+                    output_path=f"prediction-{subject.subject_id}",
+                )
+                for subject in subjects
+            ],
+        ),
+    )
+    prediction = np.zeros((3, 3, 3), dtype=np.uint8)
+    reference = np.zeros_like(prediction)
+    prediction[1, 1, 1] = 1
+    reference[1, 1, 1] = 1
+    monkeypatch.setattr(
+        evaluate.core_io,
+        "load_volume",
+        lambda path: path,
+    )
+    monkeypatch.setattr(
+        evaluate.core_io,
+        "nifti_to_numpy",
+        lambda volume: (
+            prediction if str(volume).startswith("prediction") else reference
+        ),
+    )
+
+    evaluate.execute(
+        EvaluateConfig(
+            explicit=EvaluateExplicitConfig(
+                dataset_dir=dataset_dir,
+                output_dir=output_dir,
+                detector_checkpoint_path=detector_checkpoint,
+                student_checkpoint_path=student_checkpoint,
+            )
+        )
+    )
+
+    infer_config = captured["config"]
+    assert [subject.subject_id for subject in infer_config.subjects] == [
+        "subject-0",
+        "subject-1",
+    ]
+    assert infer_config.explicit is not None
+    assert infer_config.explicit.output_dir == output_dir
+    assert infer_config.explicit.detector_checkpoint_path == detector_checkpoint
+    assert infer_config.explicit.student_checkpoint_path == student_checkpoint
+    manifest = EvaluateManifest.read(
+        ExperimentLayout(experiment_dir=output_dir).evaluation_manifest_path()
+    )
+    assert [item.subject_id for item in manifest.subjects] == [
+        "subject-0",
+        "subject-1",
+    ]
