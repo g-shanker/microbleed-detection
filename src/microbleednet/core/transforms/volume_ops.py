@@ -88,6 +88,30 @@ def adjust_affine_for_crop(
     return affine @ translation
 
 
+def restore_cropped_volume(
+    cropped_volume: np.ndarray,
+    bounding_box: BoundingBox,
+    original_volume: nib.Nifti1Image,
+) -> nib.Nifti1Image:
+    """Restore a canonical cropped array to the original image orientation."""
+    canonical_volume = nib.as_closest_canonical(original_volume)
+    restored_canonical = np.zeros(canonical_volume.shape, dtype=cropped_volume.dtype)
+    (d0_start, d0_end), (d1_start, d1_end), (d2_start, d2_end) = bounding_box
+    restored_canonical[d0_start:d0_end, d1_start:d1_end, d2_start:d2_end] = (
+        cropped_volume
+    )
+    transform = nib.orientations.ornt_transform(
+        nib.orientations.io_orientation(canonical_volume.affine),
+        nib.orientations.io_orientation(original_volume.affine),
+    )
+    restored = nib.orientations.apply_orientation(restored_canonical, transform)
+    return nib.Nifti1Image(
+        restored.astype(np.uint8),
+        original_volume.affine,
+        original_volume.header,
+    )
+
+
 def extract_brain(volume: nib.Nifti1Image) -> nib.Nifti1Image:
     fsldir = Path(os.getenv("FSLDIR", ""))
     if not fsldir.is_dir():

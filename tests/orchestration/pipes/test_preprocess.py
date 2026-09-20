@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import nibabel as nib
 import numpy as np
@@ -80,11 +81,13 @@ def test_execute_writes_volumes_masks_and_complete_manifest(
     dataset_dir = tmp_path / "dataset"
     _write_raw_dataset(dataset_dir)
 
-    def fake_preprocess(preprocess_input) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def fake_preprocess(preprocess_input):
         assert preprocess_input.modality == "QSM"
         fixture_shape = (32, 32, 32)
         output_mask = np.ones(fixture_shape, dtype=np.uint8)
-        return np.ones(fixture_shape), output_mask, np.eye(4)
+        return SimpleNamespace(
+            volume=np.ones(fixture_shape), mask=output_mask, affine=np.eye(4)
+        )
 
     monkeypatch.setattr(preprocess.processor, "preprocess", fake_preprocess)
 
@@ -120,7 +123,9 @@ def test_execute_tracks_subject_progress(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         preprocess.processor,
         "preprocess",
-        lambda preprocess_input: (np.ones((32, 32, 32)), None, np.eye(4)),
+        lambda preprocess_input: SimpleNamespace(
+            volume=np.ones((32, 32, 32)), mask=None, affine=np.eye(4)
+        ),
     )
 
     preprocess.execute(
@@ -137,11 +142,13 @@ def test_execute_writes_maskless_subject_without_mask_output(
     dataset_dir = tmp_path / "dataset"
     _write_raw_dataset(dataset_dir, with_mask=False)
 
-    def fake_preprocess(preprocess_input) -> tuple[np.ndarray, None, np.ndarray]:
+    def fake_preprocess(preprocess_input):
         assert preprocess_input.mask is None
         assert preprocess_input.modality == "QSM"
         fixture_shape = (32, 32, 32)
-        return np.ones(fixture_shape), None, np.eye(4)
+        return SimpleNamespace(
+            volume=np.ones(fixture_shape), mask=None, affine=np.eye(4)
+        )
 
     monkeypatch.setattr(preprocess.processor, "preprocess", fake_preprocess)
 
@@ -172,7 +179,11 @@ def test_execute_resume_skips_completed_subjects_after_failure(
         calls += 1
         if calls == 2:
             raise RuntimeError("interrupted")
-        return np.ones((32, 32, 32)), np.ones((32, 32, 32), dtype=np.uint8), np.eye(4)
+        return SimpleNamespace(
+            volume=np.ones((32, 32, 32)),
+            mask=np.ones((32, 32, 32), dtype=np.uint8),
+            affine=np.eye(4),
+        )
 
     monkeypatch.setattr(
         preprocess.processor, "preprocess", fail_on_second_subject
@@ -213,10 +224,10 @@ def test_execute_resume_rejects_changed_augmentation_factor(
     monkeypatch.setattr(
         preprocess.processor,
         "preprocess",
-        lambda preprocess_input: (
-            np.ones((32, 32, 32)),
-            np.ones((32, 32, 32), dtype=np.uint8),
-            np.eye(4),
+        lambda preprocess_input: SimpleNamespace(
+            volume=np.ones((32, 32, 32)),
+            mask=np.ones((32, 32, 32), dtype=np.uint8),
+            affine=np.eye(4),
         ),
     )
     preprocess.execute(config)
@@ -236,10 +247,10 @@ def test_execute_resume_rejects_changed_raw_manifest(
     monkeypatch.setattr(
         preprocess.processor,
         "preprocess",
-        lambda preprocess_input: (
-            np.ones((32, 32, 32)),
-            np.ones((32, 32, 32), dtype=np.uint8),
-            np.eye(4),
+        lambda preprocess_input: SimpleNamespace(
+            volume=np.ones((32, 32, 32)),
+            mask=np.ones((32, 32, 32), dtype=np.uint8),
+            affine=np.eye(4),
         ),
     )
     preprocess.execute(config)

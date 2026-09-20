@@ -9,6 +9,7 @@ from ..datamodels import (
     FloatArray,
     IntArray,
     PreprocessInput,
+    PreprocessOutput,
     Shape3D,
     VoxelSpacing,
 )
@@ -17,7 +18,7 @@ from ..transforms import inpaint_vessels, volume_ops
 
 def preprocess(
     preprocess_input: PreprocessInput,
-) -> tuple[FloatArray, IntArray | None, FloatArray]:
+) -> PreprocessOutput:
     volume = preprocess_input.volume
     mask = preprocess_input.mask
     modality = preprocess_input.modality
@@ -54,7 +55,13 @@ def preprocess(
     canonical_affine: FloatArray = np.asarray(canonical_volume.affine, dtype=float)
     cropped_affine = volume_ops.adjust_affine_for_crop(canonical_affine, crop_start)
 
-    return volume_array, mask_array, cropped_affine
+    return PreprocessOutput(
+        volume=volume_array,
+        mask=mask_array,
+        affine=cropped_affine,
+        bounding_box=bounding_box,
+        original_volume=volume,
+    )
 
 
 def postprocess(
