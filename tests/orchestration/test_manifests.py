@@ -114,7 +114,7 @@ def test_read_manifest_rejects_unversioned_payload(tmp_path: Path) -> None:
         RawDatasetManifest.read(path)
 
 
-def test_read_manifest_rejects_incomplete_status(tmp_path: Path) -> None:
+def test_read_manifest_returns_incomplete_status(tmp_path: Path) -> None:
     path = tmp_path / "raw.json"
     core_io.write_json(
         path,
@@ -125,8 +125,16 @@ def test_read_manifest_rejects_incomplete_status(tmp_path: Path) -> None:
             subjects=[],
         ),
     )
+    manifest = RawDatasetManifest.read(path)
+
+    assert manifest.status is ManifestStatus.RUNNING
     with pytest.raises(ValueError, match="a consumer may only read a complete"):
-        RawDatasetManifest.read(path)
+        manifest = RawDatasetManifest.read(path)
+        if manifest.status is not ManifestStatus.COMPLETE:
+            raise ValueError(
+                f"manifest at {path} has status {manifest.status.value!r}; "
+                "a consumer may only read a complete manifest."
+            )
 
 
 def test_read_manifest_rejects_payload_that_fails_schema_validation(

@@ -21,9 +21,13 @@ from .layouts import (
     ExperimentLayout,
 )
 from .manifests import (
+    ManifestStatus,
+    PreprocessedDatasetManifest,
     PreprocessedSubject,
     RawDatasetManifest,
     SplitManifest,
+    TrainManifest,
+    content_fingerprint,
 )
 
 # Token a volume/mask filename pattern must contain at least once; the text it
@@ -50,7 +54,7 @@ def ensure_device_available(device_name: str) -> None:
         raise ValueError("CUDA device is not available")
 
 
-def require_manifest(
+def require_dataset_dir(
     dataset_dir: Path, manifest_path: Path, manifest_name: str
 ) -> None:
     if not dataset_dir.is_dir():
@@ -141,12 +145,34 @@ class PreprocessConfig(FrozenModel):
             "Total persisted variants per subject, including the original."
         ),
     )
+    resume: bool = Field(
+        default=False,
+        description="Resume from the last per-subject preprocessing checkpoint.",
+    )
 
     @model_validator(mode="after")
     def validate_dataset_dir(self) -> "PreprocessConfig":
-        manifest_path = DatasetLayout(dataset_dir=self.dataset_dir).raw_manifest_path()
-        require_manifest(self.dataset_dir, manifest_path, "raw manifest")
-        RawDatasetManifest.read(manifest_path)
+        layout = DatasetLayout(dataset_dir=self.dataset_dir)
+        manifest_path = layout.raw_manifest_path()
+        require_dataset_dir(self.dataset_dir, manifest_path, "raw manifest")
+        manifest = RawDatasetManifest.read(manifest_path)
+        preprocessed_manifest_path = layout.preprocessed_manifest_path()
+        if not preprocessed_manifest_path.exists():
+            return self
+
+        if not self.resume:
+            return self
+
+        existing_manifest = PreprocessedDatasetManifest.read(preprocessed_manifest_path)
+        if existing_manifest.status is ManifestStatus.RUNNING:
+            raise ValueError(
+                "a running preprocessing checkpoint exists; use resume=true "
+                "to continue it"
+            )
+        if existing_manifest.raw_manifest_fingerprint != content_fingerprint(manifest):
+            raise ValueError("cannot resume: the raw dataset manifest has changed")
+        if existing_manifest.augmentation_factor != self.augmentation_factor:
+            raise ValueError("cannot resume: the augmentation factor has changed")
         return self
 
 
@@ -195,7 +221,23 @@ class SplitConfig(FrozenModel):
         manifest_path = DatasetLayout(
             dataset_dir=self.dataset_dir
         ).preprocessed_manifest_path()
-        require_manifest(self.dataset_dir, manifest_path, "preprocessed manifest")
+        require_dataset_dir(self.dataset_dir, manifest_path, "preprocessed manifest")
+        manifest = PreprocessedDatasetManifest.read(manifest_path)
+        if manifest.status is not ManifestStatus.COMPLETE:
+            raise ValueError(
+                f"manifest at {manifest_path} has status {manifest.status.value!r}; "
+                "a consumer may only read a complete manifest."
+            )
+        maskless_subjects = [
+            subject.subject_id
+            for subject in manifest.subjects
+            if any(variant.mask_path is None for variant in subject.variants)
+        ]
+        if maskless_subjects:
+            raise ValueError(
+                "cannot split a preprocessed dataset with subjects missing masks: "
+                + ", ".join(maskless_subjects)
+            )
         return self
 
 
@@ -273,7 +315,13 @@ class TrainConfig(FrozenModel):
         manifest_path = DatasetLayout(
             dataset_dir=self.dataset_dir
         ).preprocessed_manifest_path()
-        require_manifest(self.dataset_dir, manifest_path, "preprocessed manifest")
+        require_dataset_dir(self.dataset_dir, manifest_path, "preprocessed manifest")
+        manifest = PreprocessedDatasetManifest.read(manifest_path)
+        if manifest.status is not ManifestStatus.COMPLETE:
+            raise ValueError(
+                f"manifest at {manifest_path} has status {manifest.status.value!r}; "
+                "a consumer may only read a complete manifest."
+            )
         return self
 
     @model_validator(mode="after")
@@ -281,12 +329,13 @@ class TrainConfig(FrozenModel):
         split_manifest_path = ExperimentLayout(
             experiment_dir=self.experiment_dir
         ).split_manifest_path()
-        if split_manifest_path.is_file():
-            split_manifest = SplitManifest.read(split_manifest_path)
-            if split_manifest.dataset_dir != str(self.dataset_dir.resolve()):
-                raise ValueError(
-                    "split manifest dataset_dir does not match the training dataset"
-                )
+        if not split_manifest_path.is_file():
+            raise ValueError(f"split manifest does not exist: {split_manifest_path}")
+        split_manifest = SplitManifest.read(split_manifest_path)
+        if split_manifest.dataset_dir != str(self.dataset_dir.resolve()):
+            raise ValueError(
+                "split manifest dataset_dir does not match the training dataset"
+            )
         return self
 
 
@@ -337,6 +386,30 @@ class EvaluateConfig(FrozenModel):
     @model_validator(mode="after")
     def validate_device(self) -> "EvaluateConfig":
         ensure_device_available(self.device)
+        return self
+
+    @model_validator(mode="after")
+    def validate_manifests(self) -> "EvaluateConfig":
+        experiment_layout = ExperimentLayout(experiment_dir=self.experiment_dir)
+        dataset_layout = DatasetLayout(dataset_dir=self.dataset_dir)
+        manifest_paths = (
+            (experiment_layout.train_manifest_path(), TrainManifest, "train manifest"),
+            (experiment_layout.split_manifest_path(), SplitManifest, "split manifest"),
+            (
+                dataset_layout.preprocessed_manifest_path(),
+                PreprocessedDatasetManifest,
+                "preprocessed manifest",
+            ),
+        )
+        for manifest_path, manifest_type, manifest_name in manifest_paths:
+            require_dataset_dir(self.dataset_dir, manifest_path, manifest_name)
+            manifest = manifest_type.read(manifest_path)
+            if manifest.status is not ManifestStatus.COMPLETE:
+                raise ValueError(
+                    f"manifest at {manifest_path} has status "
+                    f"{manifest.status.value!r}; a consumer may only read a "
+                    "complete manifest."
+                )
         return self
 
 

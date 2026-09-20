@@ -172,6 +172,23 @@ def _training_dataset(tmp_path: Path) -> Path:
     return dataset_dir
 
 
+def _complete_split(tmp_path: Path, subject_ids: list[str]) -> None:
+    SplitManifest(
+        status=ManifestStatus.COMPLETE,
+        created_at=timestamp(),
+        updated_at=timestamp(),
+        dataset_dir=str((tmp_path / "dataset").resolve()),
+        train_size=0.7,
+        validation_size=0.1,
+        test_size=0.2,
+        train_subject_ids=subject_ids,
+        validation_subject_ids=[],
+        test_subject_ids=[],
+    ).write(
+        ExperimentLayout(experiment_dir=tmp_path / "experiment").split_manifest_path()
+    )
+
+
 def test_train_config_rejects_invalid_and_unavailable_devices(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -205,9 +222,10 @@ def test_split_config_defaults_preserve_split_recipe(tmp_path: Path) -> None:
 
 
 def test_train_config_defaults_preserve_training_recipe(tmp_path: Path) -> None:
+    dataset_dir = _training_dataset(tmp_path)
+    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
     config = TrainConfig(
-        dataset_dir=_training_dataset(tmp_path),
-        experiment_dir=tmp_path / "experiment",
+        dataset_dir=dataset_dir, experiment_dir=tmp_path / "experiment"
     )
 
     assert config.detector_candidate_threshold == 0.5
@@ -248,9 +266,11 @@ def test_split_config_rejects_invalid_split_values(
 def test_train_config_accepts_stage_training_settings_and_pin_memory(
     tmp_path: Path,
 ) -> None:
+    dataset_dir = _training_dataset(tmp_path)
+    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
     config = TrainConfig.model_validate(
         {
-            "dataset_dir": _training_dataset(tmp_path),
+            "dataset_dir": dataset_dir,
             "experiment_dir": tmp_path / "experiment",
             "pin_memory": True,
             "detector_hyperparameters": {"batch_size": 4, "max_epochs": 12},
@@ -359,6 +379,7 @@ def test_train_config_accepts_complete_manifest_without_training_policy(
         updated_at=now,
         subjects=[],
     ).write(manifest_path)
+    _complete_split(tmp_path, [])
     TrainConfig(dataset_dir=dataset_dir, experiment_dir=tmp_path / "experiment")
 
     missing_subjects = [

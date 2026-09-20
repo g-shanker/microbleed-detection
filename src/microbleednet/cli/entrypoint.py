@@ -3,6 +3,7 @@ from collections.abc import Iterable
 from typing import Annotated
 
 import typer
+from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import (
     BarColumn,
@@ -18,6 +19,8 @@ from rich.progress import Progress as RichProgress
 from ..progress import ProgressItem, progress, silent_track
 from .commands import register_commands
 
+console = Console()
+
 
 def rich_track(
     items: Iterable[ProgressItem],
@@ -31,6 +34,7 @@ def rich_track(
         TimeElapsedColumn(),
         TimeRemainingColumn(),
         TransferSpeedColumn(),
+        console=console,
     ) as rich_progress:
         yield from rich_progress.track(items, description=description)
 
@@ -54,6 +58,7 @@ def configure_logging(
         raise typer.BadParameter("--verbose and --quiet are mutually exclusive")
 
     progress.configure(silent_track if quiet else rich_track)
+
     if verbose:
         level = logging.DEBUG
     elif quiet:
@@ -65,7 +70,13 @@ def configure_logging(
         level=level,
         format="%(message)s",
         datefmt="[%X]",
-        handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
+        handlers=[
+            RichHandler(
+                console=console,
+                rich_tracebacks=True,
+                show_path=False,
+            )
+        ],
         force=True,
     )
 

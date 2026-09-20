@@ -2,6 +2,7 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
 
 from microbleednet.orchestration.configs import PreprocessConfig
 from microbleednet.orchestration.layouts import DatasetLayout
@@ -29,23 +30,28 @@ def test_layout_uses_frst_suffix_for_frst_variants(tmp_path: Path) -> None:
     assert layout.variant_frst_path("subject", 0).name == "subject_variant_0.frst"
 
 
-def _write_raw_dataset(dataset_dir: Path, with_mask: bool = True) -> None:
+def _write_raw_dataset(
+    dataset_dir: Path, with_mask: bool = True, count: int = 1
+) -> None:
     raw_dir = dataset_dir / "raw"
     raw_dir.mkdir(parents=True)
-    volume_path = raw_dir / "masked_volume.nii.gz"
-    mask_path = raw_dir / "masked_mask.nii.gz"
     fixture_shape = (32, 32, 32)
-    nib.save(nib.Nifti1Image(np.ones(fixture_shape), np.eye(4)), volume_path)
-    if with_mask:
-        nib.save(nib.Nifti1Image(np.ones(fixture_shape), np.eye(4)), mask_path)
-    subjects = [
-        RawSubject(
-            subject_id="source_masked",
-            source_id="source",
-            volume_path=str(volume_path),
-            mask_path=str(mask_path) if with_mask else None,
+    subjects = []
+    for index in range(count):
+        subject_id = "source_masked" if count == 1 else f"source_masked_{index}"
+        volume_path = raw_dir / f"{subject_id}_volume.nii.gz"
+        mask_path = raw_dir / f"{subject_id}_mask.nii.gz"
+        nib.save(nib.Nifti1Image(np.ones(fixture_shape), np.eye(4)), volume_path)
+        if with_mask:
+            nib.save(nib.Nifti1Image(np.ones(fixture_shape), np.eye(4)), mask_path)
+        subjects.append(
+            RawSubject(
+                subject_id=subject_id,
+                source_id="source",
+                volume_path=str(volume_path),
+                mask_path=str(mask_path) if with_mask else None,
+            )
         )
-    ]
     now = timestamp()
     manifest = RawDatasetManifest(
         status=ManifestStatus.COMPLETE,
@@ -151,3 +157,106 @@ def test_execute_writes_maskless_subject_without_mask_output(
     assert variant.frst_path is not None
     assert Path(variant.frst_path).is_file()
     assert not layout.variant_mask_path("source_masked", 0).exists()
+
+
+def test_execute_resume_skips_completed_subjects_after_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dataset_dir = tmp_path / "dataset"
+    _write_raw_dataset(dataset_dir, count=2)
+    config = PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1)
+    calls = 0
+
+    def fail_on_second_subject(preprocess_input):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("interrupted")
+        return np.ones((32, 32, 32)), np.ones((32, 32, 32), dtype=np.uint8), np.eye(4)
+
+    monkeypatch.setattr(
+        preprocess.processor, "preprocess", fail_on_second_subject
+    )
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        preprocess.execute(config)
+
+    layout = DatasetLayout(dataset_dir=dataset_dir)
+    checkpoint = PreprocessedDatasetManifest.read(
+        layout.preprocessed_manifest_path()
+    )
+    assert checkpoint.status is ManifestStatus.RUNNING
+    assert [subject.subject_id for subject in checkpoint.subjects] == [
+        "source_masked_0"
+    ]
+
+    calls = 0
+    preprocess.execute(config.model_copy(update={"resume": True}))
+
+    completed = PreprocessedDatasetManifest.read(
+        layout.preprocessed_manifest_path()
+    )
+    assert [subject.subject_id for subject in completed.subjects] == [
+        "source_masked_0",
+        "source_masked_1",
+    ]
+    assert calls == 1
+
+
+def test_execute_resume_rejects_changed_augmentation_factor(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dataset_dir = tmp_path / "dataset"
+    _write_raw_dataset(dataset_dir)
+    config = PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1)
+
+    monkeypatch.setattr(
+        preprocess.processor,
+        "preprocess",
+        lambda preprocess_input: (
+            np.ones((32, 32, 32)),
+            np.ones((32, 32, 32), dtype=np.uint8),
+            np.eye(4),
+        ),
+    )
+    preprocess.execute(config)
+
+    with pytest.raises(ValueError, match="augmentation factor has changed"):
+        PreprocessConfig(
+            dataset_dir=dataset_dir, augmentation_factor=2, resume=True
+        )
+
+
+def test_execute_resume_rejects_changed_raw_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dataset_dir = tmp_path / "dataset"
+    _write_raw_dataset(dataset_dir)
+    config = PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1)
+    monkeypatch.setattr(
+        preprocess.processor,
+        "preprocess",
+        lambda preprocess_input: (
+            np.ones((32, 32, 32)),
+            np.ones((32, 32, 32), dtype=np.uint8),
+            np.eye(4),
+        ),
+    )
+    preprocess.execute(config)
+
+    raw_manifest_path = DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path()
+    raw_manifest = RawDatasetManifest.read(raw_manifest_path)
+    raw_manifest = raw_manifest.model_copy(
+        update={
+            "subjects": [
+                *raw_manifest.subjects,
+                raw_manifest.subjects[0].model_copy(
+                    update={"subject_id": "source_masked_new"}
+                ),
+            ]
+        }
+    )
+    raw_manifest.write(raw_manifest_path)
+
+    with pytest.raises(ValueError, match="raw dataset manifest has changed"):
+        PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1, resume=True)

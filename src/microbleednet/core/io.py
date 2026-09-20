@@ -17,7 +17,7 @@ from .datamodels import CheckpointState
 
 
 @contextmanager
-def atomic_path(path: Path, suffix: str = "") -> Generator[Path, None, None]:
+def atomic_path(path: Path, suffix: str) -> Generator[Path, None, None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
     try:
@@ -34,7 +34,7 @@ def atomic_path(path: Path, suffix: str = "") -> Generator[Path, None, None]:
 
 def write_json(path: Path, data: dict[str, Any] | list[Any]) -> None:
     """Serialize ``data`` to ``path`` as JSON, replacing it atomically."""
-    with atomic_path(path) as temporary_path:
+    with atomic_path(path, suffix="") as temporary_path:
         with temporary_path.open("w", encoding="utf-8") as temporary_file:
             json.dump(data, temporary_file, indent=2, sort_keys=True)
             temporary_file.write("\n")
