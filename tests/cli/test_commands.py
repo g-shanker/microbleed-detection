@@ -59,7 +59,6 @@ def test_describe_renders_a_section_header_for_nested_config() -> None:
         config=_FakeConfig,
         pipe="unused",
         dry_run_message=lambda s: "",
-        success_message=lambda s: "",
     )
     build_describe_command(scratch_app, [spec])
 
@@ -88,7 +87,6 @@ def test_build_command_runs_without_progress_reporter(
         config=_FakeConfig,
         pipe="unused",
         dry_run_message=lambda s: "",
-        success_message=lambda s: "",
     )
     build_command(scratch_app, spec)
     config_path = tmp_path / "config.toml"

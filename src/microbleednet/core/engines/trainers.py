@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import torch
@@ -16,6 +17,8 @@ from ..datamodels import (
     Hyperparameters,
 )
 from .evaluators import Evaluator
+
+logger = logging.getLogger(__name__)
 
 
 class Trainer:
@@ -103,7 +106,24 @@ class Trainer:
             self.save_checkpoint(epoch, self.latest_checkpoint)
             if is_best:
                 self.save_checkpoint(epoch, self.best_checkpoint)
+            logger.debug(
+                "Epoch %d: train_loss=%.6f, validation_loss=%.6f, "
+                "best=%s, learning_rate=%.6g, patience=%d/%d.",
+                epoch + 1,
+                training_loss,
+                val_loss,
+                is_best,
+                self.optimizer.param_groups[0]["lr"],
+                self.epochs_without_improvement,
+                self.hyperparameters.patience,
+            )
             if self.epochs_without_improvement >= self.hyperparameters.patience:
+                logger.info(
+                    "Early stopping after epoch %d; validation loss did not "
+                    "improve for %d epochs.",
+                    epoch + 1,
+                    self.hyperparameters.patience,
+                )
                 break
         return self.history
 
@@ -123,6 +143,12 @@ class Trainer:
         self.epochs_without_improvement = checkpoint["epochs_without_improvement"]
         self.start_epoch = checkpoint["epoch"] + 1
         self.history = checkpoint.get("history", [])
+        logger.info(
+            "Resumed training from %s at epoch %d with %d recorded epochs.",
+            self.latest_checkpoint,
+            self.start_epoch,
+            len(self.history),
+        )
 
     def train_epoch(self, dataloader: DataLoader) -> float:
         self.model.train()
@@ -165,4 +191,5 @@ class Trainer:
         }
 
         io.save_checkpoint(state, path)
+        logger.debug("Saved checkpoint for epoch %d to %s.", epoch + 1, path)
 

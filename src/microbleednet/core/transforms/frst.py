@@ -1,4 +1,6 @@
+import logging
 import math
+from time import perf_counter
 
 import numpy as np
 import torch
@@ -9,6 +11,8 @@ FRST_RADII = [2, 3, 4, 6]
 FRST_ALPHA = 2
 FRST_FACTOR_STD = 0.1
 
+logger = logging.getLogger(__name__)
+
 
 def apply(
     volume: np.ndarray,
@@ -18,6 +22,7 @@ def apply(
 
     Input and output have shape ``(H, W, D)``.
     """
+    started_at = perf_counter()
     volume_tensor = torch.from_numpy(np.asarray(volume)).float()
     height, width, _ = volume_tensor.shape
     slices = volume_tensor.permute(2, 0, 1)
@@ -85,7 +90,13 @@ def apply(
 
     output = output[:, offset:-offset, offset:-offset]
 
-    return output.permute(1, 2, 0).numpy()
+    result = output.permute(1, 2, 0).numpy()
+    logger.debug(
+        "FRST completed in %.2fs for volume shape %s.",
+        perf_counter() - started_at,
+        volume.shape,
+    )
+    return result
 
 
 def normalize_tensor_slicewise(tensor: torch.Tensor) -> torch.Tensor:
