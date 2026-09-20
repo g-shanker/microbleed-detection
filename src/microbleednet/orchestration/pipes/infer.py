@@ -1,5 +1,6 @@
 """Run the internal detector/discriminator inference pipeline."""
 
+import logging
 from dataclasses import dataclass
 from typing import Callable
 
@@ -12,6 +13,7 @@ from ...core.datamodels import Modality, PatchSizes, PreprocessInput, VoxelSpaci
 from ...core.engines import inference as core_inference
 from ...core.engines import processor as core_processor
 from ...core.transforms import frst
+from ...progress import progress
 from ..configs import InferConfig, InferExperimentConfig, InferExplicitConfig
 from ..layouts import DETECTOR_STAGE, STUDENT_STAGE, DatasetLayout, ExperimentLayout
 from ..manifests import (
@@ -22,6 +24,8 @@ from ..manifests import (
     RawSubject,
 )
 from ..utils import release_gpu_memory, resolve_path_string
+
+logger = logging.getLogger(__name__)
 
 VARIANT_INDEX = 0
 DETECTOR_THRESHOLD = 0.5
@@ -108,6 +112,7 @@ def execute_records(
     student_checkpoint,
     records: list[InferenceInput],
 ) -> None:
+    logger.info("Running inference for %d subjects on %s.", len(records), device_name)
     device = torch.device(device_name)
     detector = CandidateDetector().to(device)
     student = CandidateDiscriminatorStudent().to(device)
@@ -117,7 +122,7 @@ def execute_records(
         core_io.load_model_weights(student, student_checkpoint)
 
         results: list[InferredSubject] = []
-        for record in records:
+        for record in progress.track(records, "Inferring subjects"):
             volume_image = record.volume
             volume = core_io.nifti_to_numpy(volume_image)
             frst_array = core_io.nifti_to_numpy(record.frst)
@@ -180,6 +185,11 @@ def execute_records(
             minimum_brain_distance_mm=MINIMUM_BRAIN_DISTANCE_MM,
             subjects=results,
         ).write(output_layout.inference_manifest_path())
+        logger.info(
+            "Inference complete for %d subjects; manifest written to %s.",
+            len(results),
+            output_layout.inference_manifest_path(),
+        )
     finally:
         del detector
         del student
@@ -196,7 +206,7 @@ def infer_raw_subjects(
 ) -> None:
     """Preprocess raw subjects and run inference with explicit checkpoints."""
     records: list[InferenceInput] = []
-    for subject in subjects:
+    for subject in progress.track(subjects, "Preprocessing inference subjects"):
         raw_volume = core_io.load_volume(subject.volume_path)
         raw_mask = (
             core_io.load_volume(subject.mask_path)

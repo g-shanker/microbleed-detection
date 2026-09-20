@@ -1,9 +1,11 @@
 """Evaluate final binary detections on the held-out training split."""
 
+import logging
 from pathlib import Path
 
 from ...core import io as core_io
 from ...core.common.metrics import aggregate_metrics, score_masks
+from ...progress import progress
 from ..configs import (
     EvaluateConfig,
     EvaluateExperimentConfig,
@@ -26,6 +28,8 @@ from ..manifests import (
 )
 from ..utils import resolve_path_string, resolve_subjects
 from . import infer
+
+logger = logging.getLogger(__name__)
 
 
 def execute(config: EvaluateConfig) -> None:
@@ -109,7 +113,7 @@ def evaluate_subjects(
     }
 
     per_subject: list[EvaluatedSubject] = []
-    for subject in subjects:
+    for subject in progress.track(subjects, "Evaluating subjects"):
         prediction = core_io.nifti_to_numpy(
             core_io.load_volume(inference_output_paths[subject.subject_id])
         )
@@ -138,3 +142,8 @@ def evaluate_subjects(
         subjects=per_subject,
         aggregate=aggregate,
     ).write(experiment_layout.evaluation_manifest_path())
+    logger.info(
+        "Evaluation complete for %d subjects; manifest written to %s.",
+        len(per_subject),
+        experiment_layout.evaluation_manifest_path(),
+    )
