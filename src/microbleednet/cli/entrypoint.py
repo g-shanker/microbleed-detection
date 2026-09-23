@@ -22,34 +22,17 @@ from .commands import register_commands
 console = Console()
 
 
-def rich_track(
-    items: Iterable[ProgressItem],
-    description: str,
-) -> Iterable[ProgressItem]:
-    with RichProgress(
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        TimeRemainingColumn(),
-        TransferSpeedColumn(),
-        console=console,
-    ) as rich_progress:
-        yield from rich_progress.track(items, description=description)
-
-
 app = typer.Typer(
     name="microbleednet",
     help="TODO: write out a help message",
     no_args_is_help=True,
 )
 
-register_commands(app)
+register_commands(app, console)
 
 
 @app.callback()
-def configure_logging(
+def configure_cli(
     verbose: Annotated[bool, typer.Option(help="Emit debug-level logs.")] = False,
     quiet: Annotated[bool, typer.Option(help="Only emit warnings and errors.")] = False,
 ) -> None:
@@ -57,15 +40,34 @@ def configure_logging(
     if verbose and quiet:
         raise typer.BadParameter("--verbose and --quiet are mutually exclusive")
 
-    progress.configure(silent_track if quiet else rich_track)
+    def rich_track(
+        items: Iterable[ProgressItem],
+        description: str,
+    ) -> Iterable[ProgressItem]:
+        with RichProgress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            TransferSpeedColumn(),
+            console=console,
+        ) as rich_progress:
+            yield from rich_progress.track(items, description=description)
 
     if verbose:
         level = logging.DEBUG
+        tracker = rich_track
     elif quiet:
         level = logging.WARNING
+        tracker = silent_track
     else:
         level = logging.INFO
+        tracker = rich_track
 
+    progress.configure(tracker)
+    
     logging.basicConfig(
         level=level,
         format="%(message)s",

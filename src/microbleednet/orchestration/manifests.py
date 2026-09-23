@@ -7,10 +7,10 @@ creation/update timestamps — wrapped around a payload typed for that stage.
 
 Rules enforced here (see ``ARCHITECTURE.md``):
 
-- Every manifest carries ``schema_version``, ``manifest_type``, ``status``,
-  ``created_at`` and ``updated_at``.
+- Every manifest carries ``manifest_type``, ``status``, ``created_at`` and
+    ``updated_at``.
 - Consumers must check that a manifest is ``complete`` before using its
-    published outputs; a ``failed`` manifest must carry a nonempty error string.
+    published outputs.
 - Models forbid unknown fields, are immutable, and never type a field as
   ``Any``.
 
@@ -32,6 +32,7 @@ from pydantic import Field, ValidationError, model_validator
 
 from ..core import io as core_io
 from ..core.datamodels import (
+    BoundingBox,
     EpochLoss,
     EvaluationAggregate,
     EvaluationMetrics,
@@ -40,8 +41,7 @@ from ..core.datamodels import (
     Modality,
     PatchRecord,
 )
-
-SCHEMA_VERSION = 1
+from .layouts import SplitName, StageName
 
 logger = logging.getLogger(__name__)
 
@@ -56,18 +56,13 @@ class ManifestStatus(str, Enum):
 
     RUNNING = "running"
     COMPLETE = "complete"
-    FAILED = "failed"
 
 
 class Manifest(FrozenModel):
     """Envelope shared by every manifest."""
 
-    schema_version: Literal[1] = Field(
-        default=SCHEMA_VERSION,
-        description="Manifest schema version; readers reject other versions.",
-    )
     status: ManifestStatus = Field(
-        description="Whether the producing stage is running, complete, or failed.",
+        description="Whether the producing stage is running or complete.",
     )
     created_at: str = Field(
         default_factory=timestamp,
@@ -77,27 +72,19 @@ class Manifest(FrozenModel):
         default_factory=timestamp,
         description="ISO-8601 UTC time of the last write.",
     )
-    error: str | None = Field(
-        default=None,
-        description="Failure detail; required when status is failed, otherwise unset.",
-    )
-
-    @model_validator(mode="after")
-    def check_status_error(self) -> "Manifest":
-        if self.status is ManifestStatus.FAILED and not (self.error or "").strip():
-            raise ValueError("a failed manifest must carry a nonempty error string")
-        if self.status is not ManifestStatus.FAILED and self.error is not None:
-            raise ValueError("only a failed manifest may carry an error string")
-        return self
 
     def write(self, path: Path) -> None:
         """Serialize this manifest to ``path`` atomically as versioned JSON."""
         payload = self.model_dump(mode="json")
+
         if path.exists():
             existing = core_io.read_json(path)
             payload["created_at"] = existing.get("created_at", timestamp())
+
         payload["updated_at"] = timestamp()
+
         core_io.write_json(path, payload)
+
         logger.debug(
             "Wrote %s manifest with status %s to %s.",
             getattr(self, "manifest_type", type(self).__name__),
@@ -109,23 +96,21 @@ class Manifest(FrozenModel):
     def read[ManifestType: Manifest](
         cls: type[ManifestType], path: Path
     ) -> ManifestType:
-        """Load and validate a versioned manifest from ``path``."""
+        """Load and validate a manifest from ``path``."""
         payload = core_io.read_json(path)
-        if not isinstance(payload, dict) or "schema_version" not in payload:
-            raise ValueError(
-                f"{path} is not a versioned manifest; regenerate it with the current "
-                "pipeline (it predates the schema_version contract)."
-            )
+
         try:
             manifest = cls.model_validate(payload)
         except ValidationError as error:
             raise ValueError(f"invalid manifest at {path}:\n{error}") from error
+        
         logger.debug(
             "Read %s manifest with status %s from %s.",
             getattr(manifest, "manifest_type", type(manifest).__name__),
             manifest.status.value,
             path,
         )
+        
         return manifest
 
 
@@ -133,7 +118,7 @@ def content_fingerprint(manifest: Manifest) -> str:
     """Return a stable hash of manifest content excluding lifecycle fields."""
     payload = manifest.model_dump(
         mode="json",
-        exclude={"status", "created_at", "updated_at", "error"},
+        exclude={"status", "created_at", "updated_at"},
     )
     canonical_payload = json.dumps(
         payload, sort_keys=True, separators=(",", ":")
@@ -205,6 +190,12 @@ class PreprocessedSubject(FrozenModel):
     """One subject produced by the preprocessing stage."""
 
     subject_id: str = Field(description="Unique subject identifier.")
+    original_volume_path: str = Field(
+        description="Absolute path to the original volume for restoring inference.",
+    )
+    bounding_box: BoundingBox = Field(
+        description="Crop bounds applied during preprocessing.",
+    )
     variants: list["PreprocessedVariant"] = Field(
         description="Ordered preprocessed variants, including the original.",
     )
@@ -236,8 +227,7 @@ class PreprocessedDatasetManifest(Manifest):
         gt=0,
         description="Total persisted variants per subject, including the original.",
     )
-    raw_manifest_fingerprint: str | None = Field(
-        default=None,
+    raw_manifest_fingerprint: str = Field(
         description="Fingerprint of the raw manifest used to create this dataset.",
     )
 
@@ -321,15 +311,8 @@ class TrainManifest(Manifest):
     pin_memory: bool = Field(
         description="Whether training loaders pin batches in host memory."
     )
-    detector_hyperparameters: Hyperparameters = Field(
-        description="Optimizer and training-loop settings for detector training."
-    )
-    teacher_hyperparameters: Hyperparameters = Field(
-        description="Optimizer and training-loop settings for teacher training."
-    )
-    student_hyperparameters: Hyperparameters = Field(
-        description="Optimizer and training-loop settings for student training."
-    )
+
+
 class TrainStageManifest(Manifest):
     """Manifest published when an individual training stage completes."""
 
@@ -337,8 +320,11 @@ class TrainStageManifest(Manifest):
         default="train_stage",
         description="Stable discriminator for a training stage manifest.",
     )
-    stage: Literal["detector", "teacher", "student"] = Field(
+    stage: StageName = Field(
         description="Training stage represented by this manifest."
+    )
+    hyperparameters: Hyperparameters = Field(
+        description="Optimizer and training-loop settings for this stage."
     )
     history: list[EpochLoss] = Field(
         description="Epoch loss history for the completed training stage."
@@ -350,13 +336,6 @@ class InferredSubject(FrozenModel):
 
     subject_id: str = Field(description="Subject identifier.")
     output_path: str = Field(description="Absolute path to the final detection mask.")
-
-
-class EvaluatedSubject(FrozenModel):
-    """Evaluation metrics published for one subject."""
-
-    subject_id: str = Field(description="Subject identifier.")
-    metrics: EvaluationMetrics = Field(description="Metrics for the subject.")
 
 
 class InferManifest(Manifest):
@@ -399,7 +378,11 @@ class InferManifest(Manifest):
         description="Results published for each inferred subject."
     )
 
+class EvaluatedSubject(FrozenModel):
+    """Evaluation metrics published for one subject."""
 
+    subject_id: str = Field(description="Subject identifier.")
+    metrics: EvaluationMetrics = Field(description="Metrics for the subject.")
 class EvaluateManifest(Manifest):
     """Manifest written after scoring held-out inference results."""
 
@@ -429,8 +412,8 @@ class PatchManifest(Manifest):
         default="patch",
         description="Stable discriminator for a materialized patch manifest.",
     )
-    stage: str = Field(description="Training stage owning these patches.")
-    split: str = Field(description="Dataset split owning these patches.")
+    stage: StageName = Field(description="Training stage owning these patches.")
+    split: SplitName = Field(description="Dataset split owning these patches.")
     subject_ids: list[str] = Field(
         description="Subject IDs requested for patch extraction."
     )

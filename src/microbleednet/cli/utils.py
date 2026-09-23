@@ -6,11 +6,42 @@ loading and parsing, config-key introspection, and output — lives here.
 """
 
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, get_args, get_origin
+from types import ModuleType
+from typing import (
+    Any,
+    Literal,
+    Protocol,
+    TypeGuard,
+    get_args,
+    get_origin,
+)
 
 import typer
 from pydantic import BaseModel, ValidationError
+
+
+@dataclass(frozen=True)
+class CommandSpec:
+    """Everything that distinguishes one CLI command from the shared skeleton."""
+
+    name: str
+    help: str
+    config: type[BaseModel]
+    pipe: str  # module under orchestration.pipes; imported lazily to defer torch
+
+
+class PipeModule(Protocol):
+    """Interface required by a lazily loaded orchestration pipe."""
+
+    def execute(self, config: BaseModel) -> None: ...
+
+
+def is_pipe_module(module: ModuleType) -> TypeGuard[PipeModule]:
+    """Return whether a loaded module exposes a callable execute function."""
+    execute = getattr(module, "execute", None)
+    return callable(execute)
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -41,12 +72,13 @@ def parse_config[ConfigModel: BaseModel](
         raise typer.BadParameter(f"invalid configuration {path}:\n{error}") from error
 
 
-class ConfigField(NamedTuple):
+@dataclass(frozen=True)
+class ConfigField:
     """A single leaf configuration key derived from a config model."""
 
-    section: str  # nested-model prefix, e.g. "detector"; "" for top-level keys
-    key: str  # dotted key relative to its section, e.g. "patch_size"
-    default: str  # "required" or a repr of the default value
+    section: str
+    key: str
+    default: str | None
     description: str
 
 
@@ -60,11 +92,17 @@ def config_fields(model: type[BaseModel], prefix: str) -> list[ConfigField]:
     for name, field in model.model_fields.items():
         key = f"{prefix}{name}"
         annotation = field.annotation
-        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-            fields.extend(config_fields(annotation, prefix=f"{key}."))
+        nested_model = None
+        candidates = (annotation, *get_args(annotation))
+        for candidate in candidates:
+            if isinstance(candidate, type) and issubclass(candidate, BaseModel):
+                nested_model = candidate
+                break
+        if nested_model is not None:
+            fields.extend(config_fields(nested_model, prefix=f"{key}."))
             continue
         section, _, leaf = key.rpartition(".")
-        default = "required" if field.is_required() else repr(field.default)
+        default = None if field.is_required() else repr(field.default)
         description = field.description or ""
         if get_origin(annotation) is Literal:
             choices = ", ".join(repr(choice) for choice in get_args(annotation))
@@ -83,7 +121,3 @@ def config_fields(model: type[BaseModel], prefix: str) -> list[ConfigField]:
 def describe_hint(command: str) -> str:
     """One-line epilog pointing users at the full config reference."""
     return f"Run 'microbleednet describe {command}' for the configuration keys."
-
-
-def report(message: str) -> None:
-    typer.echo(message)

@@ -16,6 +16,7 @@ from ..core.datamodels import FrozenModel
 
 DEFAULT_NIFTI_SUFFIX = ".nii.gz"
 StageName = Literal["detector", "teacher", "student"]
+SplitName = Literal["train", "validation", "test"]
 DETECTOR_STAGE: StageName = "detector"
 TEACHER_STAGE: StageName = "teacher"
 STUDENT_STAGE: StageName = "student"
@@ -27,7 +28,6 @@ class DatasetLayout(FrozenModel):
     dataset_dir: Path = Field(
         description="Root directory for this dataset's artifacts."
     )
-
     raw_manifest: Path = Field(
         default=Path("manifests/raw.json"),
         description="Raw dataset manifest written by index-data.",
@@ -140,13 +140,13 @@ class ExperimentLayout(FrozenModel):
     def resolve(self, template: Path, **values: str) -> Path:
         return self.experiment_dir / str(template).format(**values)
 
-    def best_checkpoint_path(self, stage: str) -> Path:
+    def best_checkpoint_path(self, stage: StageName) -> Path:
         return self.resolve(self.best_checkpoint_template, stage=stage)
 
-    def latest_checkpoint_path(self, stage: str) -> Path:
+    def latest_checkpoint_path(self, stage: StageName) -> Path:
         return self.resolve(self.latest_checkpoint_template, stage=stage)
 
-    def stage_manifest_path(self, stage: str) -> Path:
+    def stage_manifest_path(self, stage: StageName) -> Path:
         return self.resolve(self.stage_manifest_template, stage=stage)
 
     def train_manifest_path(self) -> Path:
@@ -155,10 +155,10 @@ class ExperimentLayout(FrozenModel):
     def split_manifest_path(self) -> Path:
         return self.experiment_dir / self.split_manifest
 
-    def patch_manifest_path(self, stage: str, split: str) -> Path:
+    def patch_manifest_path(self, stage: StageName, split: SplitName) -> Path:
         return self.resolve(self.patch_manifest_template, stage=stage, split=split)
 
-    def patch_dir_path(self, stage: str, split: str) -> Path:
+    def patch_dir_path(self, stage: StageName, split: SplitName) -> Path:
         return self.resolve(self.patch_dir_template, stage=stage, split=split)
 
     def inference_manifest_path(self) -> Path:
@@ -171,21 +171,21 @@ class ExperimentLayout(FrozenModel):
         return self.resolve(self.inference_output_template, subject_id=subject_id)
 
     def patch_volume_path(
-        self, stage: str, split: str, subject_id: str, variant: int
+        self, stage: StageName, split: SplitName, subject_id: str, variant: int
     ) -> Path:
         return self.patch_dir_path(stage, split) / (
             f"volumes_{subject_id}_variant_{variant}.npy"
         )
 
     def patch_mask_path(
-        self, stage: str, split: str, subject_id: str, variant: int
+        self, stage: StageName, split: SplitName, subject_id: str, variant: int
     ) -> Path:
         return self.patch_dir_path(stage, split) / (
             f"masks_{subject_id}_variant_{variant}.npy"
         )
 
     def patch_frst_path(
-        self, stage: str, split: str, subject_id: str, variant: int
+        self, stage: StageName, split: SplitName, subject_id: str, variant: int
     ) -> Path:
         return self.patch_dir_path(stage, split) / (
             f"frst_{subject_id}_variant_{variant}.npy"

@@ -5,25 +5,20 @@ command it currently registers.
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import typer
 from click.testing import Result
 from pydantic import BaseModel, Field
+from rich.console import Console
 from typer.testing import CliRunner
 
 from microbleednet.cli.commands import (
-    CommandSpec,
     build_command,
     build_describe_command,
 )
 from microbleednet.cli.entrypoint import app
-from microbleednet.orchestration.layouts import DatasetLayout
-from microbleednet.orchestration.manifests import (
-    ManifestStatus,
-    RawDatasetManifest,
-    timestamp,
-)
+from microbleednet.cli.utils import CommandSpec, is_pipe_module
 from tests.support import create_volume_source, write_index_config
 
 runner = CliRunner()
@@ -58,9 +53,8 @@ def test_describe_renders_a_section_header_for_nested_config() -> None:
         help="Fake command for testing.",
         config=_FakeConfig,
         pipe="unused",
-        dry_run_message=lambda s: "",
     )
-    build_describe_command(scratch_app, [spec])
+    build_describe_command(scratch_app, [spec], Console())
 
     result = runner.invoke(scratch_app, ["describe", "fake"])
     assert result.exit_code == 0, result.output
@@ -86,7 +80,6 @@ def test_build_command_runs_without_progress_reporter(
         help="Fake command for testing.",
         config=_FakeConfig,
         pipe="unused",
-        dry_run_message=lambda s: "",
     )
     build_command(scratch_app, spec)
     config_path = tmp_path / "config.toml"
@@ -98,10 +91,52 @@ def test_build_command_runs_without_progress_reporter(
     assert executed == ["value"]
 
 
+def test_build_command_rejects_pipe_without_execute(
+    tmp_path: Path, monkeypatch
+) -> None:
+    scratch_app = typer.Typer()
+    monkeypatch.setattr(
+        "microbleednet.cli.commands.import_module",
+        lambda *args, **kwargs: ModuleType("broken"),
+    )
+    spec = CommandSpec(
+        name="fake",
+        help="Fake command for testing.",
+        config=_FakeConfig,
+        pipe="unused",
+    )
+    build_command(scratch_app, spec)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('top_level = "value"', encoding="utf-8")
+
+    result = runner.invoke(scratch_app, ["--config", str(config_path)])
+
+    assert result.exit_code != 0
+    assert result.exception is not None
+    assert "must define a callable execute" in str(result.exception)
+
+
+def test_is_pipe_module_rejects_module_without_execute() -> None:
+    assert not is_pipe_module(ModuleType("broken"))
+
+
 def test_index_data_help_points_to_describe() -> None:
     result = runner.invoke(app, ["index-data", "--help"])
     assert result.exit_code == 0, result.output
     assert "describe index-data" in " ".join(result.output.split())
+
+
+def test_infer_help_points_to_describe() -> None:
+    result = runner.invoke(app, ["infer", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "describe infer" in " ".join(result.output.split())
+
+
+def test_describe_infer_lists_explicit_checkpoint_keys() -> None:
+    result = runner.invoke(app, ["describe", "infer"])
+    assert result.exit_code == 0, result.output
+    assert "detector_checkpoint_path" in result.output
+    assert "student_checkpoint_path" in result.output
 
 
 def test_describe_index_data_lists_config_keys() -> None:
@@ -127,25 +162,6 @@ def test_describe_rejects_unknown_command() -> None:
     result = runner.invoke(app, ["describe", "bogus"])
     assert result.exit_code != 0
     assert "unknown command" in result.output
-
-
-def test_index_data_dry_run_does_not_write_manifest(tmp_path: Path) -> None:
-    dataset_dir = tmp_path / "dataset"
-    source = create_volume_source(tmp_path, "first", ["subject_1"])
-    config_path = tmp_path / "index.toml"
-    write_index_config(
-        config_path,
-        dataset_dir=dataset_dir,
-        input_dir=source,
-        mask_dir=tmp_path / "first_masks",
-    )
-
-    result = runner.invoke(
-        app, ["index-data", "--config", str(config_path), "--dry-run"]
-    )
-    assert result.exit_code == 0, result.output
-    assert "dry run" in result.output
-    assert not (dataset_dir / "manifests" / "raw.json").exists()
 
 
 def test_index_data_rejects_missing_mask_dir(tmp_path: Path) -> None:
@@ -181,30 +197,6 @@ def test_index_data_rejects_unmatched_subjects_when_masks_required(
     result = runner.invoke(app, ["index-data", "--config", str(config_path)])
     assert result.exit_code != 0
     assert "unmatched subjects" in str(result.exception)
-
-
-def test_preprocess_dry_run_accepts_indexed_dataset(tmp_path: Path) -> None:
-    now = timestamp()
-    RawDatasetManifest(
-        status=ManifestStatus.COMPLETE,
-        created_at=now,
-        updated_at=now,
-        sources=[],
-        subjects=[],
-    ).write(DatasetLayout(dataset_dir=tmp_path).raw_manifest_path())
-    config_path = tmp_path / "preprocess.toml"
-    config_path.write_text(
-        f"dataset_dir = {json.dumps(str(tmp_path))}\n"
-        "augmentation_factor = 1\n",
-        encoding="utf-8",
-    )
-
-    result = runner.invoke(
-        app, ["preprocess", "--config", str(config_path), "--dry-run"]
-    )
-
-    assert result.exit_code == 0, result.output
-    assert "dry run" in result.output
 
 
 def test_preprocess_rejects_missing_dataset_dir(tmp_path: Path) -> None:

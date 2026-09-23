@@ -5,10 +5,13 @@ import numpy as np
 import torch.nn as nn
 
 from microbleednet.core.engines import processor
-from microbleednet.orchestration.configs import InferConfig, InferExperimentConfig
+from microbleednet.orchestration.configs import (
+    InferConfig,
+)
 from microbleednet.orchestration.layouts import (
     DETECTOR_STAGE,
     STUDENT_STAGE,
+    DatasetLayout,
     ExperimentLayout,
 )
 from microbleednet.orchestration.manifests import (
@@ -16,6 +19,10 @@ from microbleednet.orchestration.manifests import (
     ManifestStatus,
     PreprocessedSubject,
     PreprocessedVariant,
+    RawDatasetManifest,
+    RawSource,
+    RawSubject,
+    timestamp,
 )
 from microbleednet.orchestration.pipes import infer
 
@@ -119,6 +126,8 @@ def test_execute_writes_inference_manifest(tmp_path: Path, monkeypatch) -> None:
 
     subject = PreprocessedSubject(
         subject_id="subject-1",
+        original_volume_path="original-volume",
+        bounding_box=((0, 3), (0, 3), (0, 3)),
         variants=[
             PreprocessedVariant(
                 volume_path="volume", mask_path="mask", frst_path="frst"
@@ -127,6 +136,7 @@ def test_execute_writes_inference_manifest(tmp_path: Path, monkeypatch) -> None:
     )
     volume_image = nib.Nifti1Image(np.ones((3, 3, 3)), np.eye(4))
     saved = {}
+    restore_calls = []
 
     class FakeModel(nn.Module):
         def forward(self, inputs):
@@ -158,22 +168,99 @@ def test_execute_writes_inference_manifest(tmp_path: Path, monkeypatch) -> None:
     )
     monkeypatch.setattr(infer.core_io, "numpy_to_nifti", lambda array, _: array)
     monkeypatch.setattr(
+        infer.core_processor.volume_ops,
+        "restore_cropped_volume",
+        lambda prediction, bounding_box, original_volume: restore_calls.append(
+            (prediction, bounding_box, original_volume)
+        )
+        or volume_image,
+    )
+    monkeypatch.setattr(
         infer.core_io,
         "save_volume",
         lambda image, path: saved.update({str(path): image}),
     )
     monkeypatch.setattr(infer, "release_gpu_memory", lambda: None)
 
-    infer.execute(
-        InferConfig(
-            experiment=InferExperimentConfig(
-                experiment_dir=experiment_dir,
-                subjects=[subject],
-            ),
-            device="cpu",
-        )
+    infer.infer_subjects(
+        "cpu",
+        layout,
+        layout.best_checkpoint_path(DETECTOR_STAGE),
+        layout.best_checkpoint_path(STUDENT_STAGE),
+        [subject],
     )
 
     manifest = InferManifest.read(layout.inference_manifest_path())
     assert [item.subject_id for item in manifest.subjects] == ["subject-1"]
     assert len(saved) == 1
+    assert restore_calls[0][1] == ((0, 3), (0, 3), (0, 3))
+
+
+def test_execute_preprocesses_raw_subjects(tmp_path: Path, monkeypatch) -> None:
+    dataset_dir = tmp_path / "dataset"
+    output_dir = tmp_path / "output"
+    detector_checkpoint = tmp_path / "detector.pth"
+    student_checkpoint = tmp_path / "student.pth"
+    calls = []
+    dataset_dir.mkdir()
+    detector_checkpoint.touch()
+    student_checkpoint.touch()
+    raw_subject = RawSubject(
+        subject_id="subject-1",
+        source_id="source",
+        volume_path="volume",
+    )
+    preprocessed_subject = PreprocessedSubject(
+        subject_id="subject-1",
+        original_volume_path="original-volume",
+        bounding_box=((0, 1), (0, 1), (0, 1)),
+        variants=[
+            PreprocessedVariant(
+                volume_path="processed-volume",
+                mask_path=None,
+                frst_path="processed-frst",
+            )
+        ],
+    )
+    now = timestamp()
+    RawDatasetManifest(
+        status=ManifestStatus.COMPLETE,
+        created_at=now,
+        updated_at=now,
+        sources=[
+            RawSource(
+                input_dir=".",
+                volume_pattern="{subject_id}",
+                source_id="source",
+                modality="QSM",
+            )
+        ],
+        subjects=[raw_subject],
+    ).write(DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path())
+
+    monkeypatch.setattr(infer, "preprocess_subject", lambda *args: preprocessed_subject)
+    monkeypatch.setattr(
+        infer, "infer_subjects", lambda *args: calls.append(args)
+    )
+
+    config = InferConfig(
+        dataset_dir=dataset_dir,
+        output_dir=output_dir,
+        detector_checkpoint_path=detector_checkpoint,
+        student_checkpoint_path=student_checkpoint,
+        device="cpu",
+    )
+
+    infer.execute(config)
+
+    assert calls == [
+        (
+            "cpu",
+            ExperimentLayout(experiment_dir=output_dir),
+            detector_checkpoint,
+            student_checkpoint,
+            [preprocessed_subject],
+        )
+    ]
+
+
