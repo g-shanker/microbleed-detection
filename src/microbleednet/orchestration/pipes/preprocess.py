@@ -29,24 +29,26 @@ def execute(config: PreprocessConfig) -> None:
     raw_manifest = RawDatasetManifest.read(layout.raw_manifest_path())
     preprocessed_manifest_path = layout.preprocessed_manifest_path()
     raw_manifest_fingerprint = content_fingerprint(raw_manifest)
+    logger.info(
+        "Preprocessing %d subjects with augmentation factor %d (resume=%s)",
+        len(raw_manifest.subjects),
+        config.augmentation_factor,
+        config.resume,
+    )
 
     source_modalities: dict[str, Modality] = {
         source.source_id: source.modality for source in raw_manifest.sources
     }
     preprocessed_subjects: list[PreprocessedSubject] = []
-    skipped_subjects = 0
     if config.resume:
         existing_manifest = PreprocessedDatasetManifest.read(
             preprocessed_manifest_path
         )
         preprocessed_subjects.extend(existing_manifest.subjects)
-
-    logger.info(
-        "Preprocessing %d subjects with augmentation factor %d (resume=%s).",
-        len(raw_manifest.subjects),
-        config.augmentation_factor,
-        config.resume,
-    )
+        logger.info(
+            "Resuming preprocessing with %d completed subjects",
+            len(preprocessed_subjects),
+        )
 
     PreprocessedDatasetManifest(
         status=ManifestStatus.RUNNING,
@@ -55,13 +57,14 @@ def execute(config: PreprocessConfig) -> None:
         raw_manifest_fingerprint=raw_manifest_fingerprint,
     ).write(preprocessed_manifest_path)
 
-    for subject in progress.track(raw_manifest.subjects, "Preprocessing subjects"):
+    for subject in progress.track(
+        raw_manifest.subjects, description="Preprocessing subjects"
+    ):
         subject_id = subject.subject_id
         if any(
             completed.subject_id == subject_id
             for completed in preprocessed_subjects
         ):
-            skipped_subjects += 1
             continue
 
         preprocessed_subject = preprocess_subject(
@@ -85,10 +88,7 @@ def execute(config: PreprocessConfig) -> None:
         raw_manifest_fingerprint=raw_manifest_fingerprint,
     ).write(preprocessed_manifest_path)
     logger.info(
-        "Preprocessed %d subjects (%d skipped); manifest written to %s.",
-        len(preprocessed_subjects),
-        skipped_subjects,
-        preprocessed_manifest_path,
+        "Preprocessing complete; manifest written to %s", preprocessed_manifest_path
     )
 
 

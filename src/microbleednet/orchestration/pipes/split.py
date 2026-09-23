@@ -16,19 +16,11 @@ from ..utils import resolve_path_string
 
 logger = logging.getLogger(__name__)
 
-
 def execute(config: SplitConfig) -> None:
     manifest_path = DatasetLayout(
         dataset_dir=config.dataset_dir
     ).preprocessed_manifest_path()
     preprocessed_manifest = PreprocessedDatasetManifest.read(manifest_path)
-    logger.info(
-        "Splitting %d subjects with ratios train=%.3f, validation=%.3f, test=%.3f.",
-        len(preprocessed_manifest.subjects),
-        config.train_size,
-        config.validation_size,
-        config.test_size,
-    )
     train_subjects, held_out_subjects = train_test_split(
         preprocessed_manifest.subjects,
         train_size=config.train_size,
@@ -57,9 +49,11 @@ def execute(config: SplitConfig) -> None:
         test_subject_ids=[subject.subject_id for subject in test_subjects],
     ).write(split_manifest_path)
     logger.info(
-        "Split complete: train=%d, validation=%d, test=%d; manifest written to %s.",
+        "Split dataset into train=%d validation=%d test=%d subjects; "
+        "seed=%s; manifest written to %s",
         len(train_subjects),
         len(validation_subjects),
         len(test_subjects),
+        config.seed,
         split_manifest_path,
     )

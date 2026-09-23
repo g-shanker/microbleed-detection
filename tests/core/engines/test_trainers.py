@@ -72,12 +72,14 @@ def test_fit_saves_and_restores_latest_checkpoint(tmp_path: Path, monkeypatch) -
         _hyperparameters(max_epochs=2, patience=5),
         latest_checkpoint,
     )
-    monkeypatch.setattr(trainer, "train_epoch", lambda loader: 2.0)
+    monkeypatch.setattr(
+        trainer, "train_epoch", lambda loader, description: 2.0
+    )
     validation_losses = iter([1.0, 2.0])
     monkeypatch.setattr(
         trainer,
         "validate_epoch",
-        lambda loader: next(validation_losses),
+        lambda loader, description: next(validation_losses),
     )
     empty_loader = DataLoader(BatchDataset([]), batch_size=None)
 
@@ -109,7 +111,7 @@ def test_train_epoch_updates_model_and_learning_rate(tmp_path: Path) -> None:
     linear = cast(nn.Linear, trainer.model)
     initial_weight = linear.weight.detach().clone()
 
-    training_loss = trainer.train_epoch(loader)
+    training_loss = trainer.train_epoch(loader, "Training detector epoch 1/1")
 
     assert not torch.equal(initial_weight, linear.weight)
     assert training_loss >= 0
@@ -121,12 +123,14 @@ def test_fit_stops_at_patience_and_saves_best(
     tmp_path: Path, monkeypatch
 ) -> None:
     trainer = _trainer(tmp_path, max_epochs=10, patience=2)
-    monkeypatch.setattr(trainer, "train_epoch", lambda loader: 2.0)
+    monkeypatch.setattr(
+        trainer, "train_epoch", lambda loader, description: 2.0
+    )
     losses = iter([1.0, 1.0, 1.0])
     monkeypatch.setattr(
         trainer,
         "validate_epoch",
-        lambda loader: next(losses),
+        lambda loader, description: next(losses),
     )
 
     empty_loader = DataLoader(BatchDataset([]), batch_size=None)
@@ -143,25 +147,19 @@ def test_fit_stops_at_patience_and_saves_best(
     assert torch.load(tmp_path / "latest.pth", weights_only=True)["epoch"] == 2
 
 
-def test_fit_tracks_epochs_with_description(tmp_path: Path, monkeypatch) -> None:
+def test_fit_skips_epochs_before_start_epoch(tmp_path: Path, monkeypatch) -> None:
     trainer = _trainer(tmp_path, max_epochs=2)
     trainer.start_epoch = 1
-    tracked = []
-
-    def track(items, description):
-        tracked.append((list(items), description))
-        return items
-
     monkeypatch.setattr(
-        "microbleednet.core.engines.trainers.progress.track", track
+        trainer, "train_epoch", lambda loader, description: 2.0
     )
-    monkeypatch.setattr(trainer, "train_epoch", lambda loader: 2.0)
-    monkeypatch.setattr(trainer, "validate_epoch", lambda loader: 1.0)
+    monkeypatch.setattr(
+        trainer, "validate_epoch", lambda loader, description: 1.0
+    )
 
     empty_loader = DataLoader(BatchDataset([]), batch_size=None)
     trainer.fit(empty_loader, empty_loader, "Training detector")
 
-    assert tracked == [([0, 1], "Training detector")]
     assert [entry["epoch"] for entry in trainer.history] == [2]
 
 
@@ -169,7 +167,10 @@ def test_train_epoch_rejects_empty_loader(tmp_path: Path) -> None:
     trainer = _trainer(tmp_path, max_epochs=1)
 
     try:
-        trainer.train_epoch(DataLoader(BatchDataset([]), batch_size=None))
+        trainer.train_epoch(
+            DataLoader(BatchDataset([]), batch_size=None),
+            "Training detector epoch 1/1",
+        )
     except ValueError as error:
         assert str(error) == "cannot train on an empty DataLoader"
     else:
@@ -195,10 +196,13 @@ def test_validate_epoch_averages_batches_and_rejects_empty_loader() -> None:
         batch_size=None,
     )
 
-    assert trainer.validate_epoch(loader) >= 0
+    assert trainer.validate_epoch(loader, "Validating detector epoch 1/100") >= 0
 
     try:
-        trainer.validate_epoch(DataLoader(BatchDataset([]), batch_size=None))
+        trainer.validate_epoch(
+            DataLoader(BatchDataset([]), batch_size=None),
+            "Validating detector epoch 1/100",
+        )
     except ValueError as error:
         assert "empty DataLoader" in str(error)
     else:
@@ -232,7 +236,7 @@ def test_validate_epoch_uses_amp_context(monkeypatch) -> None:
         batch_size=None,
     )
 
-    trainer.validate_epoch(loader)
+    trainer.validate_epoch(loader, "Validating detector epoch 1/100")
 
     assert calls == ["enter", "exit"]
 
@@ -280,6 +284,6 @@ def test_trainer_handles_zero_epochs_and_amp_training(
         batch_size=None,
     )
 
-    trainer.train_epoch(loader)
+    trainer.train_epoch(loader, "Training detector epoch 1/1")
 
     assert calls == ["enter", "exit"]

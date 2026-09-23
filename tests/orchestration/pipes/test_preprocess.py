@@ -114,36 +114,6 @@ def test_execute_writes_volumes_masks_and_complete_manifest(
     assert Path(variant.frst_path).is_file()
 
 
-def test_execute_tracks_subject_progress(tmp_path: Path, monkeypatch) -> None:
-    dataset_dir = tmp_path / "dataset"
-    _write_raw_dataset(dataset_dir)
-    tracked = {}
-
-    def fake_track(items, description):
-        tracked["items"] = items
-        tracked["description"] = description
-        return items
-
-    monkeypatch.setattr(preprocess.progress, "track", fake_track)
-    monkeypatch.setattr(
-        preprocess.processor,
-        "preprocess",
-        lambda preprocess_input: SimpleNamespace(
-            volume=np.ones((32, 32, 32)),
-            mask=None,
-            affine=np.eye(4),
-            bounding_box=((0, 32), (0, 32), (0, 32)),
-        ),
-    )
-
-    preprocess.execute(
-        PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1)
-    )
-
-    assert tracked["description"] == "Preprocessing subjects"
-    assert len(tracked["items"]) == 1
-
-
 def test_execute_writes_maskless_subject_without_mask_output(
     tmp_path: Path, monkeypatch
 ) -> None:

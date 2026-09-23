@@ -935,10 +935,12 @@ def test_evaluate_config_derives_paths_from_experiment(tmp_path: Path) -> None:
     detector_checkpoint.touch()
     student_checkpoint.touch()
 
-    config = EvaluateConfig(
-        dataset_dir=dataset_dir,
-        experiment_dir=experiment_dir,
-        device="cpu",
+    config = EvaluateConfig.model_validate(
+        {
+            "dataset_dir": dataset_dir,
+            "experiment_dir": experiment_dir,
+            "device": "cpu",
+        }
     )
 
     assert config.output_dir == experiment_dir
@@ -959,10 +961,12 @@ def test_evaluate_config_rejects_non_complete_experiment_manifest(
     ).write(layout.train_manifest_path())
 
     with pytest.raises(ValidationError, match="status 'running'"):
-        EvaluateConfig(
-            dataset_dir=dataset_dir,
-            experiment_dir=tmp_path / "experiment",
-            device="cpu",
+        EvaluateConfig.model_validate(
+            {
+                "dataset_dir": dataset_dir,
+                "experiment_dir": tmp_path / "experiment",
+                "device": "cpu",
+            }
         )
 
 
@@ -985,10 +989,12 @@ def test_evaluate_config_rejects_mismatched_preprocessed_manifest(
     ).write(manifest_path)
 
     with pytest.raises(ValidationError, match="different preprocessed manifest"):
-        EvaluateConfig(
-            dataset_dir=dataset_dir,
-            experiment_dir=tmp_path / "experiment",
-            device="cpu",
+        EvaluateConfig.model_validate(
+            {
+                "dataset_dir": dataset_dir,
+                "experiment_dir": tmp_path / "experiment",
+                "device": "cpu",
+            }
         )
 
 
@@ -1006,10 +1012,12 @@ def test_evaluate_config_rejects_mismatched_train_manifest_split(
     )
 
     with pytest.raises(ValidationError, match="different split manifest"):
-        EvaluateConfig(
-            dataset_dir=dataset_dir,
-            experiment_dir=tmp_path / "experiment",
-            device="cpu",
+        EvaluateConfig.model_validate(
+            {
+                "dataset_dir": dataset_dir,
+                "experiment_dir": tmp_path / "experiment",
+                "device": "cpu",
+            }
         )
 
 
@@ -1019,11 +1027,13 @@ def test_evaluate_config_requires_complete_explicit_mode(tmp_path: Path) -> None
     detector_checkpoint.touch()
 
     with pytest.raises(ValidationError, match="student_checkpoint_path"):
-        EvaluateConfig(
-            dataset_dir=dataset_dir,
-            output_dir=tmp_path / "evaluation",
-            detector_checkpoint_path=detector_checkpoint,
-            device="cpu",
+        EvaluateConfig.model_validate(
+            {
+                "dataset_dir": dataset_dir,
+                "output_dir": tmp_path / "evaluation",
+                "detector_checkpoint_path": detector_checkpoint,
+                "device": "cpu",
+            }
         )
 
 
@@ -1077,7 +1087,9 @@ def test_evaluate_config_requires_explicit_values_without_experiment(
     tmp_path: Path,
 ) -> None:
     with pytest.raises(ValidationError, match="output_dir"):
-        EvaluateConfig(dataset_dir=tmp_path, device="cpu")
+        EvaluateConfig.model_validate(
+            {"dataset_dir": tmp_path, "device": "cpu"}
+        )
 
 
 def test_target_centered_config_validates_threshold(tmp_path: Path) -> None:

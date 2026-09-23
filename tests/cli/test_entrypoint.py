@@ -17,6 +17,7 @@ def test_progress_reporter_is_always_available() -> None:
     entrypoint.configure_cli(quiet=False, verbose=False)
 
     assert progress._track is not silent_track
+    assert list(progress.track([1], "test")) == [1]
 
 
 def test_quiet_disables_progress() -> None:

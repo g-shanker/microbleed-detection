@@ -72,13 +72,16 @@ class Trainer:
         validation_loader: DataLoader,
         description: str,
     ) -> list[EpochLoss]:
-        for epoch in progress.track(
-            range(self.hyperparameters.max_epochs), description
-        ):
+        for epoch in range(self.hyperparameters.max_epochs):
             if epoch < self.start_epoch:
                 continue
-            training_loss = self.train_epoch(train_loader)
-            val_loss = self.validate_epoch(validation_loader)
+            epoch_label = f"epoch {epoch + 1}/{self.hyperparameters.max_epochs}"
+            training_loss = self.train_epoch(
+                train_loader, f"Training {description} {epoch_label}"
+            )
+            val_loss = self.validate_epoch(
+                validation_loader, f"Validating {description} {epoch_label}"
+            )
             self.history.append(
                 EpochLoss(
                     epoch=epoch + 1,
@@ -96,37 +99,44 @@ class Trainer:
             else:
                 self.epochs_without_improvement += 1
 
+            logger.info(
+                "%s epoch %d/%d: training_loss=%.6f validation_loss=%.6f "
+                "best_validation_loss=%.6f epochs_without_improvement=%d",
+                description,
+                epoch + 1,
+                self.hyperparameters.max_epochs,
+                training_loss,
+                val_loss,
+                self.best_val_loss,
+                self.epochs_without_improvement,
+            )
+
             self.save_checkpoint(epoch, self.latest_checkpoint)
             if is_best:
                 self.save_checkpoint(epoch, self.best_checkpoint)
-            logger.debug(
-                "Epoch %d: train_loss=%.6f, validation_loss=%.6f, "
-                "best=%s, learning_rate=%.6g, patience=%d/%d.",
-                epoch + 1,
-                training_loss,
-                val_loss,
-                is_best,
-                self.optimizer.param_groups[0]["lr"],
-                self.epochs_without_improvement,
-                self.hyperparameters.patience,
-            )
             if self.epochs_without_improvement >= self.hyperparameters.patience:
                 logger.info(
-                    "Early stopping after epoch %d; validation loss did not "
-                    "improve for %d epochs.",
+                    "%s stopped early at epoch %d/%d after %d epochs without "
+                    "improvement",
+                    description,
                     epoch + 1,
-                    self.hyperparameters.patience,
+                    self.hyperparameters.max_epochs,
+                    self.epochs_without_improvement,
                 )
                 break
         return self.history
 
-    def validate_epoch(self, dataloader: DataLoader) -> float:
+    def validate_epoch(self, dataloader: DataLoader, description: str) -> float:
         self.model.eval()
         running_loss = 0.0
         sample_count = 0
 
         with torch.no_grad():
-            for batch in dataloader:
+            batches = progress.track(
+                dataloader,
+                description=description,
+            )
+            for batch in batches:
                 if self.use_amp:
                     with autocast(
                         device_type=self.device.type,
@@ -160,19 +170,17 @@ class Trainer:
         self.epochs_without_improvement = checkpoint["epochs_without_improvement"]
         self.start_epoch = checkpoint["epoch"] + 1
         self.history = checkpoint.get("history", [])
-        logger.info(
-            "Resumed training from %s at epoch %d with %d recorded epochs.",
-            self.latest_checkpoint,
-            self.start_epoch,
-            len(self.history),
-        )
 
-    def train_epoch(self, dataloader: DataLoader) -> float:
+    def train_epoch(self, dataloader: DataLoader, description: str) -> float:
         self.model.train()
         running_loss = 0.0
         sample_count = 0
 
-        for batch in dataloader:
+        batches = progress.track(
+            dataloader,
+            description=description,
+        )
+        for batch in batches:
             self.optimizer.zero_grad(set_to_none=True)
             if self.use_amp:
                 with autocast(device_type=self.device.type, dtype=utils.AMP_DTYPE):
@@ -208,5 +216,4 @@ class Trainer:
         }
 
         io.save_checkpoint(state, path)
-        logger.debug("Saved checkpoint for epoch %d to %s.", epoch + 1, path)
 

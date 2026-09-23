@@ -161,10 +161,12 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
     )
 
     evaluate.execute(
-        EvaluateConfig(
-            experiment_dir=experiment_dir,
-            dataset_dir=dataset_dir,
-            device="cpu",
+        EvaluateConfig.model_validate(
+            {
+                "experiment_dir": experiment_dir,
+                "dataset_dir": dataset_dir,
+                "device": "cpu",
+            }
         )
     )
 
@@ -298,7 +300,7 @@ def test_evaluate_subjects_rejects_incomplete_inference_manifest(
             cast(EvaluateConfig, SimpleNamespace(device="cpu")),
             dataset_dir,
             experiment_layout,
-            [subject],
+            [(subject.subject_id, "reference")],
         )
     except ValueError as error:
         assert "consumer may only read a complete manifest" in str(error)
