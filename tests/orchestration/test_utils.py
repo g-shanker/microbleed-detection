@@ -41,6 +41,8 @@ def test_resolve_subjects_preserves_requested_id_order() -> None:
     subjects = [
         PreprocessedSubject(
             subject_id=subject_id,
+            original_volume_path="original-volume",
+            bounding_box=((0, 1), (0, 1), (0, 1)),
             variants=[
                 PreprocessedVariant(
                     volume_path="volume",

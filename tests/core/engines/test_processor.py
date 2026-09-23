@@ -10,7 +10,7 @@ import torch.nn as nn
 from skimage.measure._regionprops import RegionProperties
 
 from microbleednet.core import utils
-from microbleednet.core.datamodels import PreprocessInput
+from microbleednet.core.datamodels import Modality, PreprocessInput
 from microbleednet.core.engines import inference, processor
 
 
@@ -23,7 +23,9 @@ def _preprocess(
     mask: nib.Nifti1Image | None,
     modality: str,
 ):
-    return processor.preprocess(PreprocessInput(volume, mask, modality))
+    return processor.preprocess(
+        PreprocessInput(volume, mask, cast(Modality, modality))
+    )
 
 
 def _stub_processing_steps(monkeypatch) -> tuple[Mock, Mock]:
@@ -91,7 +93,7 @@ def test_preprocess_rejects_mask_with_different_affine() -> None:
 
 
 def test_preprocess_rejects_non_3d_volume() -> None:
-    volume = _volume((2, 2, 2, 1))
+    volume = nib.Nifti1Image(np.ones((2, 2, 2, 1)), np.eye(4))
 
     with pytest.raises(ValueError, match="must be 3D"):
         _preprocess(volume, volume, "QSM")

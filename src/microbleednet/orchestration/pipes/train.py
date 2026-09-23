@@ -145,9 +145,6 @@ def write_train_manifest(
         discriminator_patch_size=PatchSizes.DISCRIMINATOR,
         num_workers=config.num_workers,
         pin_memory=config.pin_memory,
-        detector_hyperparameters=config.detector_hyperparameters,
-        teacher_hyperparameters=config.teacher_hyperparameters,
-        student_hyperparameters=config.student_hyperparameters,
     ).write(experiment_layout.train_manifest_path())
 
 
@@ -199,6 +196,7 @@ def train_stage(
     TrainStageManifest(
         status=ManifestStatus.RUNNING,
         stage=stage,
+        hyperparameters=hyperparameters,
         history=[],
     ).write(experiment_layout.stage_manifest_path(stage))
     if resume and trainer.latest_checkpoint.is_file():
@@ -207,13 +205,14 @@ def train_stage(
     TrainStageManifest(
         status=ManifestStatus.COMPLETE,
         stage=stage,
+        hyperparameters=hyperparameters,
         history=history,
     ).write(experiment_layout.stage_manifest_path(stage))
     trainer.latest_checkpoint.unlink(missing_ok=True)
     logger.info("Completed training stage %s after %d epochs.", stage, len(history))
 
 
-def completed_stage(
+def is_stage_completed(
     experiment_layout: ExperimentLayout, stage: StageName, resume: bool
 ) -> bool:
     if not resume:
@@ -248,7 +247,7 @@ def train_detector(
     device: torch.device,
     config: TrainConfig,
 ) -> None:
-    if completed_stage(
+    if is_stage_completed(
         experiment_layout, DETECTOR_STAGE, config.resume
     ):
         return
@@ -298,7 +297,7 @@ def train_teacher(
     device: torch.device,
     config: TrainConfig,
 ) -> None:
-    if completed_stage(
+    if is_stage_completed(
         experiment_layout, TEACHER_STAGE, config.resume
     ):
         return
@@ -360,7 +359,7 @@ def train_student(
     device: torch.device,
     config: TrainConfig,
 ) -> None:
-    if completed_stage(
+    if is_stage_completed(
         experiment_layout, STUDENT_STAGE, config.resume
     ):
         return

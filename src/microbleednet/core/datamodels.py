@@ -54,56 +54,39 @@ class Hyperparameters(FrozenModel):
     """Optimization and training-loop settings for a model run."""
 
     batch_size: int = Field(
-        default=8, gt=0, description="Samples per training batch shared by all models."
+        gt=0, description="Samples per training batch shared by all models."
     )
     max_epochs: int = Field(
-        default=100,
-        ge=0,
-        description="Maximum number of epochs permitted for all models.",
+        ge=0, description="Maximum number of epochs permitted for all models."
     )
     patience: int = Field(
-        default=20,
         ge=0,
         description="Epochs without validation improvement allowed for all models.",
     )
     learning_rate: float = Field(
-        default=1e-3,
-        gt=0,
-        description="Initial learning rate shared by all model optimizers.",
+        gt=0, description="Initial learning rate shared by all model optimizers."
     )
     adam_epsilon: float = Field(
-        default=1e-4,
-        gt=0,
-        description="Adam numerical-stability epsilon shared by all models.",
+        gt=0, description="Adam numerical-stability epsilon shared by all models."
     )
     learning_rate_factor: float = Field(
-        default=0.1,
-        gt=0,
-        description="Shared factor applied when the learning rate decays.",
+        gt=0, description="Shared factor applied when the learning rate decays."
     )
     learning_rate_period: int = Field(
-        default=2,
-        gt=0,
-        description="Shared number of epochs between learning-rate decays.",
+        gt=0, description="Shared number of epochs between learning-rate decays."
     )
     minimum_learning_rate: float = Field(
-        default=1e-6,
-        gt=0,
-        description="Shared lower bound for the scheduled learning rate.",
+        gt=0, description="Shared lower bound for the scheduled learning rate."
     )
     weight_decay: float = Field(
-        default=0.0,
-        ge=0,
-        description="Shared L2 weight-decay coefficient for all optimizers.",
+        ge=0, description="Shared L2 weight-decay coefficient for all optimizers."
     )
     minimum_improvement: float = Field(
-        default=0.0,
         ge=0,
         description="Shared minimum validation-loss improvement considered meaningful.",
     )
     use_amp: bool = Field(
-        default=False,
-        description="Whether automatic mixed precision is enabled for all models.",
+        description="Whether automatic mixed precision is enabled for all models."
     )
 
 

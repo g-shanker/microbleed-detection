@@ -16,7 +16,6 @@ from ..datamodels import (
     EpochLoss,
     Hyperparameters,
 )
-from .evaluators import Evaluator
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +66,6 @@ class Trainer:
 
         self.best_val_loss = float("inf")
 
-        self.evaluator = Evaluator(
-            self.model,
-            self.task,
-            use_amp=self.use_amp,
-        )
-
     def fit(
         self,
         train_loader: DataLoader,
@@ -85,7 +78,7 @@ class Trainer:
             if epoch < self.start_epoch:
                 continue
             training_loss = self.train_epoch(train_loader)
-            val_loss = self.evaluator.validation_loss(validation_loader)
+            val_loss = self.validate_epoch(validation_loader)
             self.history.append(
                 EpochLoss(
                     epoch=epoch + 1,
@@ -126,6 +119,30 @@ class Trainer:
                 )
                 break
         return self.history
+
+    def validate_epoch(self, dataloader: DataLoader) -> float:
+        self.model.eval()
+        running_loss = 0.0
+        sample_count = 0
+
+        with torch.no_grad():
+            for batch in dataloader:
+                if self.use_amp:
+                    with autocast(
+                        device_type=self.device.type,
+                        dtype=utils.AMP_DTYPE,
+                    ):
+                        loss = self.task.validation_step(self.model, batch)
+                else:
+                    loss = self.task.validation_step(self.model, batch)
+                batch_size = batch.volume.shape[0]
+                running_loss += loss.item() * batch_size
+                sample_count += batch_size
+
+        if sample_count == 0:
+            raise ValueError("cannot calculate validation loss for an empty DataLoader")
+
+        return running_loss / sample_count
 
     def load_latest_checkpoint(self) -> None:
         if self.latest_checkpoint is None:

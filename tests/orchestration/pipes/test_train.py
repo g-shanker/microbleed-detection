@@ -1,11 +1,13 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 import torch.nn as nn
 
 from microbleednet.core.common.models import CandidateDetector
-from microbleednet.orchestration.configs import TrainConfig
+from microbleednet.core.datamodels import PatchSizes
+from microbleednet.orchestration.configs import NonOverlappingPatchConfig, TrainConfig
 from microbleednet.orchestration.layouts import (
     DETECTOR_STAGE,
     STUDENT_STAGE,
@@ -25,6 +27,22 @@ from microbleednet.orchestration.manifests import (
 from microbleednet.orchestration.pipes import train
 
 
+def _hyperparameters(batch_size: int, max_epochs: int = 100) -> train.Hyperparameters:
+    return train.Hyperparameters(
+        batch_size=batch_size,
+        max_epochs=max_epochs,
+        patience=20,
+        learning_rate=1e-3,
+        adam_epsilon=1e-4,
+        learning_rate_factor=0.1,
+        learning_rate_period=2,
+        minimum_learning_rate=1e-6,
+        weight_decay=0.0,
+        minimum_improvement=0.0,
+        use_amp=False,
+    )
+
+
 def _subjects(count: int, directory: Path) -> list[PreprocessedSubject]:
     directory.mkdir(parents=True, exist_ok=True)
     subjects = []
@@ -36,6 +54,8 @@ def _subjects(count: int, directory: Path) -> list[PreprocessedSubject]:
         subjects.append(
             PreprocessedSubject(
                 subject_id=f"subject-{index}",
+                original_volume_path=str(volume_path),
+                bounding_box=((0, 1), (0, 1), (0, 1)),
                 variants=[
                     PreprocessedVariant(
                         volume_path=str(volume_path),
@@ -61,6 +81,7 @@ def test_execute_runs_stages_with_configured_training_values(
         updated_at=now,
         subjects=subjects,
         augmentation_factor=10,
+        raw_manifest_fingerprint="test-raw-manifest",
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
     calls: list[tuple[str, list[str], list[str], tuple[object, ...]]] = []
 
@@ -115,12 +136,13 @@ def test_execute_runs_stages_with_configured_training_values(
         ExperimentLayout(experiment_dir=experiment_dir).split_manifest_path()
     )
 
-    detector_hyperparameters = train.Hyperparameters(batch_size=3, max_epochs=7)
-    teacher_hyperparameters = train.Hyperparameters(batch_size=4, max_epochs=8)
-    student_hyperparameters = train.Hyperparameters(batch_size=5, max_epochs=9)
+    detector_hyperparameters = _hyperparameters(3, 7)
+    teacher_hyperparameters = _hyperparameters(4, 8)
+    student_hyperparameters = _hyperparameters(5, 9)
     config = TrainConfig(
         dataset_dir=dataset_dir,
         experiment_dir=experiment_dir,
+        device="cpu",
         seed=42,
         detector_candidate_threshold=0.7,
         detector_augmentation_factor=8,
@@ -154,9 +176,6 @@ def test_execute_runs_stages_with_configured_training_values(
     assert train_manifest.discriminator_augmentation_factor == 4
     assert train_manifest.num_workers == 2
     assert train_manifest.pin_memory is True
-    assert train_manifest.detector_hyperparameters == detector_hyperparameters
-    assert train_manifest.teacher_hyperparameters == teacher_hyperparameters
-    assert train_manifest.student_hyperparameters == student_hyperparameters
     assert (
         ExperimentLayout(experiment_dir=experiment_dir).train_manifest_path()
         == experiment_dir / "manifests" / "train.json"
@@ -275,6 +294,7 @@ def test_stage_functions_apply_fixed_training_recipe(
         created_at=now,
         updated_at=now,
         subjects=[],
+        raw_manifest_fingerprint="test-raw-manifest",
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
     preprocessed_manifest = PreprocessedDatasetManifest.read(
         DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path()
@@ -298,14 +318,15 @@ def test_stage_functions_apply_fixed_training_recipe(
     config = TrainConfig(
         dataset_dir=dataset_dir,
         experiment_dir=tmp_path / "experiment",
+        device="cpu",
         detector_candidate_threshold=0.7,
         detector_augmentation_factor=8,
         discriminator_augmentation_factor=4,
         num_workers=2,
         pin_memory=True,
-        detector_hyperparameters=train.Hyperparameters(batch_size=3),
-        teacher_hyperparameters=train.Hyperparameters(batch_size=4),
-        student_hyperparameters=train.Hyperparameters(batch_size=5),
+        detector_hyperparameters=_hyperparameters(3),
+        teacher_hyperparameters=_hyperparameters(4),
+        student_hyperparameters=_hyperparameters(5),
     )
     train.train_detector(subjects, subjects, layout, device, config)
     train.train_teacher(subjects, subjects, layout, device, config)
@@ -335,3 +356,161 @@ def test_stage_functions_apply_fixed_training_recipe(
         layout.best_checkpoint_path("detector"),
         layout.best_checkpoint_path("teacher"),
     ]
+
+
+def test_train_stage_resumes_from_latest_checkpoint(
+    tmp_path: Path, monkeypatch
+) -> None:
+    resumed = []
+    fit_calls = []
+
+    class FakeDataset:
+        def __init__(self, patches) -> None:
+            self.patches = patches
+
+        def __len__(self) -> int:
+            return len(self.patches)
+
+    class FakeTrainer:
+        def __init__(
+            self, model, task, best_checkpoint, hyperparameters, latest_checkpoint
+        ) -> None:
+            latest_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+            latest_checkpoint.write_bytes(b"checkpoint")
+            self.latest_checkpoint = latest_checkpoint
+
+        def load_latest_checkpoint(self) -> None:
+            resumed.append(True)
+
+        def fit(self, train_loader, validation_loader, description) -> list:
+            fit_calls.append(description)
+            return []
+
+    monkeypatch.setattr(train, "DataLoader", lambda *args, **kwargs: object())
+    monkeypatch.setattr(train, "EqualBatchSampler", lambda *args, **kwargs: object())
+    monkeypatch.setattr(train, "SequentialSampler", lambda dataset: object())
+    monkeypatch.setattr(train, "BatchSampler", lambda *args, **kwargs: object())
+    monkeypatch.setattr(train, "Trainer", FakeTrainer)
+
+    experiment_layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
+    train.train_stage(
+        nn.Linear(1, 1),
+        SimpleNamespace(),  # pyright: ignore[reportArgumentType]
+        FakeDataset([object()]),  # pyright: ignore[reportArgumentType]
+        FakeDataset([object()]),  # pyright: ignore[reportArgumentType]
+        experiment_layout,
+        DETECTOR_STAGE,
+        _hyperparameters(1, 1),
+        num_workers=0,
+        pin_memory=False,
+        resume=True,
+    )
+
+    assert resumed == [True]
+    assert fit_calls == ["Training detector"]
+
+
+def test_completed_stage_respects_resume_and_manifest_status(
+    tmp_path: Path, monkeypatch
+) -> None:
+    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
+    stage_manifest_path = layout.stage_manifest_path(DETECTOR_STAGE)
+    stage_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    assert train.is_stage_completed(layout, DETECTOR_STAGE, resume=False) is False
+    assert train.is_stage_completed(layout, DETECTOR_STAGE, resume=True) is False
+
+    stage_manifest_path.touch()
+    monkeypatch.setattr(
+        train.TrainStageManifest,
+        "read",
+        lambda _: SimpleNamespace(status=ManifestStatus.RUNNING),
+    )
+    assert train.is_stage_completed(layout, DETECTOR_STAGE, resume=True) is False
+
+    monkeypatch.setattr(
+        train.TrainStageManifest,
+        "read",
+        lambda _: SimpleNamespace(status=ManifestStatus.COMPLETE),
+    )
+    assert train.is_stage_completed(layout, DETECTOR_STAGE, resume=True) is True
+
+
+def test_extract_patch_records_rejects_incomplete_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = NonOverlappingPatchConfig(
+        experiment_layout=ExperimentLayout(experiment_dir=tmp_path / "experiment"),
+        stage=DETECTOR_STAGE,
+        split="train",
+        subjects=_subjects(1, tmp_path / "inputs"),
+        patch_size=PatchSizes.DETECTOR,
+        augmentation_factor=1,
+    )
+    monkeypatch.setattr(train.patch, "execute", lambda _: None)
+    monkeypatch.setattr(
+        train.PatchManifest,
+        "read",
+        lambda _: SimpleNamespace(status=ManifestStatus.RUNNING, records=[]),
+    )
+
+    with pytest.raises(ValueError, match="consumer may only read a complete manifest"):
+        train.extract_patch_records(config)
+
+
+@pytest.mark.parametrize(
+    ("stage_function", "loader_attr"),
+    [
+        ("train_detector", None),
+        ("train_teacher", "load_model_weights"),
+        ("train_student", "load_model_weights"),
+    ],
+)
+def test_stage_functions_return_early_when_stage_already_complete(
+    tmp_path: Path,
+    monkeypatch,
+    stage_function: str,
+    loader_attr: str | None,
+) -> None:
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+    now = timestamp()
+    PreprocessedDatasetManifest(
+        status=ManifestStatus.COMPLETE,
+        created_at=now,
+        updated_at=now,
+        subjects=[],
+        raw_manifest_fingerprint="test-raw-manifest",
+    ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
+    monkeypatch.setattr(train, "is_stage_completed", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        train,
+        "extract_patch_records",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("unexpected extraction")
+            ),
+    )
+    monkeypatch.setattr(
+        train,
+        "train_stage",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("unexpected training")
+            ),
+    )
+    if loader_attr is not None:
+        monkeypatch.setattr(
+            train.core_io,
+            loader_attr,
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("unexpected checkpoint load")
+            ),
+        )
+
+    stage = getattr(train, stage_function)
+    stage(
+        _subjects(1, tmp_path / "inputs"),
+        _subjects(1, tmp_path / "validation"),
+        ExperimentLayout(experiment_dir=tmp_path / "experiment"),
+        torch.device("cpu"),
+        SimpleNamespace(resume=True),
+    )

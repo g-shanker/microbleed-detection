@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import numpy as np
 
@@ -9,8 +10,6 @@ from microbleednet.core.common.metrics import aggregate_metrics, score_masks
 from microbleednet.orchestration import configs
 from microbleednet.orchestration.configs import (
     EvaluateConfig,
-    EvaluateExperimentConfig,
-    EvaluateExplicitConfig,
 )
 from microbleednet.orchestration.layouts import (
     DETECTOR_STAGE,
@@ -90,6 +89,8 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
     dataset_dir.mkdir()
     subject = PreprocessedSubject(
         subject_id="subject-1",
+        original_volume_path="original-volume",
+        bounding_box=((0, 1), (0, 1), (0, 1)),
         variants=[
             PreprocessedVariant(
                 volume_path="volume", mask_path="reference", frst_path="frst"
@@ -149,8 +150,8 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
     )
     monkeypatch.setattr(
         evaluate.infer,
-        "execute",
-        lambda _: experiment_layout.inference_manifest_path().touch(),
+        "infer_subjects",
+        lambda *args: experiment_layout.inference_manifest_path().touch(),
     )
     monkeypatch.setattr(evaluate.core_io, "load_volume", lambda path: path)
     monkeypatch.setattr(
@@ -161,9 +162,9 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
 
     evaluate.execute(
         EvaluateConfig(
-            experiment=EvaluateExperimentConfig(
-                experiment_dir=experiment_dir, dataset_dir=dataset_dir
-            )
+            experiment_dir=experiment_dir,
+            dataset_dir=dataset_dir,
+            device="cpu",
         )
     )
 
@@ -248,20 +249,18 @@ def test_execute_explicit_checkpoints_evaluates_all_subjects(
 
     evaluate.execute(
         EvaluateConfig(
-            explicit=EvaluateExplicitConfig(
-                dataset_dir=dataset_dir,
-                output_dir=output_dir,
-                detector_checkpoint_path=detector_checkpoint,
-                student_checkpoint_path=student_checkpoint,
-            )
+            dataset_dir=dataset_dir,
+            output_dir=output_dir,
+            detector_checkpoint_path=detector_checkpoint,
+            student_checkpoint_path=student_checkpoint,
+            device="cpu",
         )
     )
 
     infer_config = captured["config"]
-    assert infer_config.explicit is not None
-    assert infer_config.explicit.dataset_dir == dataset_dir
-    assert infer_config.explicit.detector_checkpoint_path == detector_checkpoint
-    assert infer_config.explicit.student_checkpoint_path == student_checkpoint
+    assert infer_config.dataset_dir == dataset_dir
+    assert infer_config.detector_checkpoint_path == detector_checkpoint
+    assert infer_config.student_checkpoint_path == student_checkpoint
     manifest = EvaluateManifest.read(
         ExperimentLayout(experiment_dir=output_dir).evaluation_manifest_path()
     )
@@ -269,3 +268,39 @@ def test_execute_explicit_checkpoints_evaluates_all_subjects(
         "subject-0",
         "subject-1",
     ]
+
+
+def test_evaluate_subjects_rejects_incomplete_inference_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    experiment_layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+    subject = PreprocessedSubject(
+        subject_id="subject-1",
+        original_volume_path="original-volume",
+        bounding_box=((0, 1), (0, 1), (0, 1)),
+        variants=[
+            PreprocessedVariant(
+                volume_path="volume", mask_path="reference", frst_path="frst"
+            )
+        ],
+    )
+    monkeypatch.setattr(evaluate.infer, "execute", lambda _: None)
+    monkeypatch.setattr(
+        evaluate.InferManifest,
+        "read",
+        lambda _: SimpleNamespace(status=ManifestStatus.RUNNING, subjects=[]),
+    )
+
+    try:
+        evaluate.evaluate_subjects(
+            cast(EvaluateConfig, SimpleNamespace(device="cpu")),
+            dataset_dir,
+            experiment_layout,
+            [subject],
+        )
+    except ValueError as error:
+        assert "consumer may only read a complete manifest" in str(error)
+    else:
+        raise AssertionError("incomplete inference manifest must fail")

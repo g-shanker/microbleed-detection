@@ -64,14 +64,13 @@ def execute(config: PreprocessConfig) -> None:
             skipped_subjects += 1
             continue
 
-        preprocessed_subjects.append(
-            preprocess_subject(
-                subject,
-                source_modalities[subject.source_id],
-                layout,
-                config.augmentation_factor,
-            )
+        preprocessed_subject = preprocess_subject(
+            subject,
+            source_modalities[subject.source_id],
+            layout,
+            config.augmentation_factor,
         )
+        preprocessed_subjects.append(preprocessed_subject)
         PreprocessedDatasetManifest(
             status=ManifestStatus.RUNNING,
             subjects=preprocessed_subjects,
@@ -142,4 +141,9 @@ def preprocess_subject(
             )
         )
 
-    return PreprocessedSubject(subject_id=subject.subject_id, variants=variants)
+    return PreprocessedSubject(
+        subject_id=subject.subject_id,
+        original_volume_path=subject.volume_path,
+        bounding_box=preprocess_output.bounding_box,
+        variants=variants,
+    )

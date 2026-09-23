@@ -20,6 +20,15 @@ changing execution behavior.
 Build the reproducibility foundation before relying on persisted training state.
 
 * Record the provenance needed to reproduce an execution.
+* Consider recording input/recipe and output-content fingerprints for each
+  command manifest, excluding lifecycle metadata and the fingerprint fields
+  themselves from output hashing.
+* Store the complete train, validation, and test `PreprocessedSubject` lists in
+  the split manifest so it is a self-contained dataset snapshot. Revisit the
+  preprocessed-manifest fingerprint and remove redundant dataset-directory
+  inputs from train and experiment-based evaluation configs, while validating
+  that referenced files still exist and documenting the absolute-path
+  portability tradeoff.
 * Add global random seeding and deterministic PyTorch settings where supported.
 * Seed DataLoader workers and document any remaining nondeterministic behavior.
 
