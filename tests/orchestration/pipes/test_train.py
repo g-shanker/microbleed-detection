@@ -344,9 +344,9 @@ def test_stage_functions_apply_fixed_training_recipe(
     assert patch_calls[4].detector is patch_calls[5].detector
     assert len(trainer_calls) == 6
     assert [call[2] for call in trainer_calls[1::2]] == [
-        "Training detector",
-        "Training teacher",
-        "Training student",
+        "detector",
+        "teacher",
+        "student",
     ]
     assert all(call["num_workers"] == 2 for call in loader_calls)
     assert all(call["pin_memory"] is True for call in loader_calls)
@@ -407,7 +407,7 @@ def test_train_stage_resumes_from_latest_checkpoint(
     )
 
     assert resumed == [True]
-    assert fit_calls == ["Training detector"]
+    assert fit_calls == ["detector"]
 
 
 def test_completed_stage_respects_resume_and_manifest_status(

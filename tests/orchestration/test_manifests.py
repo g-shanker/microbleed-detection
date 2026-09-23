@@ -41,7 +41,7 @@ def _hyperparameters(batch_size: int) -> Hyperparameters:
 
 def _envelope(**overrides: object) -> dict:
     now = timestamp()
-    base = {
+    base: dict[str, object] = {
         "status": ManifestStatus.COMPLETE.value,
         "created_at": now,
         "updated_at": now,

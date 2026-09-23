@@ -1,6 +1,3 @@
-import logging
-from time import perf_counter
-
 import numpy as np
 from joblib import Parallel, delayed
 from scipy.ndimage import binary_dilation, convolve
@@ -22,23 +19,14 @@ MINIMUM_VESSEL_ECCENTRICITY = 0.9
 MAXIMUM_VESSEL_SOLIDITY = 0.5
 VESSEL_CONNECTIVITY = 1
 
-logger = logging.getLogger(__name__)
-
-
 def apply(volume: np.ndarray) -> np.ndarray:
     """
     Inpaint vessels in the given volume.
     """
-    started_at = perf_counter()
     vessel_mask = get_volume_vessel_mask(volume)
     vessel_mask = binary_dilation(vessel_mask, iterations=1)
     inpainted_volume = inpaint_with_neighborhood_mean(volume, vessel_mask)
 
-    logger.debug(
-        "Vessel inpainting completed in %.2fs for volume shape %s.",
-        perf_counter() - started_at,
-        volume.shape,
-    )
     return inpainted_volume
 
 
@@ -56,7 +44,6 @@ def get_volume_vessel_mask(volume: np.ndarray) -> np.ndarray:
     for slice_idx, vessel_mask_slice in enumerate(parallel_generator):
         vessel_mask[:, :, slice_idx] = vessel_mask_slice
 
-    logger.debug("Computed vessel mask for %d slices.", depth)
     return vessel_mask
 
 
@@ -159,10 +146,4 @@ def inpaint_with_neighborhood_mean(volume: np.ndarray, mask: np.ndarray) -> np.n
     if np.any(working_mask):
         raise ValueError("vessel mask contains unresolved voxels after inpainting")
 
-    logger.debug(
-        "Vessel inpainting resolved %d voxels in %d iterations.",
-        mask.sum(),
-        iteration_count,
-    )
-    
     return inpainted_volume

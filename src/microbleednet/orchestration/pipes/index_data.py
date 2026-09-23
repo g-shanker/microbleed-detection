@@ -22,7 +22,10 @@ logger = logging.getLogger(__name__)
 
 def execute(config: IndexDataConfig) -> None:
     logger.info(
-        "Indexing source '%s' from %s.", config.source_id, config.input_dir
+        "Indexing source %s from %s (masks=%s)",
+        config.source_id,
+        config.input_dir,
+        config.mask_dir is not None,
     )
     source, subjects = index_source(config)
 
@@ -40,11 +43,6 @@ def execute(config: IndexDataConfig) -> None:
             subjects=subjects,
         )
     else:
-        logger.info(
-            "Existing raw manifest found at %s; merging source '%s'.",
-            manifest_path,
-            source.source_id,
-        )
         raw_manifest = merge_source(
             existing_manifest,
             source=source,
@@ -52,10 +50,12 @@ def execute(config: IndexDataConfig) -> None:
         )
 
     raw_manifest.write(manifest_path)
+    manifest_action = "created" if existing_manifest is None else "merged"
     logger.info(
-        "Indexed %d subjects from source '%s'; manifest written to %s.",
+        "Indexed %d subjects from source %s; raw manifest %s at %s",
         len(subjects),
-        source.source_id,
+        config.source_id,
+        manifest_action,
         manifest_path,
     )
 
@@ -162,7 +162,7 @@ def build_subject_map(
     description: str,
 ) -> dict[str, Path]:
     subject_map: dict[str, Path] = {}
-    for path in progress.track(paths, description):
+    for path in progress.track(paths, description=description):
         subject_id = extract_subject_id(root_dir, path, pattern) or ""
         if not subject_id.strip():
             raise ValueError(f"path has an empty ID: {path}")

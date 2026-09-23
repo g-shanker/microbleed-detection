@@ -44,18 +44,23 @@ def execute(
             subject.variants[: config.augmentation_factor]
         )
     ]
-    empty_extractions = 0
-
+    logger.info(
+        "Extracting %s %s patches for %d subject-variant items",
+        config.stage,
+        config.split,
+        len(work_items),
+    )
     for subject, variant_index, variant in progress.track(
-        work_items, "Extracting patches"
+        work_items,
+        description=f"Extracting {config.stage} {config.split} patches",
     ):
         subject_id = subject.subject_id
+        assert variant.mask_path is not None
         volume = io.nifti_to_numpy(io.load_volume(variant.volume_path))
         mask = io.nifti_to_numpy(io.load_volume(variant.mask_path))
         frst = io.nifti_to_numpy(io.load_volume(variant.frst_path))
         extracted = extract(volume, mask, frst)
         if extracted.volumes.size == 0:
-            empty_extractions += 1
             continue
 
         volume_path = config.experiment_layout.patch_volume_path(
@@ -100,11 +105,8 @@ def execute(
         records=records,
     ).write(manifest_path)
     logger.info(
-        "Extracted %d patches from %d subject variants (%d empty); "
-        "manifest written to %s.",
+        "Patch extraction complete: %d patches written to %s",
         len(records),
-        len(work_items),
-        empty_extractions,
         manifest_path,
     )
 
