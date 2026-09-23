@@ -22,6 +22,8 @@ def _write_preprocessed_manifest(
     subjects = [
         PreprocessedSubject(
             subject_id=f"subject-{index}",
+            original_volume_path=f"volume-{index}",
+            bounding_box=((0, 1), (0, 1), (0, 1)),
             variants=[
                 PreprocessedVariant(
                     volume_path=f"volume-{index}",
@@ -42,6 +44,7 @@ def _write_preprocessed_manifest(
         created_at=now,
         updated_at=now,
         subjects=subjects,
+        raw_manifest_fingerprint="test-raw-manifest",
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
 
 

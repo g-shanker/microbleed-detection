@@ -100,6 +100,22 @@ def test_restore_cropped_volume_restores_shape_and_orientation() -> None:
     np.testing.assert_array_equal(restored.affine, original_volume.affine)
 
 
+def test_get_bounding_box_returns_positive_extent() -> None:
+    volume = np.zeros((3, 4, 5))
+    volume[1:3, 2:4, 3:5] = 1
+
+    assert volume_ops.get_bounding_box(volume) == (
+        (1, 3),
+        (2, 4),
+        (3, 5),
+    )
+
+
+def test_get_bounding_box_rejects_empty_volume() -> None:
+    with pytest.raises(ValueError, match="cannot crop an empty volume"):
+        volume_ops.get_bounding_box(np.zeros((2, 2, 2)))
+
+
 def test_extract_brain_requires_valid_fsldir(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("FSLDIR", str(tmp_path / "missing"))
     volume = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))

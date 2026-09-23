@@ -86,7 +86,10 @@ def test_execute_writes_volumes_masks_and_complete_manifest(
         fixture_shape = (32, 32, 32)
         output_mask = np.ones(fixture_shape, dtype=np.uint8)
         return SimpleNamespace(
-            volume=np.ones(fixture_shape), mask=output_mask, affine=np.eye(4)
+            volume=np.ones(fixture_shape),
+            mask=output_mask,
+            affine=np.eye(4),
+            bounding_box=((0, 32), (0, 32), (0, 32)),
         )
 
     monkeypatch.setattr(preprocess.processor, "preprocess", fake_preprocess)
@@ -103,7 +106,9 @@ def test_execute_writes_volumes_masks_and_complete_manifest(
     assert manifest.augmentation_factor == 2
     assert len(subject.variants) == 2
     variant = subject.variants[0]
+    assert variant.volume_path is not None
     assert Path(variant.volume_path).is_file()
+    assert variant.mask_path is not None
     assert Path(variant.mask_path).is_file()
     assert variant.frst_path is not None
     assert Path(variant.frst_path).is_file()
@@ -124,7 +129,10 @@ def test_execute_tracks_subject_progress(tmp_path: Path, monkeypatch) -> None:
         preprocess.processor,
         "preprocess",
         lambda preprocess_input: SimpleNamespace(
-            volume=np.ones((32, 32, 32)), mask=None, affine=np.eye(4)
+            volume=np.ones((32, 32, 32)),
+            mask=None,
+            affine=np.eye(4),
+            bounding_box=((0, 32), (0, 32), (0, 32)),
         ),
     )
 
@@ -147,7 +155,10 @@ def test_execute_writes_maskless_subject_without_mask_output(
         assert preprocess_input.modality == "QSM"
         fixture_shape = (32, 32, 32)
         return SimpleNamespace(
-            volume=np.ones(fixture_shape), mask=None, affine=np.eye(4)
+            volume=np.ones(fixture_shape),
+            mask=None,
+            affine=np.eye(4),
+            bounding_box=((0, 32), (0, 32), (0, 32)),
         )
 
     monkeypatch.setattr(preprocess.processor, "preprocess", fake_preprocess)
@@ -183,6 +194,7 @@ def test_execute_resume_skips_completed_subjects_after_failure(
             volume=np.ones((32, 32, 32)),
             mask=np.ones((32, 32, 32), dtype=np.uint8),
             affine=np.eye(4),
+            bounding_box=((0, 32), (0, 32), (0, 32)),
         )
 
     monkeypatch.setattr(
@@ -214,7 +226,7 @@ def test_execute_resume_skips_completed_subjects_after_failure(
     assert calls == 1
 
 
-def test_execute_resume_rejects_changed_augmentation_factor(
+def test_execute_resume_accepts_changed_augmentation_factor(
     tmp_path: Path, monkeypatch
 ) -> None:
     dataset_dir = tmp_path / "dataset"
@@ -228,14 +240,20 @@ def test_execute_resume_rejects_changed_augmentation_factor(
             volume=np.ones((32, 32, 32)),
             mask=np.ones((32, 32, 32), dtype=np.uint8),
             affine=np.eye(4),
+            bounding_box=((0, 32), (0, 32), (0, 32)),
         ),
     )
     preprocess.execute(config)
+    manifest_path = DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path()
+    PreprocessedDatasetManifest.read(manifest_path).model_copy(
+        update={"status": ManifestStatus.RUNNING}
+    ).write(manifest_path)
 
-    with pytest.raises(ValueError, match="augmentation factor has changed"):
-        PreprocessConfig(
-            dataset_dir=dataset_dir, augmentation_factor=2, resume=True
-        )
+    resumed = PreprocessConfig(
+        dataset_dir=dataset_dir, augmentation_factor=2, resume=True
+    )
+
+    assert resumed.resume is True
 
 
 def test_execute_resume_rejects_changed_raw_manifest(
@@ -251,9 +269,14 @@ def test_execute_resume_rejects_changed_raw_manifest(
             volume=np.ones((32, 32, 32)),
             mask=np.ones((32, 32, 32), dtype=np.uint8),
             affine=np.eye(4),
+            bounding_box=((0, 32), (0, 32), (0, 32)),
         ),
     )
     preprocess.execute(config)
+    manifest_path = DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path()
+    PreprocessedDatasetManifest.read(manifest_path).model_copy(
+        update={"status": ManifestStatus.RUNNING}
+    ).write(manifest_path)
 
     raw_manifest_path = DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path()
     raw_manifest = RawDatasetManifest.read(raw_manifest_path)

@@ -8,7 +8,6 @@ from torch.utils.data import DataLoader, Dataset
 from microbleednet.core.common.tasks import BaseTask
 from microbleednet.core.dataloading.datasets import SegmentationBatch
 from microbleednet.core.datamodels import EpochLoss, Hyperparameters
-from microbleednet.core.engines.evaluators import Evaluator
 from microbleednet.core.engines.trainers import Trainer
 
 
@@ -35,8 +34,26 @@ class BatchDataset(Dataset[SegmentationBatch]):
         return self.batches[index]
 
 
+def _hyperparameters(**overrides) -> Hyperparameters:
+    values = {
+        "batch_size": 8,
+        "max_epochs": 100,
+        "patience": 20,
+        "learning_rate": 1e-3,
+        "adam_epsilon": 1e-4,
+        "learning_rate_factor": 0.1,
+        "learning_rate_period": 2,
+        "minimum_learning_rate": 1e-6,
+        "weight_decay": 0.0,
+        "minimum_improvement": 0.0,
+        "use_amp": False,
+    }
+    values.update(overrides)
+    return Hyperparameters(**values)
+
+
 def _trainer(tmp_path: Path, **overrides) -> Trainer:
-    hyperparameters = Hyperparameters(**overrides)
+    hyperparameters = _hyperparameters(**overrides)
     return Trainer(
         nn.Linear(1, 1),
         RegressionTask(),
@@ -52,14 +69,14 @@ def test_fit_saves_and_restores_latest_checkpoint(tmp_path: Path, monkeypatch) -
         nn.Linear(1, 1),
         RegressionTask(),
         tmp_path / "best.pth",
-        Hyperparameters(max_epochs=2, patience=5),
+        _hyperparameters(max_epochs=2, patience=5),
         latest_checkpoint,
     )
     monkeypatch.setattr(trainer, "train_epoch", lambda loader: 2.0)
     validation_losses = iter([1.0, 2.0])
     monkeypatch.setattr(
-        trainer.evaluator,
-        "validation_loss",
+        trainer,
+        "validate_epoch",
         lambda loader: next(validation_losses),
     )
     empty_loader = DataLoader(BatchDataset([]), batch_size=None)
@@ -72,7 +89,7 @@ def test_fit_saves_and_restores_latest_checkpoint(tmp_path: Path, monkeypatch) -
         nn.Linear(1, 1),
         RegressionTask(),
         tmp_path / "best-resumed.pth",
-        Hyperparameters(max_epochs=3, patience=5),
+        _hyperparameters(max_epochs=3, patience=5),
         latest_checkpoint,
     )
     resumed.load_latest_checkpoint()
@@ -107,8 +124,8 @@ def test_fit_stops_at_patience_and_saves_best(
     monkeypatch.setattr(trainer, "train_epoch", lambda loader: 2.0)
     losses = iter([1.0, 1.0, 1.0])
     monkeypatch.setattr(
-        trainer.evaluator,
-        "validation_loss",
+        trainer,
+        "validate_epoch",
         lambda loader: next(losses),
     )
 
@@ -139,7 +156,7 @@ def test_fit_tracks_epochs_with_description(tmp_path: Path, monkeypatch) -> None
         "microbleednet.core.engines.trainers.progress.track", track
     )
     monkeypatch.setattr(trainer, "train_epoch", lambda loader: 2.0)
-    monkeypatch.setattr(trainer.evaluator, "validation_loss", lambda loader: 1.0)
+    monkeypatch.setattr(trainer, "validate_epoch", lambda loader: 1.0)
 
     empty_loader = DataLoader(BatchDataset([]), batch_size=None)
     trainer.fit(empty_loader, empty_loader, "Training detector")
@@ -159,9 +176,15 @@ def test_train_epoch_rejects_empty_loader(tmp_path: Path) -> None:
         raise AssertionError("empty training loader must fail")
 
 
-def test_evaluator_averages_batches_and_rejects_empty_loader() -> None:
+def test_validate_epoch_averages_batches_and_rejects_empty_loader() -> None:
     model = nn.Linear(1, 1)
-    evaluator = Evaluator(model, RegressionTask(), use_amp=False)
+    trainer = Trainer(
+        model,
+        RegressionTask(),
+        Path("best.pth"),
+        _hyperparameters(),
+        Path("latest.pth"),
+    )
     loader = DataLoader(
         BatchDataset(
             [
@@ -172,17 +195,17 @@ def test_evaluator_averages_batches_and_rejects_empty_loader() -> None:
         batch_size=None,
     )
 
-    assert evaluator.validation_loss(loader) >= 0
+    assert trainer.validate_epoch(loader) >= 0
 
     try:
-        evaluator.validation_loss(DataLoader(BatchDataset([]), batch_size=None))
+        trainer.validate_epoch(DataLoader(BatchDataset([]), batch_size=None))
     except ValueError as error:
         assert "empty DataLoader" in str(error)
     else:
         raise AssertionError("empty validation loader must fail")
 
 
-def test_evaluator_uses_amp_context(monkeypatch) -> None:
+def test_validate_epoch_uses_amp_context(monkeypatch) -> None:
     calls = []
 
     class Context:
@@ -193,18 +216,37 @@ def test_evaluator_uses_amp_context(monkeypatch) -> None:
             calls.append("exit")
 
     monkeypatch.setattr(
-        "microbleednet.core.engines.evaluators.autocast",
+        "microbleednet.core.engines.trainers.autocast",
         lambda **kwargs: Context(),
     )
-    evaluator = Evaluator(nn.Linear(1, 1), RegressionTask(), use_amp=True)
+    trainer = Trainer(
+        nn.Linear(1, 1),
+        RegressionTask(),
+        Path("best.pth"),
+        _hyperparameters(use_amp=True),
+        Path("latest.pth"),
+    )
+    trainer.use_amp = True
     loader = DataLoader(
         BatchDataset([SegmentationBatch(torch.ones(1, 1), torch.zeros(1, 1))]),
         batch_size=None,
     )
 
-    evaluator.validation_loss(loader)
+    trainer.validate_epoch(loader)
 
     assert calls == ["enter", "exit"]
+
+
+def test_load_latest_checkpoint_requires_configured_path(tmp_path: Path) -> None:
+    trainer = _trainer(tmp_path, max_epochs=1)
+    trainer.latest_checkpoint = None  # pyright: ignore[reportAttributeAccessIssue]
+
+    try:
+        trainer.load_latest_checkpoint()
+    except ValueError as error:
+        assert str(error) == "latest checkpoint path is not configured"
+    else:
+        raise AssertionError("missing latest checkpoint path must fail")
 
 
 def test_trainer_handles_zero_epochs_and_amp_training(

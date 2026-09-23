@@ -23,10 +23,25 @@ from microbleednet.orchestration.manifests import (
 )
 
 
+def _hyperparameters(batch_size: int) -> Hyperparameters:
+    return Hyperparameters(
+        batch_size=batch_size,
+        max_epochs=100,
+        patience=20,
+        learning_rate=1e-3,
+        adam_epsilon=1e-4,
+        learning_rate_factor=0.1,
+        learning_rate_period=2,
+        minimum_learning_rate=1e-6,
+        weight_decay=0.0,
+        minimum_improvement=0.0,
+        use_amp=False,
+    )
+
+
 def _envelope(**overrides: object) -> dict:
     now = timestamp()
     base = {
-        "schema_version": 1,
         "status": ManifestStatus.COMPLETE.value,
         "created_at": now,
         "updated_at": now,
@@ -65,16 +80,6 @@ def test_manifest_write_preserves_creation_timestamp_on_replacement(
     assert persisted["created_at"] != replacement.created_at
 
 
-def test_failed_manifest_requires_error_message() -> None:
-    with pytest.raises(ValidationError, match="nonempty error string"):
-        Manifest.model_validate(_envelope(status=ManifestStatus.FAILED.value))
-
-
-def test_non_failed_manifest_rejects_error_message() -> None:
-    with pytest.raises(ValidationError, match="only a failed manifest"):
-        Manifest.model_validate(_envelope(error="boom"))
-
-
 def test_raw_dataset_manifest_rejects_duplicate_subject_ids() -> None:
     subject = {
         "subject_id": "s1",
@@ -108,13 +113,6 @@ def test_raw_dataset_manifest_rejects_duplicate_source_ids() -> None:
         )
 
 
-def test_read_manifest_rejects_unversioned_payload(tmp_path: Path) -> None:
-    path = tmp_path / "raw.json"
-    core_io.write_json(path, {"status": "complete"})
-    with pytest.raises(ValueError, match="not a versioned manifest"):
-        RawDatasetManifest.read(path)
-
-
 def test_read_manifest_returns_incomplete_status(tmp_path: Path) -> None:
     path = tmp_path / "raw.json"
     core_io.write_json(
@@ -142,7 +140,6 @@ def test_read_manifest_rejects_payload_that_fails_schema_validation(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "raw.json"
-    # schema_version is present, but required manifest fields are missing.
     core_io.write_json(path, _envelope())
     with pytest.raises(ValueError, match="invalid manifest at"):
         RawDatasetManifest.read(path)
@@ -168,9 +165,6 @@ def test_train_manifest_round_trips_split_and_training_settings(
         discriminator_patch_size=24,
         num_workers=0,
         pin_memory=False,
-        detector_hyperparameters=Hyperparameters(batch_size=8),
-        teacher_hyperparameters=Hyperparameters(batch_size=9),
-        student_hyperparameters=Hyperparameters(batch_size=10),
     )
     path = tmp_path / "train.json"
 
@@ -180,9 +174,6 @@ def test_train_manifest_round_trips_split_and_training_settings(
     assert loaded.dataset_dir == "C:/datasets/preprocessed"
     assert loaded.device == "cuda:0"
     assert loaded.seed == 42
-    assert loaded.detector_hyperparameters.batch_size == 8
-    assert loaded.teacher_hyperparameters.batch_size == 9
-    assert loaded.student_hyperparameters.batch_size == 10
 
 
 def test_train_stage_manifest_round_trips_status_and_history(
@@ -191,6 +182,7 @@ def test_train_stage_manifest_round_trips_status_and_history(
     manifest = TrainStageManifest(
         status=ManifestStatus.COMPLETE,
         stage="detector",
+        hyperparameters=_hyperparameters(8),
         history=[
             {"epoch": 1, "training_loss": 2.0, "validation_loss": 1.0}
         ],
@@ -202,6 +194,7 @@ def test_train_stage_manifest_round_trips_status_and_history(
     loaded = TrainStageManifest.read(path)
     assert loaded.status is ManifestStatus.COMPLETE
     assert loaded.stage == "detector"
+    assert loaded.hyperparameters.batch_size == 8
     assert loaded.history == manifest.history
 
 

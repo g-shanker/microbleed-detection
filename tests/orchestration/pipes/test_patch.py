@@ -51,6 +51,8 @@ def _write_subject(
         )
     return PreprocessedSubject(
         subject_id=subject_id,
+        original_volume_path=str(volume_path),
+        bounding_box=((0, 1), (0, 1), (0, 1)),
         variants=variants,
     )
 
@@ -206,7 +208,7 @@ def test_execute_skips_subject_with_no_extracted_patches(
     subject = _write_subject(tmp_path / "inputs", "empty")
     config = NonOverlappingPatchConfig(
         experiment_layout=ExperimentLayout(experiment_dir=tmp_path),
-        stage="empty",
+        stage="detector",
         split="train",
         subjects=[subject],
         patch_size=2,
@@ -221,6 +223,8 @@ def test_execute_skips_subject_with_no_extracted_patches(
 
     assert patch.execute(config) is None
     assert PatchManifest.read(
-        config.experiment_layout.patch_manifest_path("empty", "train")
+        config.experiment_layout.patch_manifest_path("detector", "train")
     ).records == []
+
+
 

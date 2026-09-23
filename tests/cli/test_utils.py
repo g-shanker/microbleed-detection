@@ -5,7 +5,12 @@ import pytest
 import typer
 from pydantic import BaseModel, Field
 
-from microbleednet.cli.utils import config_fields, load_config, parse_config
+from microbleednet.cli.utils import (
+    ConfigField,
+    config_fields,
+    load_config,
+    parse_config,
+)
 from microbleednet.orchestration.configs import IndexDataConfig
 
 
@@ -45,7 +50,14 @@ def test_config_fields_recurses_into_nested_models() -> None:
         inner: Inner = Field(default_factory=Inner)
 
     fields = config_fields(Outer, prefix="")
-    assert fields == [("inner", "knob", "1", "An inner knob.")]
+    assert fields == [
+        ConfigField(
+            section="inner",
+            key="knob",
+            default="1",
+            description="An inner knob.",
+        )
+    ]
 
 
 def test_config_fields_reports_literal_options() -> None:
@@ -57,10 +69,20 @@ def test_config_fields_reports_literal_options() -> None:
     fields = config_fields(Config, prefix="")
 
     assert fields == [
-        (
-            "",
-            "modality",
-            "'T2*-GRE'",
-            "Imaging modality. Allowed values: 'T2*-GRE', 'SWI', 'QSM'.",
+        ConfigField(
+            section="",
+            key="modality",
+            default="'T2*-GRE'",
+            description=(
+                "Imaging modality. Allowed values: 'T2*-GRE', 'SWI', 'QSM'."
+            ),
         )
     ]
+
+
+def test_config_field_derives_required_state_from_default() -> None:
+    required = ConfigField(section="", key="missing", default=None, description="")
+    optional = ConfigField(section="", key="present", default="1", description="")
+
+    assert required.default is None
+    assert optional.default == "1"

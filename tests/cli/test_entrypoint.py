@@ -14,27 +14,27 @@ runner = CliRunner()
 
 
 def test_progress_reporter_is_always_available() -> None:
-    entrypoint.configure_logging(quiet=False, verbose=False)
+    entrypoint.configure_cli(quiet=False, verbose=False)
 
-    assert progress._track is entrypoint.rich_track
+    assert progress._track is not silent_track
 
 
 def test_quiet_disables_progress() -> None:
-    entrypoint.configure_logging(quiet=True, verbose=False)
+    entrypoint.configure_cli(quiet=True, verbose=False)
 
     assert progress._track is silent_track
     assert logging.getLogger().level == logging.WARNING
 
 
 def test_verbose_enables_debug_logging() -> None:
-    entrypoint.configure_logging(quiet=False, verbose=True)
+    entrypoint.configure_cli(quiet=False, verbose=True)
 
     assert logging.getLogger().level == logging.DEBUG
 
 
 def test_quiet_and_verbose_are_mutually_exclusive() -> None:
     with pytest.raises(typer.BadParameter):
-        entrypoint.configure_logging(quiet=True, verbose=True)
+        entrypoint.configure_cli(quiet=True, verbose=True)
 
 
 def test_cli_accepts_verbose_and_quiet_flags() -> None:
