@@ -22,8 +22,6 @@ from ..manifests import (
 from ..utils import release_gpu_memory, resolve_path_string
 from .preprocess import preprocess_subject
 
-logger = logging.getLogger(__name__)
-
 VARIANT_INDEX = 0
 DETECTOR_THRESHOLD = 0.5
 STUDENT_THRESHOLD = 0.5
@@ -31,6 +29,8 @@ MINIMUM_VOLUME_MM3 = 2.5
 MAXIMUM_ELLIPTICITY = 0.2
 MINIMUM_BRAIN_DISTANCE_MM = 5.0
 PREPROCESSING_AUGMENTATION_FACTOR = 1
+
+logger = logging.getLogger(__name__)
 
 
 def execute(config: InferConfig) -> None:
@@ -44,8 +44,15 @@ def execute(config: InferConfig) -> None:
     }
     preprocessing_layout = DatasetLayout(dataset_dir=config.output_dir)
     subjects: list[PreprocessedSubject] = []
+    logger.info(
+        "Starting inference for %d subjects on %s; detector=%s student=%s",
+        len(manifest.subjects),
+        config.device,
+        config.detector_checkpoint_path,
+        config.student_checkpoint_path,
+    )
     for subject in progress.track(
-        manifest.subjects, "Preprocessing inference subjects"
+        manifest.subjects, description="Preprocessing inference subjects"
     ):
         subjects.append(
             preprocess_subject(
@@ -62,6 +69,7 @@ def execute(config: InferConfig) -> None:
         config.student_checkpoint_path,
         subjects,
     )
+    logger.info("Inference complete for %d subjects", len(subjects))
 
 
 def infer_subjects(
@@ -71,8 +79,12 @@ def infer_subjects(
     student_checkpoint,
     subjects: list[PreprocessedSubject],
 ) -> None:
-    logger.info("Running inference for %d subjects on %s.", len(subjects), device_name)
     device = torch.device(device_name)
+    logger.info(
+        "Loading inference models on %s for %d subjects",
+        device_name,
+        len(subjects),
+    )
     detector = CandidateDetector().to(device)
     student = CandidateDiscriminatorStudent().to(device)
     try:
@@ -82,7 +94,7 @@ def infer_subjects(
 
         results = [
             infer_subject(subject, detector, student, output_layout)
-            for subject in progress.track(subjects, "Inferring subjects")
+            for subject in progress.track(subjects, description="Inferring subjects")
         ]
 
         InferManifest(
@@ -98,10 +110,8 @@ def infer_subjects(
             minimum_brain_distance_mm=MINIMUM_BRAIN_DISTANCE_MM,
             subjects=results,
         ).write(output_layout.inference_manifest_path())
-        
         logger.info(
-            "Inference complete for %d subjects; manifest written to %s.",
-            len(results),
+            "Inference manifest written to %s",
             output_layout.inference_manifest_path(),
         )
     finally:

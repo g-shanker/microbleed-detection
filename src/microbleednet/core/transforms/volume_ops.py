@@ -1,9 +1,7 @@
-import logging
 import os
 import subprocess
 import tempfile
 from pathlib import Path
-from time import perf_counter
 
 import nibabel as nib
 import numpy as np
@@ -12,8 +10,6 @@ from scipy.ndimage import gaussian_filter
 
 from .. import io
 from ..datamodels import BoundingBox, Shape3D
-
-logger = logging.getLogger(__name__)
 
 
 def translate(volume: np.ndarray, offset_x: int, offset_y: int) -> np.ndarray:
@@ -117,7 +113,6 @@ def restore_cropped_volume(
 
 
 def extract_brain(volume: nib.Nifti1Image) -> nib.Nifti1Image:
-    started_at = perf_counter()
     fsldir = Path(os.getenv("FSLDIR", ""))
     if not fsldir.is_dir():
         raise EnvironmentError(
@@ -143,16 +138,10 @@ def extract_brain(volume: nib.Nifti1Image) -> nib.Nifti1Image:
         output_data = io.nifti_to_numpy(output_volume)
         loaded_volume = io.numpy_to_nifti(output_data, output_volume)
 
-        logger.debug(
-            "FSL BET completed in %.2fs using %s.",
-            perf_counter() - started_at,
-            fsldir / "bin" / "bet",
-        )
         return loaded_volume
 
 
 def bias_field_correct_n4(volume: nib.Nifti1Image) -> nib.Nifti1Image:
-    started_at = perf_counter()
     volume_data = io.nifti_to_numpy(volume)
 
     sitk_volume = sitk.GetImageFromArray(volume_data.T)
@@ -162,8 +151,4 @@ def bias_field_correct_n4(volume: nib.Nifti1Image) -> nib.Nifti1Image:
     corrected_data = sitk.GetArrayFromImage(corrected_sitk).T
     corrected_nifti = io.numpy_to_nifti(corrected_data, volume)
 
-    logger.debug(
-        "SimpleITK N4 correction completed in %.2fs.",
-        perf_counter() - started_at,
-    )
     return corrected_nifti

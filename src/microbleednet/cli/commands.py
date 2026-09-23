@@ -10,10 +10,8 @@ The pipe is imported lazily inside the command body, by module name, so
 ``--help`` and ``describe`` never pay to import torch.
 """
 
-import logging
 from importlib import import_module
 from pathlib import Path
-from time import perf_counter
 from typing import Annotated
 
 import typer
@@ -37,8 +35,6 @@ from .utils import (
 )
 
 COMMAND_HELP = "TODO: write a help message"
-
-logger = logging.getLogger(__name__)
 
 
 SPECS: list[CommandSpec] = [
@@ -92,11 +88,9 @@ def build_command(app: typer.Typer, spec: CommandSpec) -> None:
     def command(
         config_path: Annotated[Path, typer.Option(..., "--config")],
     ) -> None:
-        started_at = perf_counter()
         config = parse_config(config_path, spec.config)
 
         # Imported lazily, by module name, so torch stays out of --help/describe.
-        logger.debug("Loading pipe %s for command %s.", spec.pipe, spec.name)
         pipe = import_module(
             f"..orchestration.pipes.{spec.pipe}", package=__package__
         )
@@ -104,11 +98,7 @@ def build_command(app: typer.Typer, spec: CommandSpec) -> None:
             raise TypeError(
                 f"pipe module {spec.pipe!r} must define a callable execute(config)"
             )
-        logger.debug("Executing pipe %s for command %s.", spec.pipe, spec.name)
         pipe.execute(config)
-        logger.info(
-            "Completed %s in %.2fs.", spec.name, perf_counter() - started_at
-        )
 
 
 def build_describe_command(

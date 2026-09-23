@@ -61,14 +61,7 @@ VALIDATION_AUGMENTATION_FACTOR = 1
 
 logger = logging.getLogger(__name__)
 
-
 def execute(config: TrainConfig) -> None:
-    logger.info(
-        "Starting training in %s on %s (resume=%s).",
-        config.experiment_dir,
-        config.device,
-        config.resume,
-    )
     if config.seed is not None:
         torch.manual_seed(config.seed)
         torch.cuda.manual_seed_all(config.seed)
@@ -86,6 +79,13 @@ def execute(config: TrainConfig) -> None:
         preprocessed_manifest.subjects, split_manifest.validation_subject_ids
     )
     device = torch.device(config.device)
+    logger.info(
+        "Starting training pipeline in %s on %s (resume=%s): "
+        "detector, teacher, student",
+        config.experiment_dir,
+        device,
+        config.resume,
+    )
     write_train_manifest(
         experiment_layout,
         config,
@@ -120,7 +120,7 @@ def execute(config: TrainConfig) -> None:
         ManifestStatus.COMPLETE,
     )
     logger.info(
-        "Training complete; manifest written to %s.",
+        "Training pipeline complete; manifest written to %s",
         experiment_layout.train_manifest_path(),
     )
 
@@ -186,22 +186,27 @@ def train_stage(
         hyperparameters=hyperparameters,
         latest_checkpoint=experiment_layout.latest_checkpoint_path(stage),
     )
-    logger.info(
-        "Training %s: %d training patches, %d validation patches, %d max epochs.",
-        stage,
-        len(train_dataset.patches),
-        len(validation_dataset.patches),
-        hyperparameters.max_epochs,
-    )
     TrainStageManifest(
         status=ManifestStatus.RUNNING,
         stage=stage,
         hyperparameters=hyperparameters,
         history=[],
     ).write(experiment_layout.stage_manifest_path(stage))
+    logger.info(
+        "Starting %s: train_patches=%d validation_patches=%d "
+        "batch_size=%d learning_rate=%g max_epochs=%d patience=%d",
+        stage,
+        len(train_dataset.patches),
+        len(validation_dataset.patches),
+        hyperparameters.batch_size,
+        hyperparameters.learning_rate,
+        hyperparameters.max_epochs,
+        hyperparameters.patience,
+    )
     if resume and trainer.latest_checkpoint.is_file():
+        logger.info("Resuming %s from %s", stage, trainer.latest_checkpoint)
         trainer.load_latest_checkpoint()
-    history = trainer.fit(train_loader, validation_loader, f"Training {stage}")
+    history = trainer.fit(train_loader, validation_loader, str(stage))
     TrainStageManifest(
         status=ManifestStatus.COMPLETE,
         stage=stage,
@@ -209,9 +214,7 @@ def train_stage(
         history=history,
     ).write(experiment_layout.stage_manifest_path(stage))
     trainer.latest_checkpoint.unlink(missing_ok=True)
-    logger.info("Completed training stage %s after %d epochs.", stage, len(history))
-
-
+    logger.info("Completed %s stage", stage)
 def is_stage_completed(
     experiment_layout: ExperimentLayout, stage: StageName, resume: bool
 ) -> bool:
@@ -221,8 +224,6 @@ def is_stage_completed(
     if not stage_manifest_path.is_file():
         return False
     stage_manifest = TrainStageManifest.read(stage_manifest_path)
-    if stage_manifest.status is ManifestStatus.COMPLETE:
-        logger.info("Skipping completed training stage %s.", stage)
     return stage_manifest.status is ManifestStatus.COMPLETE
 
 
@@ -250,6 +251,7 @@ def train_detector(
     if is_stage_completed(
         experiment_layout, DETECTOR_STAGE, config.resume
     ):
+        logger.info("Skipping completed %s stage", DETECTOR_STAGE)
         return
     train_records = extract_patch_records(
         NonOverlappingPatchConfig(
@@ -300,6 +302,7 @@ def train_teacher(
     if is_stage_completed(
         experiment_layout, TEACHER_STAGE, config.resume
     ):
+        logger.info("Skipping completed %s stage", TEACHER_STAGE)
         return
     teacher = CandidateDiscriminatorTeacher()
     initializer = CandidateDetector()
@@ -362,6 +365,7 @@ def train_student(
     if is_stage_completed(
         experiment_layout, STUDENT_STAGE, config.resume
     ):
+        logger.info("Skipping completed %s stage", STUDENT_STAGE)
         return
     detector = CandidateDetector().to(device)
     try:

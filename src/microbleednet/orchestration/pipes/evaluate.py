@@ -65,6 +65,13 @@ def execute(config: EvaluateConfig) -> None:
             )
         )
 
+    mode = "experiment test split" if config.experiment_dir is not None else "dataset"
+    logger.info(
+        "Starting evaluation of %d subjects on %s (%s)",
+        len(evaluation_subjects),
+        config.device,
+        mode,
+    )
     evaluate_subjects(
         config,
         config.dataset_dir,
@@ -93,7 +100,10 @@ def evaluate_subjects(
     }
 
     per_subject: list[EvaluatedSubject] = []
-    for subject_id, mask_path in progress.track(subjects, "Evaluating subjects"):
+    for subject_id, mask_path in progress.track(
+        subjects, description="Evaluating subjects"
+    ):
+        assert mask_path is not None
         prediction = core_io.nifti_to_numpy(
             core_io.load_volume(inference_output_paths[subject_id])
         )
@@ -106,6 +116,7 @@ def evaluate_subjects(
         )
 
     aggregate = aggregate_metrics(subject.metrics for subject in per_subject)
+    evaluation_manifest_path = experiment_layout.evaluation_manifest_path()
     EvaluateManifest(
         status=ManifestStatus.COMPLETE,
         dataset_dir=resolve_path_string(dataset_dir),
@@ -115,10 +126,9 @@ def evaluate_subjects(
         ),
         subjects=per_subject,
         aggregate=aggregate,
-    ).write(experiment_layout.evaluation_manifest_path())
-    
+    ).write(evaluation_manifest_path)
+    logger.info("Aggregate evaluation metrics: %s", aggregate)
     logger.info(
-        "Evaluation complete for %d subjects; manifest written to %s.",
-        len(per_subject),
-        experiment_layout.evaluation_manifest_path(),
+        "Per-subject evaluation details are available in %s",
+        evaluation_manifest_path,
     )
