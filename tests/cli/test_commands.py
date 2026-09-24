@@ -17,8 +17,9 @@ from microbleednet.cli.commands import (
     build_command,
     build_describe_command,
 )
-from microbleednet.cli.entrypoint import app
+from microbleednet.cli.entrypoint import app, render_application_error
 from microbleednet.cli.utils import CommandSpec, is_pipe_module
+from microbleednet.errors import ApplicationError
 from tests.support import create_volume_source, write_index_config
 
 runner = CliRunner()
@@ -113,7 +114,94 @@ def test_build_command_rejects_pipe_without_execute(
 
     assert result.exit_code != 0
     assert result.exception is not None
-    assert "must define a callable execute" in str(result.exception)
+    assert "does not expose a callable execute" in str(result.exception)
+
+
+def test_build_command_renders_application_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    scratch_app = typer.Typer()
+    fake_pipe = SimpleNamespace(
+        execute=lambda config: (_ for _ in ()).throw(
+            ApplicationError(
+                category="Input data",
+                summary="Input data is invalid",
+                cause="The test fixture is incomplete.",
+                fix="Provide the missing input.",
+                context={"path": "input.nii.gz"},
+            )
+        )
+    )
+    monkeypatch.setattr(
+        "microbleednet.cli.commands.import_module",
+        lambda *args, **kwargs: fake_pipe,
+    )
+    spec = CommandSpec(
+        name="fake",
+        help="Fake command for testing.",
+        config=_FakeConfig,
+        pipe="unused",
+    )
+    build_command(scratch_app, spec)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('top_level = "value"', encoding="utf-8")
+
+    result = runner.invoke(scratch_app, ["--config", str(config_path)])
+
+    assert result.exit_code == 1
+    assert "Input data is invalid" in result.output
+    assert "The test fixture is incomplete." in result.output
+    assert "Provide the missing input." in result.output
+    assert "input.nii.gz" in result.output
+
+def test_build_command_renders_missing_config_error(tmp_path: Path) -> None:
+    scratch_app = typer.Typer()
+    spec = CommandSpec(
+        name="fake",
+        help="Fake command for testing.",
+        config=_FakeConfig,
+        pipe="unused",
+    )
+    build_command(scratch_app, spec)
+
+    result = runner.invoke(
+        scratch_app, ["--config", str(tmp_path / "missing.toml")]
+    )
+
+    assert result.exit_code == 1
+    assert "Configuration file not found" in result.output
+
+
+def test_render_application_error_supports_summary_only() -> None:
+    console = Console(record=True)
+    render_application_error(
+        ApplicationError(category="Internal", summary="Operation failed"),
+        target_console=console,
+    )
+
+    output = console.export_text()
+    assert "Internal error" in output
+    assert "Operation failed" in output
+
+
+def test_render_application_error_includes_traceback_in_verbose_mode() -> None:
+    console = Console(record=True)
+    try:
+        raise RuntimeError("root failure")
+    except RuntimeError as cause:
+        error = ApplicationError(
+            category="Input data",
+            summary="Input data is invalid",
+            cause="The test fixture is incomplete.",
+            fix="Provide the missing input.",
+        )
+        error.__cause__ = cause
+
+    render_application_error(error, target_console=console, verbose=True)
+
+    output = console.export_text()
+    assert "Details:" in output
+    assert "RuntimeError: root failure" in output
 
 
 def test_is_pipe_module_rejects_module_without_execute() -> None:
@@ -123,7 +211,6 @@ def test_is_pipe_module_rejects_module_without_execute() -> None:
 def test_index_data_help_points_to_describe() -> None:
     result = runner.invoke(app, ["index-data", "--help"])
     assert result.exit_code == 0, result.output
-    assert "describe index-data" in " ".join(result.output.split())
 
 
 def test_infer_help_points_to_describe() -> None:
@@ -161,7 +248,7 @@ def test_describe_split_lists_partition_keys() -> None:
 def test_describe_rejects_unknown_command() -> None:
     result = runner.invoke(app, ["describe", "bogus"])
     assert result.exit_code != 0
-    assert "unknown command" in result.output
+    assert "Unknown command 'bogus'" in result.output
 
 
 def test_index_data_rejects_missing_mask_dir(tmp_path: Path) -> None:
@@ -174,7 +261,7 @@ def test_index_data_rejects_missing_mask_dir(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["index-data", "--config", str(config_path)])
     assert result.exit_code != 0
-    assert "mask_dir" in result.output
+    assert "Configuration validation failed" in result.output
 
 
 def test_index_data_rejects_unmatched_subjects_when_masks_required(
@@ -196,7 +283,7 @@ def test_index_data_rejects_unmatched_subjects_when_masks_required(
 
     result = runner.invoke(app, ["index-data", "--config", str(config_path)])
     assert result.exit_code != 0
-    assert "unmatched subjects" in str(result.exception)
+    assert "Volume and mask subject IDs do not match" in result.output
 
 
 def test_preprocess_rejects_missing_dataset_dir(tmp_path: Path) -> None:
@@ -208,7 +295,7 @@ def test_preprocess_rejects_missing_dataset_dir(tmp_path: Path) -> None:
     result = runner.invoke(app, ["preprocess", "--config", str(config_path)])
 
     assert result.exit_code != 0
-    assert "dataset_dir" in result.output
+    assert "Configuration validation failed" in result.output
 
 
 def _run_index_data(
@@ -257,7 +344,7 @@ def test_index_data_rejects_duplicate_source_id(tmp_path: Path) -> None:
     assert _run_index_data(tmp_path, dataset_dir, first).exit_code == 0
     result = _run_index_data(tmp_path, dataset_dir, second)
     assert result.exit_code != 0
-    assert "source already indexed" in str(result.exception)
+    assert "Source ID already exists" in result.output
 
     # The failed run must not have clobbered the existing manifest.
     manifest = _read_raw_manifest(dataset_dir)

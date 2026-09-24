@@ -8,6 +8,7 @@ from torch.amp.autocast_mode import autocast
 from torch.amp.grad_scaler import GradScaler
 from torch.utils.data import DataLoader
 
+from ...errors import ApplicationError
 from ...progress import progress
 from .. import io, utils
 from ..common.tasks import BaseTask
@@ -150,13 +151,19 @@ class Trainer:
                 sample_count += batch_size
 
         if sample_count == 0:
-            raise ValueError("cannot calculate validation loss for an empty DataLoader")
+            raise ApplicationError(
+                category="Input data",
+                summary="Validation cannot continue with an empty DataLoader",
+                cause=f"No batches were produced for '{description}'",
+                fix=(
+                    "Check split sizes, subject masks, patch extraction, and "
+                    "batch settings"
+                ),
+            )
 
         return running_loss / sample_count
 
     def load_latest_checkpoint(self) -> None:
-        if self.latest_checkpoint is None:
-            raise ValueError("latest checkpoint path is not configured")
         checkpoint = torch.load(
             self.latest_checkpoint,
             map_location=self.device,
@@ -197,7 +204,12 @@ class Trainer:
             sample_count += batch_size
 
         if sample_count == 0:
-            raise ValueError("cannot train on an empty DataLoader")
+            raise ApplicationError(
+                category="Input data",
+                summary="Training cannot continue with an empty DataLoader",
+                cause=f"No batches were produced for '{description}'",
+                fix="Check subject masks, patch extraction, and batch settings",
+            )
         self.scheduler.step()
         return running_loss / sample_count
 

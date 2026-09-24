@@ -8,6 +8,7 @@ import numpy as np
 import SimpleITK as sitk
 from scipy.ndimage import gaussian_filter
 
+from ...errors import ApplicationError
 from .. import io
 from ..datamodels import BoundingBox, Shape3D
 
@@ -32,7 +33,12 @@ def translate(volume: np.ndarray, offset_x: int, offset_y: int) -> np.ndarray:
 def add_noise(volume: np.ndarray, noise: np.ndarray) -> np.ndarray:
     """Add a precomputed noise array to a volume."""
     if noise.shape != volume.shape:
-        raise ValueError("noise must match volume shape")
+        raise ApplicationError(
+            category="Input data",
+            summary="Noise and volume shapes do not match",
+            cause=f"Volume shape is {volume.shape}, noise shape is {noise.shape}",
+            fix="Generate noise with the target volume shape",
+        )
     return volume + noise
 
 
@@ -44,7 +50,12 @@ def blur(volume: np.ndarray, sigma: float) -> np.ndarray:
 def normalize_volume(volume: np.ndarray) -> np.ndarray:
     maximum = np.max(volume)
     if not np.isfinite(maximum) or maximum <= 0:
-        raise ValueError("cannot normalize a volume without a finite positive maximum")
+        raise ApplicationError(
+            category="Input data",
+            summary="Volume cannot be normalized",
+            cause="Normalization requires a finite positive maximum",
+            fix="Verify that the input volume is non-empty and correctly loaded",
+        )
     return volume / maximum
 
 
@@ -58,7 +69,11 @@ def invert_volume(volume: np.ndarray) -> np.ndarray:
 def get_bounding_box(volume: np.ndarray) -> BoundingBox:
     positive_voxels = np.argwhere(volume > 0)
     if positive_voxels.size == 0:
-        raise ValueError("cannot crop an empty volume")
+        raise ApplicationError(
+            category="Input data",
+            summary="Cannot compute a bounding box without positive voxels",
+            fix="Verify the mask or volume before cropping",
+        )
 
     starts = positive_voxels.min(axis=0)
     stops = positive_voxels.max(axis=0) + 1
@@ -115,9 +130,11 @@ def restore_cropped_volume(
 def extract_brain(volume: nib.Nifti1Image) -> nib.Nifti1Image:
     fsldir = Path(os.getenv("FSLDIR", ""))
     if not fsldir.is_dir():
-        raise EnvironmentError(
-            "Valid FSLDIR environment variable is not set. "
-            "Set it using 'export FSLDIR=/path/to/fsl'."
+        raise ApplicationError(
+            category="Environment",
+            summary="Brain extraction requires FSL",
+            cause="FSLDIR is missing or is not a directory",
+            fix="Install FSL and set FSLDIR to its installation directory",
         )
 
     with tempfile.TemporaryDirectory(prefix="microbleednet-fsl-bet-") as temp_dir:

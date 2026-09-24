@@ -18,6 +18,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from ..errors import ApplicationError, error_renderer
 from ..orchestration.configs import (
     EvaluateConfig,
     IndexDataConfig,
@@ -34,7 +35,7 @@ from .utils import (
     parse_config,
 )
 
-COMMAND_HELP = "TODO: write a help message"
+COMMAND_HELP = "Run the configured microbleednet pipeline command."
 
 
 SPECS: list[CommandSpec] = [
@@ -88,17 +89,22 @@ def build_command(app: typer.Typer, spec: CommandSpec) -> None:
     def command(
         config_path: Annotated[Path, typer.Option(..., "--config")],
     ) -> None:
-        config = parse_config(config_path, spec.config)
+        try:
+            config = parse_config(config_path, spec.config)
 
-        # Imported lazily, by module name, so torch stays out of --help/describe.
-        pipe = import_module(
-            f"..orchestration.pipes.{spec.pipe}", package=__package__
-        )
-        if not is_pipe_module(pipe):
-            raise TypeError(
-                f"pipe module {spec.pipe!r} must define a callable execute(config)"
+            # Imported lazily, by module name, so torch stays out of --help/describe.
+            pipe = import_module(
+                f"..orchestration.pipes.{spec.pipe}", package=__package__
             )
-        pipe.execute(config)
+            if not is_pipe_module(pipe):
+                raise TypeError(
+                    f"Command '{spec.name}' pipe '{spec.pipe}' does not expose "
+                    "a callable execute(config)"
+                )
+            pipe.execute(config)
+        except ApplicationError as error:
+            error_renderer.render(error)
+            raise typer.Exit(code=1) from error
 
 
 def build_describe_command(
@@ -126,7 +132,8 @@ def build_describe_command(
         model = configs.get(command)
         if model is None:
             raise typer.BadParameter(
-                f"unknown command '{command}'; choose one of: {', '.join(configs)}"
+                f"Unknown command '{command}'. Available commands: "
+                f"{', '.join(configs)}"
             )
 
         table = Table(

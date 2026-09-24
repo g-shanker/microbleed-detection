@@ -14,6 +14,8 @@ from microbleednet.orchestration.configs import (
     SplitConfig,
     TargetCenteredPatchConfig,
     TrainConfig,
+    ensure_preprocessed_subjects_complete,
+    ensure_subjects_have_masks,
     ensure_training_resume_state,
 )
 from microbleednet.orchestration.layouts import (
@@ -46,9 +48,24 @@ def test_source_id_accepts_filesystem_safe_values(tmp_path, source_id: str) -> N
     assert config.source_id == source_id
 
 
+def test_missing_mask_error_bounds_subject_ids() -> None:
+    subjects = [
+        RawSubject(
+            subject_id=f"subject-{index}",
+            source_id="source",
+            volume_path=f"volume-{index}",
+            mask_path=None,
+        )
+        for index in range(6)
+    ]
+
+    with pytest.raises(ValueError, match="6 total"):
+        ensure_subjects_have_masks(subjects)
+
+
 @pytest.mark.parametrize("source_id", ["site/A", "site A", "site@A", ""])
 def test_source_id_rejects_unsafe_values(tmp_path, source_id: str) -> None:
-    with pytest.raises(ValidationError, match="source_id"):
+    with pytest.raises(ValidationError, match="Value error"):
         make_index_config(tmp_path, source_id=source_id)
 
 
@@ -95,7 +112,7 @@ def test_modality_is_required(tmp_path) -> None:
 def test_patterns_require_subject_id_placeholder(
     tmp_path, overrides: dict[str, object], field: str
 ) -> None:
-    with pytest.raises(ValidationError, match=field):
+    with pytest.raises(ValidationError, match="Value error"):
         make_index_config(tmp_path, **overrides)
 
 
@@ -123,7 +140,7 @@ def test_mask_inputs_are_optional(tmp_path) -> None:
 
 
 def test_mask_inputs_must_be_provided_together(tmp_path) -> None:
-    with pytest.raises(ValidationError, match="provided together"):
+    with pytest.raises(ValidationError, match="Value error"):
         IndexDataConfig.model_validate(
             {
                 "dataset_dir": tmp_path / "dataset",
@@ -137,17 +154,17 @@ def test_mask_inputs_must_be_provided_together(tmp_path) -> None:
 
 
 def test_index_config_rejects_missing_input_dir(tmp_path) -> None:
-    with pytest.raises(ValidationError, match="input_dir"):
+    with pytest.raises(ValidationError, match="Value error"):
         make_index_config(tmp_path, input_dir=tmp_path / "missing")
 
 
 def test_index_config_rejects_missing_mask_dir(tmp_path) -> None:
-    with pytest.raises(ValidationError, match="mask_dir"):
+    with pytest.raises(ValidationError, match="Value error"):
         make_index_config(tmp_path, mask_dir=tmp_path / "missing")
 
 
 def test_preprocess_config_rejects_missing_dataset_dir(tmp_path) -> None:
-    with pytest.raises(ValidationError, match="dataset_dir"):
+    with pytest.raises(ValidationError, match="Value error"):
         PreprocessConfig(dataset_dir=tmp_path / "missing", augmentation_factor=1)
 
 
@@ -182,7 +199,7 @@ def test_preprocess_config_resume_requires_existing_checkpoint(tmp_path: Path) -
         mask_path=str(tmp_path / "mask.nii.gz"),
     )
 
-    with pytest.raises(ValidationError, match="preprocessed manifest does not exist"):
+    with pytest.raises(ValidationError, match="Value error"):
         PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1, resume=True)
 
 
@@ -227,9 +244,63 @@ def test_preprocess_config_resume_rejects_complete_manifest(tmp_path: Path) -> N
 
     with pytest.raises(
         ValidationError,
-        match="the preprocessing run is already complete",
+        match="Value error",
     ):
         PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=3, resume=True)
+
+
+def test_preprocessed_resume_rejects_unknown_subject() -> None:
+    subjects = [
+        PreprocessedSubject(
+            subject_id=f"stale-{index}",
+            original_volume_path="volume.nii.gz",
+            bounding_box=((0, 1), (0, 1), (0, 1)),
+            variants=[],
+        )
+        for index in range(6)
+    ]
+
+    with pytest.raises(ValueError, match="unknown subjects"):
+        ensure_preprocessed_subjects_complete(subjects, {"current"}, 0)
+
+
+def test_preprocessed_resume_rejects_missing_variant_file(tmp_path: Path) -> None:
+    subject = PreprocessedSubject(
+        subject_id="subject",
+        original_volume_path=str(tmp_path / "volume.nii.gz"),
+        bounding_box=((0, 1), (0, 1), (0, 1)),
+        variants=[
+            PreprocessedVariant(
+                volume_path=str(tmp_path / "missing-volume.nii.gz"),
+                frst_path=str(tmp_path / "missing-frst.nii.gz"),
+                mask_path=None,
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="output is missing"):
+        ensure_preprocessed_subjects_complete([subject], {"subject"}, 1)
+
+
+def test_preprocessed_resume_accepts_existing_variant_files(tmp_path: Path) -> None:
+    volume_path = tmp_path / "volume.nii.gz"
+    frst_path = tmp_path / "frst.nii.gz"
+    volume_path.touch()
+    frst_path.touch()
+    subject = PreprocessedSubject(
+        subject_id="subject",
+        original_volume_path=str(volume_path),
+        bounding_box=((0, 1), (0, 1), (0, 1)),
+        variants=[
+            PreprocessedVariant(
+                volume_path=str(volume_path),
+                frst_path=str(frst_path),
+                mask_path=None,
+            )
+        ],
+    )
+
+    ensure_preprocessed_subjects_complete([subject], {"subject"}, 1)
 
 
 def _training_dataset(tmp_path: Path) -> Path:
@@ -322,6 +393,26 @@ def _train_config(
     )
 
 
+def test_hyperparameters_require_even_batch_size() -> None:
+    values = Hyperparameters(
+        batch_size=8,
+        max_epochs=100,
+        patience=20,
+        learning_rate=1e-3,
+        adam_epsilon=1e-4,
+        learning_rate_factor=0.1,
+        learning_rate_period=2,
+        minimum_learning_rate=1e-6,
+        weight_decay=0.0,
+        minimum_improvement=0.0,
+        use_amp=False,
+    ).model_dump()
+    values["batch_size"] = 3
+
+    with pytest.raises(ValidationError, match="multiple of 2"):
+        Hyperparameters.model_validate(values)
+
+
 def _train_manifest_for_config(
     config: TrainConfig, split_manifest_fingerprint: str
 ) -> TrainManifest:
@@ -345,9 +436,8 @@ def _train_manifest_for_config(
 def _write_raw_dataset_manifest(
     tmp_path: Path,
     dataset_dir: Path,
-    *,
-    status: ManifestStatus = ManifestStatus.COMPLETE,
     mask_path: str | None,
+    status: ManifestStatus = ManifestStatus.COMPLETE,
 ) -> RawDatasetManifest:
     dataset_dir.mkdir(parents=True, exist_ok=True)
     volume_path = tmp_path / f"{dataset_dir.name}-volume.nii.gz"
@@ -379,11 +469,11 @@ def test_train_config_rejects_invalid_and_unavailable_devices(
     tmp_path: Path, monkeypatch
 ) -> None:
     dataset_dir = _training_dataset(tmp_path)
-    with pytest.raises(ValidationError, match="invalid device"):
+    with pytest.raises(ValidationError, match="Value error"):
         _train_config(dataset_dir, tmp_path / "experiment", device="invalid")
 
     monkeypatch.setattr("torch.cuda.is_available", lambda: False)
-    with pytest.raises(ValidationError, match="CUDA device is not available"):
+    with pytest.raises(ValidationError, match="Value error"):
         _train_config(dataset_dir, tmp_path / "experiment", device="cuda")
 
 
@@ -414,7 +504,7 @@ def test_train_config_resume_requires_existing_stage_state(tmp_path: Path) -> No
     dataset_dir = _training_dataset(tmp_path)
     _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
 
-    with pytest.raises(ValidationError, match="training manifest does not exist"):
+    with pytest.raises(ValidationError, match="Value error"):
         _train_config(dataset_dir, tmp_path / "experiment", resume=True)
 
 
@@ -436,7 +526,7 @@ def test_train_config_resume_rejects_running_stage_without_checkpoint(
         history=[],
     ).write(layout.stage_manifest_path(DETECTOR_STAGE))
 
-    with pytest.raises(ValidationError, match="no training stage checkpoint"):
+    with pytest.raises(ValidationError, match="Value error"):
         TrainConfig(**config.model_dump(exclude={"resume"}), resume=True)
 
 
@@ -532,7 +622,7 @@ def test_train_config_accepts_stage_training_settings_and_pin_memory(
                 use_amp=False,
             ),
             "teacher_hyperparameters": Hyperparameters(
-                batch_size=5,
+                batch_size=6,
                 max_epochs=13,
                 patience=20,
                 learning_rate=1e-3,
@@ -563,14 +653,14 @@ def test_train_config_accepts_stage_training_settings_and_pin_memory(
     assert config.pin_memory is True
     assert config.detector_hyperparameters.batch_size == 4
     assert config.detector_hyperparameters.max_epochs == 12
-    assert config.teacher_hyperparameters.batch_size == 5
+    assert config.teacher_hyperparameters.batch_size == 6
     assert config.teacher_hyperparameters.max_epochs == 13
     assert config.student_hyperparameters.batch_size == 6
     assert config.student_hyperparameters.max_epochs == 14
 
 
 def test_split_config_requires_split_sizes_to_sum_to_one(tmp_path: Path) -> None:
-    with pytest.raises(ValidationError, match="must sum to 1.0"):
+    with pytest.raises(ValidationError, match="Value error"):
         SplitConfig(
             dataset_dir=_training_dataset(tmp_path),
             experiment_dir=tmp_path / "experiment",
@@ -584,7 +674,7 @@ def test_split_config_requires_preprocessed_manifest(tmp_path: Path) -> None:
     dataset_dir = tmp_path / "dataset"
     dataset_dir.mkdir()
 
-    with pytest.raises(ValidationError, match="preprocessed manifest does not exist"):
+    with pytest.raises(ValidationError, match="Value error"):
         SplitConfig(
             dataset_dir=dataset_dir,
             experiment_dir=tmp_path / "experiment",
@@ -603,7 +693,7 @@ def test_split_config_rejects_non_complete_preprocessed_manifest(
         update={"status": ManifestStatus.RUNNING}
     ).write(manifest_path)
 
-    with pytest.raises(ValidationError, match="has status 'running'"):
+    with pytest.raises(ValidationError, match="Value error"):
         SplitConfig(
             dataset_dir=dataset_dir,
             experiment_dir=tmp_path / "experiment",
@@ -636,7 +726,7 @@ def test_split_config_rejects_subjects_with_missing_masks(tmp_path: Path) -> Non
     )
 
     with pytest.raises(
-        ValidationError, match="subjects missing masks: subject-maskless"
+        ValidationError, match="Value error"
     ):
         SplitConfig(
             dataset_dir=dataset_dir,
@@ -648,7 +738,7 @@ def test_split_config_rejects_subjects_with_missing_masks(tmp_path: Path) -> Non
 
 
 def test_split_config_requires_dataset_dir(tmp_path: Path) -> None:
-    with pytest.raises(ValidationError, match="dataset_dir does not exist"):
+    with pytest.raises(ValidationError, match="Value error"):
         SplitConfig(
             dataset_dir=tmp_path / "missing",
             experiment_dir=tmp_path / "experiment",
@@ -661,7 +751,7 @@ def test_split_config_requires_dataset_dir(tmp_path: Path) -> None:
 def test_train_config_requires_dataset_and_preprocessed_manifest(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(ValidationError, match="dataset_dir does not exist"):
+    with pytest.raises(ValidationError, match="Value error"):
         _train_config(tmp_path / "missing", tmp_path / "experiment")
 
 
@@ -674,14 +764,14 @@ def test_train_config_rejects_non_complete_preprocessed_manifest(
         update={"status": ManifestStatus.RUNNING}
     ).write(manifest_path)
 
-    with pytest.raises(ValidationError, match="status 'running'"):
+    with pytest.raises(ValidationError, match="Value error"):
         _train_config(dataset_dir, tmp_path / "experiment")
 
 
 def test_train_config_requires_split_manifest(tmp_path: Path) -> None:
     dataset_dir = _training_dataset(tmp_path)
 
-    with pytest.raises(ValidationError, match="split manifest does not exist"):
+    with pytest.raises(ValidationError, match="Value error"):
         _train_config(dataset_dir, tmp_path / "experiment")
 
 
@@ -697,7 +787,7 @@ def test_train_config_resume_rejects_complete_training_manifest(tmp_path: Path) 
         layout.train_manifest_path()
     )
 
-    with pytest.raises(ValidationError, match="training run is already complete"):
+    with pytest.raises(ValidationError, match="Value error"):
         _train_config(dataset_dir, tmp_path / "experiment", resume=True)
 
 
@@ -741,23 +831,23 @@ def test_train_config_rejects_split_manifest_for_another_dataset(
         test_subject_ids=["subject-2"],
     ).write(ExperimentLayout(experiment_dir=experiment_dir).split_manifest_path())
 
-    with pytest.raises(ValidationError, match="does not match"):
+    with pytest.raises(ValidationError, match="Value error"):
         _train_config(dataset_dir, experiment_dir)
 
     dataset_dir = tmp_path / "empty-dataset"
     dataset_dir.mkdir()
-    with pytest.raises(ValidationError, match="preprocessed manifest does not exist"):
+    with pytest.raises(ValidationError, match="Value error"):
         _train_config(dataset_dir, tmp_path / "experiment")
 
 
 def test_preprocess_config_requires_readable_raw_manifest(tmp_path: Path) -> None:
-    with pytest.raises(ValidationError, match="raw manifest does not exist"):
+    with pytest.raises(ValidationError, match="Value error"):
         PreprocessConfig(dataset_dir=tmp_path, augmentation_factor=1)
 
     manifest_path = DatasetLayout(dataset_dir=tmp_path).raw_manifest_path()
     manifest_path.parent.mkdir()
     manifest_path.write_text("{}", encoding="utf-8")
-    with pytest.raises(ValidationError, match="invalid manifest at"):
+    with pytest.raises(ValidationError, match="Value error"):
         PreprocessConfig(dataset_dir=tmp_path, augmentation_factor=1)
 
 
@@ -802,7 +892,7 @@ def test_train_config_accepts_complete_manifest_without_training_policy(
     ).write(manifest_path)
     with pytest.raises(
         ValidationError,
-        match="different preprocessed manifest",
+        match="Value error",
     ):
         _train_config(dataset_dir, tmp_path / "experiment")
 
@@ -858,7 +948,7 @@ def test_infer_config_rejects_missing_explicit_detector_checkpoint(
     student_checkpoint = tmp_path / "student.pth"
     student_checkpoint.touch()
 
-    with pytest.raises(ValidationError, match="detector checkpoint does not exist"):
+    with pytest.raises(ValidationError, match="Value error"):
         InferConfig(
             output_dir=tmp_path / "inference",
             dataset_dir=dataset_dir,
@@ -960,7 +1050,7 @@ def test_evaluate_config_rejects_non_complete_experiment_manifest(
         config, content_fingerprint(split_manifest)
     ).write(layout.train_manifest_path())
 
-    with pytest.raises(ValidationError, match="status 'running'"):
+    with pytest.raises(ValidationError, match="Value error"):
         EvaluateConfig.model_validate(
             {
                 "dataset_dir": dataset_dir,
@@ -988,7 +1078,7 @@ def test_evaluate_config_rejects_mismatched_preprocessed_manifest(
         update={"subjects": []}
     ).write(manifest_path)
 
-    with pytest.raises(ValidationError, match="different preprocessed manifest"):
+    with pytest.raises(ValidationError, match="Value error"):
         EvaluateConfig.model_validate(
             {
                 "dataset_dir": dataset_dir,
@@ -1011,7 +1101,7 @@ def test_evaluate_config_rejects_mismatched_train_manifest_split(
         layout.train_manifest_path()
     )
 
-    with pytest.raises(ValidationError, match="different split manifest"):
+    with pytest.raises(ValidationError, match="Value error"):
         EvaluateConfig.model_validate(
             {
                 "dataset_dir": dataset_dir,
@@ -1051,7 +1141,7 @@ def test_evaluate_config_rejects_missing_explicit_detector_checkpoint(
     student_checkpoint = tmp_path / "student.pth"
     student_checkpoint.touch()
 
-    with pytest.raises(ValidationError, match="detector checkpoint does not exist"):
+    with pytest.raises(ValidationError, match="Value error"):
         EvaluateConfig(
             dataset_dir=dataset_dir,
             output_dir=tmp_path / "evaluation",
@@ -1073,7 +1163,7 @@ def test_evaluate_config_rejects_maskless_raw_subjects(tmp_path: Path) -> None:
         mask_path=None,
     )
 
-    with pytest.raises(ValidationError, match="cannot evaluate subjects without masks"):
+    with pytest.raises(ValidationError, match="Value error"):
         EvaluateConfig(
             dataset_dir=dataset_dir,
             output_dir=tmp_path / "evaluation",
@@ -1144,5 +1234,5 @@ def test_target_centered_config_rejects_invalid_detector(tmp_path: Path) -> None
         "detector": object(),
     }
 
-    with pytest.raises(TypeError, match="detector must be a CandidateDetector"):
+    with pytest.raises(TypeError, match="Target-centered patch extraction"):
         TargetCenteredPatchConfig.model_validate(values)

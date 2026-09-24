@@ -172,7 +172,7 @@ def test_train_epoch_rejects_empty_loader(tmp_path: Path) -> None:
             "Training detector epoch 1/1",
         )
     except ValueError as error:
-        assert str(error) == "cannot train on an empty DataLoader"
+        assert "Training cannot continue with an empty DataLoader" in str(error)
     else:
         raise AssertionError("empty training loader must fail")
 
@@ -204,7 +204,7 @@ def test_validate_epoch_averages_batches_and_rejects_empty_loader() -> None:
             "Validating detector epoch 1/100",
         )
     except ValueError as error:
-        assert "empty DataLoader" in str(error)
+        assert "Validation cannot continue with an empty DataLoader" in str(error)
     else:
         raise AssertionError("empty validation loader must fail")
 
@@ -239,18 +239,6 @@ def test_validate_epoch_uses_amp_context(monkeypatch) -> None:
     trainer.validate_epoch(loader, "Validating detector epoch 1/100")
 
     assert calls == ["enter", "exit"]
-
-
-def test_load_latest_checkpoint_requires_configured_path(tmp_path: Path) -> None:
-    trainer = _trainer(tmp_path, max_epochs=1)
-    trainer.latest_checkpoint = None  # pyright: ignore[reportAttributeAccessIssue]
-
-    try:
-        trainer.load_latest_checkpoint()
-    except ValueError as error:
-        assert str(error) == "latest checkpoint path is not configured"
-    else:
-        raise AssertionError("missing latest checkpoint path must fail")
 
 
 def test_trainer_handles_zero_epochs_and_amp_training(

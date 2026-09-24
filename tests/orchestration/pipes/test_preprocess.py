@@ -219,11 +219,8 @@ def test_execute_resume_accepts_changed_augmentation_factor(
         update={"status": ManifestStatus.RUNNING}
     ).write(manifest_path)
 
-    resumed = PreprocessConfig(
-        dataset_dir=dataset_dir, augmentation_factor=2, resume=True
-    )
-
-    assert resumed.resume is True
+    with pytest.raises(ValueError, match="incomplete variants"):
+        PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=2, resume=True)
 
 
 def test_execute_resume_rejects_changed_raw_manifest(
@@ -262,5 +259,5 @@ def test_execute_resume_rejects_changed_raw_manifest(
     )
     raw_manifest.write(raw_manifest_path)
 
-    with pytest.raises(ValueError, match="raw dataset manifest has changed"):
+    with pytest.raises(ValueError, match="Manifest fingerprint does not match"):
         PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1, resume=True)

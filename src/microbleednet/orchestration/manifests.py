@@ -40,6 +40,7 @@ from ..core.datamodels import (
     Modality,
     PatchRecord,
 )
+from ..errors import ApplicationError, format_validation_errors
 from .layouts import SplitName, StageName
 
 
@@ -88,12 +89,34 @@ class Manifest(FrozenModel):
         cls: type[ManifestType], path: Path
     ) -> ManifestType:
         """Load and validate a manifest from ``path``."""
-        payload = core_io.read_json(path)
+        try:
+            payload = core_io.read_json(path)
+        except (OSError, ValueError) as error:
+            raise ApplicationError(
+                category="Manifest",
+                summary="Could not read manifest",
+                cause=str(error).rstrip("."),
+                fix=(
+                    "Restore a readable JSON manifest or rerun the producing "
+                    "pipeline stage"
+                ),
+                context={"path": str(path), "type": cls.__name__},
+            ) from error
 
         try:
             manifest = cls.model_validate(payload)
         except ValidationError as error:
-            raise ValueError(f"invalid manifest at {path}:\n{error}") from error
+            details = format_validation_errors(error.errors())
+            raise ApplicationError(
+                category="Manifest",
+                summary="Manifest schema validation failed",
+                cause=details,
+                fix=(
+                    "Regenerate the artifact with the matching pipeline version "
+                    "or restore a valid manifest"
+                ),
+                context={"path": str(path), "type": cls.__name__},
+            ) from error
         
         return manifest
 
@@ -214,6 +237,21 @@ class PreprocessedDatasetManifest(Manifest):
     raw_manifest_fingerprint: str = Field(
         description="Fingerprint of the raw manifest used to create this dataset.",
     )
+
+    @model_validator(mode="after")
+    def complete_subjects_have_all_variants(self) -> "PreprocessedDatasetManifest":
+        if self.status is ManifestStatus.COMPLETE:
+            incomplete = [
+                subject.subject_id
+                for subject in self.subjects
+                if len(subject.variants) != self.augmentation_factor
+            ]
+            if incomplete:
+                raise ValueError(
+                    "Complete preprocessing manifest contains subjects with "
+                    f"incomplete variants: {', '.join(incomplete[:5])}"
+                )
+        return self
 
 
 class SplitManifest(Manifest):
@@ -362,6 +400,21 @@ class InferManifest(Manifest):
         description="Results published for each inferred subject."
     )
 
+    @model_validator(mode="after")
+    def complete_subjects_have_outputs(self) -> "InferManifest":
+        if self.status is ManifestStatus.COMPLETE:
+            missing_outputs = [
+                subject.subject_id
+                for subject in self.subjects
+                if not subject.output_path
+            ]
+            if missing_outputs:
+                raise ValueError(
+                    "Complete inference manifest contains subjects without "
+                    f"outputs: {', '.join(missing_outputs[:5])}"
+                )
+        return self
+
 class EvaluatedSubject(FrozenModel):
     """Evaluation metrics published for one subject."""
 
@@ -417,12 +470,30 @@ class PatchManifest(Manifest):
         description="Materialized patch records produced by extraction."
     )
 
+    @model_validator(mode="after")
+    def complete_output_matches_subjects(self) -> "PatchManifest":
+        if (
+            self.status is ManifestStatus.COMPLETE
+            and self.subject_ids
+            and not self.records
+        ):
+            raise ValueError(
+                "Complete patch manifest contains no records for its subjects"
+            )
+        return self
+
 
 def reject_duplicate_ids(ids, entity_name: str) -> None:
     seen: set[str] = set()
     for entity_id in ids:
         if entity_id in seen:
-            raise ValueError(f"duplicate {entity_name} ID in manifest: {entity_id!r}")
+            raise ApplicationError(
+                category="Manifest",
+                summary=f"Duplicate {entity_name} ID in manifest",
+                cause=f"The ID '{entity_id}' appears more than once",
+                fix="Regenerate the manifest from unique source records",
+                context={"id": entity_id, "entity": entity_name},
+            )
         seen.add(entity_id)
 
 

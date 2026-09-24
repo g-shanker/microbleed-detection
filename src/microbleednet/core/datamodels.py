@@ -6,6 +6,8 @@ import numpy as np
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..errors import ApplicationError
+
 FloatArray = NDArray[np.floating]
 IntArray = NDArray[np.integer]
 Shape3D = tuple[int, int, int]
@@ -54,7 +56,12 @@ class Hyperparameters(FrozenModel):
     """Optimization and training-loop settings for a model run."""
 
     batch_size: int = Field(
-        gt=0, description="Samples per training batch shared by all models."
+        gt=0,
+        multiple_of=2,
+        description=(
+            "Positive even number of samples per training batch shared by all "
+            "models."
+        ),
     )
     max_epochs: int = Field(
         ge=0, description="Maximum number of epochs permitted for all models."
@@ -130,21 +137,54 @@ class PreprocessInput:
 
     def __post_init__(self) -> None:
         if len(self.volume.shape) != 3:
-            raise ValueError("image must be 3D")
+            raise ApplicationError(
+                category="Input data",
+                summary="Preprocessing requires a 3D volume",
+                cause=f"The volume has {len(self.volume.shape)} dimensions",
+                fix="Provide a three-dimensional NIfTI volume",
+            )
         if self.mask is not None and self.volume.shape != self.mask.shape:
-            raise ValueError("image and mask shapes do not match")
+            raise ApplicationError(
+                category="Input data",
+                summary="Volume and mask shapes do not match",
+                cause=(
+                    f"Volume shape is {self.volume.shape}, "
+                    f"mask shape is {self.mask.shape}"
+                ),
+                fix="Provide a mask on the same voxel grid as the volume",
+            )
 
         if self.volume.affine is None:
-            raise ValueError("affine must be provided")
+            raise ApplicationError(
+                category="Input data",
+                summary="Volume affine is missing",
+                fix="Repair the NIfTI spatial metadata before preprocessing",
+            )
         if not np.isfinite(np.asarray(self.volume.affine)).all():
-            raise ValueError("affine must contain only finite values")
+            raise ApplicationError(
+                category="Input data",
+                summary="Volume affine is not finite",
+                fix="Repair the NIfTI affine before preprocessing",
+            )
         if self.mask is not None:
             if self.mask.affine is None:
-                raise ValueError("affine must be provided")
+                raise ApplicationError(
+                    category="Input data",
+                    summary="Mask affine is missing",
+                    fix="Repair the mask NIfTI spatial metadata",
+                )
             if not np.isfinite(np.asarray(self.mask.affine)).all():
-                raise ValueError("affine must contain only finite values")
+                raise ApplicationError(
+                    category="Input data",
+                    summary="Mask affine is not finite",
+                    fix="Repair the mask NIfTI affine before preprocessing",
+                )
             if not np.allclose(self.volume.affine, self.mask.affine):
-                raise ValueError("image and mask affines do not match")
+                raise ApplicationError(
+                    category="Input data",
+                    summary="Volume and mask affines do not match",
+                    fix="Register or resample the mask to the volume grid",
+                )
 
         volume_spacing = np.asarray(self.volume.header.get_zooms()[:3], dtype=float)
         if (
@@ -152,7 +192,12 @@ class PreprocessInput:
             or not np.isfinite(volume_spacing).all()
             or np.any(volume_spacing <= 0)
         ):
-            raise ValueError("image voxel spacing must be positive and finite")
+            raise ApplicationError(
+                category="Input data",
+                summary="Volume voxel spacing is invalid",
+                cause=f"Observed spacing {tuple(volume_spacing)}",
+                fix="Repair the NIfTI header with finite positive voxel spacing",
+            )
         if self.mask is not None:
             mask_spacing = np.asarray(self.mask.header.get_zooms()[:3], dtype=float)
             if (
@@ -160,19 +205,40 @@ class PreprocessInput:
                 or not np.isfinite(mask_spacing).all()
                 or np.any(mask_spacing <= 0)
             ):
-                raise ValueError("mask voxel spacing must be positive and finite")
+                raise ApplicationError(
+                    category="Input data",
+                    summary="Mask voxel spacing is invalid",
+                    cause=f"Observed spacing {tuple(mask_spacing)}",
+                    fix="Repair the mask NIfTI header with finite positive spacing",
+                )
 
         volume_data = np.asarray(self.volume.get_fdata())
         if not np.isfinite(volume_data).all():
-            raise ValueError("image contains non-finite values")
+            raise ApplicationError(
+                category="Input data",
+                summary="Volume contains non-finite values",
+                fix="Remove NaN and infinite values from the source volume",
+            )
         if not np.any(volume_data > 0):
-            raise ValueError("image must contain at least one positive voxel")
+            raise ApplicationError(
+                category="Input data",
+                summary="Volume contains no positive voxels",
+                fix="Verify the source volume and preprocessing normalization",
+            )
         if self.mask is not None:
             mask_data = np.asarray(self.mask.get_fdata())
             if not np.isfinite(mask_data).all():
-                raise ValueError("mask contains non-finite values")
+                raise ApplicationError(
+                    category="Input data",
+                    summary="Mask contains non-finite values",
+                    fix="Remove NaN and infinite values from the reference mask",
+                )
             if not np.isin(mask_data, [0, 1]).all():
-                raise ValueError("mask must be binary with values 0 or 1")
+                raise ApplicationError(
+                    category="Input data",
+                    summary="Mask is not binary",
+                    fix="Convert the reference mask to values 0 and 1",
+                )
 
 
 @dataclass(frozen=True)
