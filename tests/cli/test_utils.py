@@ -2,7 +2,6 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
-import typer
 from pydantic import BaseModel, Field
 
 from microbleednet.cli.utils import (
@@ -11,25 +10,34 @@ from microbleednet.cli.utils import (
     load_config,
     parse_config,
 )
+from microbleednet.errors import ApplicationError, print_application_error
 from microbleednet.orchestration.configs import IndexDataConfig
 
 
 def test_load_config_rejects_missing_file(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="does not exist"):
+    with pytest.raises(ApplicationError, match="Configuration file not found"):
         load_config(tmp_path / "missing.toml")
 
 
 def test_load_config_rejects_non_toml_suffix(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
     path.write_text("{}", encoding="utf-8")
-    with pytest.raises(ValueError, match=".toml"):
+    with pytest.raises(ApplicationError, match="must use the TOML format"):
+        load_config(path)
+
+
+def test_load_config_reports_missing_suffix(tmp_path: Path) -> None:
+    path = tmp_path / "config"
+    path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ApplicationError, match="<none>"):
         load_config(path)
 
 
 def test_load_config_rejects_malformed_toml(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     path.write_text("not = valid = toml", encoding="utf-8")
-    with pytest.raises(ValueError, match="could not read configuration"):
+    with pytest.raises(ApplicationError, match="Could not load configuration file"):
         load_config(path)
 
 
@@ -38,8 +46,51 @@ def test_parse_config_reports_validation_error_as_bad_parameter(
 ) -> None:
     path = tmp_path / "config.toml"
     path.write_text("dataset_dir = 'dataset'\n", encoding="utf-8")  # missing fields
-    with pytest.raises(typer.BadParameter, match="invalid configuration"):
+    with pytest.raises(ApplicationError, match="Configuration validation failed"):
         parse_config(path, IndexDataConfig)
+
+
+def test_application_error_string_includes_optional_fields() -> None:
+    error = ApplicationError(
+        category="Configuration",
+        summary="Configuration failed",
+        cause="A field is invalid",
+        fix="Correct the field",
+    )
+
+    assert str(error) == (
+        "Configuration failed. Cause: A field is invalid. Fix: Correct the field."
+    )
+
+
+def test_application_error_string_supports_summary_only() -> None:
+    assert str(ApplicationError(category="Internal", summary="Operation failed")) == (
+        "Operation failed."
+    )
+
+
+def test_print_application_error_uses_plain_terminal_output(capsys) -> None:
+    print_application_error(
+        ApplicationError(
+            category="Configuration",
+            summary="Configuration failed",
+            fix="Correct the field",
+            context={"path": "config.toml"},
+        )
+    )
+
+    assert capsys.readouterr().out == (
+        "Configuration failed. Fix: Correct the field. "
+        "Context: path: config.toml.\n"
+    )
+
+
+def test_print_application_error_without_context(capsys) -> None:
+    print_application_error(
+        ApplicationError(category="Internal", summary="Operation failed")
+    )
+
+    assert capsys.readouterr().out == "Operation failed.\n"
 
 
 def test_config_fields_recurses_into_nested_models() -> None:

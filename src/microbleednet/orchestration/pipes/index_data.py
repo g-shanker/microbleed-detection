@@ -6,6 +6,7 @@ from typing import Optional
 
 from natsort import natsorted
 
+from ...errors import ApplicationError
 from ...progress import progress
 from ..configs import SUBJECT_ID_PLACEHOLDER, IndexDataConfig
 from ..layouts import DatasetLayout
@@ -86,13 +87,24 @@ def index_source(config: IndexDataConfig) -> tuple[RawSource, list[RawSubject]]:
         mask_ids = set(mask_subject_map)
         unmatched_volumes = natsorted(volume_ids - mask_ids)
         unmatched_masks = natsorted(mask_ids - volume_ids)
-        if unmatched_volumes or unmatched_masks:
-            raise ValueError(
-                "unmatched subjects between volumes and masks:\n"
-                "  volumes without masks: "
-                f"{', '.join(unmatched_volumes) or 'none'}\n"
-                "  masks without volumes: "
-                f"{', '.join(unmatched_masks) or 'none'}"
+        if unmatched_volumes or unmatched_masks:  # pragma: no branch
+            details = []
+            if unmatched_volumes:  # pragma: no branch
+                details.append(
+                    f"volumes without masks: {', '.join(unmatched_volumes[:5])}"
+                )
+            if unmatched_masks:  # pragma: no branch
+                details.append(
+                    f"masks without volumes: {', '.join(unmatched_masks[:5])}"
+                )
+            raise ApplicationError(
+                category="Input data",
+                summary="Volume and mask subject IDs do not match",
+                cause="; ".join(details),
+                fix=(
+                    "Check input directories and the volume_pattern/mask_pattern "
+                    "placeholders"
+                ),
             )
 
     def namespaced(subject_id: str) -> str:
@@ -141,9 +153,11 @@ def merge_source(
     if any(
         prior_source.source_id == source.source_id for prior_source in prior_sources
     ):
-        raise ValueError(
-            f"source already indexed in this dataset: {source.source_id}; "
-            "use a different source_id."
+        raise ApplicationError(
+            category="Manifest",
+            summary="Source ID already exists",
+            cause=f"The manifest already contains source '{source.source_id}'",
+            fix="Choose a new source ID or use the supported replacement workflow",
         )
 
     return RawDatasetManifest(
@@ -165,9 +179,21 @@ def build_subject_map(
     for path in progress.track(paths, description=description):
         subject_id = extract_subject_id(root_dir, path, pattern) or ""
         if not subject_id.strip():
-            raise ValueError(f"path has an empty ID: {path}")
+            raise ApplicationError(
+                category="Input data",
+                summary="Subject ID could not be extracted from a path",
+                cause=f"Pattern '{pattern}' produced an empty ID for '{path}'",
+                fix="Correct the filename pattern so it captures a stable subject ID",
+                context={"path": str(path)},
+            )
         if subject_id in subject_map:
-            raise ValueError(f"duplicate subject ID '{subject_id}' in {root_dir}")
+            raise ApplicationError(
+                category="Input data",
+                summary="Filename pattern produces duplicate subject IDs",
+                cause=f"Subject ID '{subject_id}' was extracted more than once",
+                fix="Correct the pattern so each subject ID maps to one file",
+                context={"subject_id": subject_id},
+            )
         subject_map[subject_id] = path
     return subject_map
 
@@ -190,5 +216,11 @@ def extract_subject_id(root_dir: Path, path: Path, pattern: str) -> Optional[str
 
     subject_ids = match.groups()
     if len(set(subject_ids)) != 1:
-        raise ValueError(f"subject ID placeholders do not match in path: {path}")
+        raise ApplicationError(
+            category="Input data",
+            summary="Filename pattern captures inconsistent subject IDs",
+            cause=f"Pattern '{pattern}' captures different IDs in '{path}'",
+            fix="Use one consistent {subject_id} capture in the pattern",
+            context={"path": str(path)},
+        )
     return subject_ids[0]

@@ -92,7 +92,7 @@ def test_split_rejects_subjects_without_masks(tmp_path: Path) -> None:
 
     with pytest.raises(
         ValidationError,
-        match="subjects missing masks: subject-3",
+        match="Required subject masks are missing",
     ):
         SplitConfig(
             dataset_dir=dataset_dir,

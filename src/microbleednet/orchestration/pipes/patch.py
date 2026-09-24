@@ -10,6 +10,7 @@ from ...core.datamodels import ExtractedPatches, PatchRecord
 from ...core.engines import inference as core_inference
 from ...core.io import save_array
 from ...core.transforms import patch as patch_transforms
+from ...errors import ApplicationError
 from ...progress import progress
 from ..configs import (
     BasePatchConfig,
@@ -34,7 +35,10 @@ def execute(
             patch_size=config.patch_size,
         )
     else:
-        raise TypeError(f"unsupported patch configuration: {type(config).__name__}")
+        raise TypeError(
+            "Patch extraction requires a supported patch configuration, "
+            f"received {type(config).__name__}"
+        )
 
     records: list[PatchRecord] = []
     work_items = [
@@ -55,7 +59,19 @@ def execute(
         description=f"Extracting {config.stage} {config.split} patches",
     ):
         subject_id = subject.subject_id
-        assert variant.mask_path is not None
+        if variant.mask_path is None:
+            raise ApplicationError(
+                category="Input data",
+                summary="Patch extraction requires a variant mask",
+                cause=(
+                    f"Subject '{subject_id}' variant {variant_index} has no mask"
+                ),
+                fix=(
+                    "Complete preprocessing with masks before extracting training "
+                    "patches"
+                ),
+                context={"subject_id": subject_id},
+            )
         volume = io.nifti_to_numpy(io.load_volume(variant.volume_path))
         mask = io.nifti_to_numpy(io.load_volume(variant.mask_path))
         frst = io.nifti_to_numpy(io.load_volume(variant.frst_path))
@@ -85,6 +101,20 @@ def execute(
                 has_microbleed=bool(np.any(mask_array > 0)),
             )
             for index, mask_array in enumerate(extracted.masks)
+        )
+
+    if config.subjects and not records:
+        raise ApplicationError(
+            category="Input data",
+            summary="Patch extraction produced no records",
+            cause=(
+                f"No {config.stage} {config.split} patches were produced for "
+                f"{len(config.subjects)} subjects"
+            ),
+            fix=(
+                "Check subject masks, patch size, augmentation settings, and split "
+                "contents"
+            ),
         )
 
     manifest_path = config.experiment_layout.patch_manifest_path(

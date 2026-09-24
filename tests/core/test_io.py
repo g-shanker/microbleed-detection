@@ -35,7 +35,7 @@ def test_save_and_load_volume_round_trip(tmp_path: Path) -> None:
 def test_load_volume_rejects_non_nifti_image(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(io.nib, "load", lambda _: object())
 
-    with pytest.raises(TypeError, match="expected a NIfTI-1 image"):
+    with pytest.raises(ValueError, match="Unsupported NIfTI image type"):
         io.load_volume("volume.nii.gz")
 
 

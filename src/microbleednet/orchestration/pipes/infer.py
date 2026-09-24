@@ -9,6 +9,7 @@ from ...core.common.models import CandidateDetector, CandidateDiscriminatorStude
 from ...core.datamodels import Modality, PatchSizes, VoxelSpacing
 from ...core.engines import inference as core_inference
 from ...core.engines import processor as core_processor
+from ...errors import ApplicationError
 from ...progress import progress
 from ..configs import InferConfig
 from ..layouts import DatasetLayout, ExperimentLayout
@@ -88,16 +89,32 @@ def infer_subjects(
     detector = CandidateDetector().to(device)
     student = CandidateDiscriminatorStudent().to(device)
     try:
-        core_io.load_model_weights(detector, detector_checkpoint)
-
-        core_io.load_model_weights(student, student_checkpoint)
+        for stage, model, checkpoint in (
+            ("detector", detector, detector_checkpoint),
+            ("student", student, student_checkpoint),
+        ):
+            try:
+                core_io.load_model_weights(model, checkpoint)
+            except ApplicationError:
+                raise
+            except (OSError, RuntimeError, ValueError, KeyError) as error:
+                raise ApplicationError(
+                    category="Checkpoint",
+                    summary=f"Could not load the {stage} inference checkpoint",
+                    cause=str(error),
+                    fix=(
+                        f"Verify that the {stage} checkpoint exists and matches "
+                        "the inference model"
+                    ),
+                    context={"path": str(checkpoint), "stage": stage},
+                ) from error
 
         results = [
             infer_subject(subject, detector, student, output_layout)
             for subject in progress.track(subjects, description="Inferring subjects")
         ]
 
-        InferManifest(
+        manifest = InferManifest(
             status=ManifestStatus.COMPLETE,
             device=device_name,
             detector_checkpoint_path=resolve_path_string(detector_checkpoint),
@@ -109,7 +126,17 @@ def infer_subjects(
             maximum_ellipticity=MAXIMUM_ELLIPTICITY,
             minimum_brain_distance_mm=MINIMUM_BRAIN_DISTANCE_MM,
             subjects=results,
-        ).write(output_layout.inference_manifest_path())
+        )
+        try:
+            manifest.write(output_layout.inference_manifest_path())
+        except (OSError, ValueError) as error:
+            raise ApplicationError(
+                category="Output",
+                summary="Could not write the inference manifest",
+                cause=str(error),
+                fix="Check the inference output directory and filesystem permissions",
+                context={"path": str(output_layout.inference_manifest_path())},
+            ) from error
         logger.info(
             "Inference manifest written to %s",
             output_layout.inference_manifest_path(),
@@ -164,7 +191,16 @@ def infer_subject(
         core_io.load_volume(subject.original_volume_path),
     )
     output_path = output_layout.inference_output_path(subject.subject_id)
-    core_io.save_volume(output_image, output_path)
+    try:
+        core_io.save_volume(output_image, output_path)
+    except OSError as error:
+        raise ApplicationError(
+            category="Output",
+            summary="Could not write the inference output",
+            cause=str(error),
+            fix="Check the inference output directory and filesystem permissions",
+            context={"path": str(output_path), "subject_id": subject.subject_id},
+        ) from error
 
     return InferredSubject(
         subject_id=subject.subject_id,

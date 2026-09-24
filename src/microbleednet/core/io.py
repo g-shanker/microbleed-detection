@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from ..errors import ApplicationError
 from . import utils
 from .datamodels import CheckpointState
 
@@ -52,7 +53,13 @@ def read_json(path: Path) -> Any:
 def load_volume(path: Path | str) -> nib.Nifti1Image:
     volume = nib.load(path)
     if not isinstance(volume, nib.Nifti1Image):
-        raise TypeError(f"expected a NIfTI-1 image, got {type(volume).__name__}")
+        raise ApplicationError(
+            category="Input data",
+            summary="Unsupported NIfTI image type",
+            cause=f"'{path}' is not a NIfTI-1 image",
+            fix="Convert the input to the supported NIfTI-1 format",
+            context={"path": str(path)},
+        )
     return volume
 
 

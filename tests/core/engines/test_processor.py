@@ -95,7 +95,7 @@ def test_preprocess_rejects_mask_with_different_affine() -> None:
 def test_preprocess_rejects_non_3d_volume() -> None:
     volume = nib.Nifti1Image(np.ones((2, 2, 2, 1)), np.eye(4))
 
-    with pytest.raises(ValueError, match="must be 3D"):
+    with pytest.raises(ValueError, match="3D volume"):
         _preprocess(volume, volume, "QSM")
 
 
@@ -108,21 +108,21 @@ def test_preprocess_rejects_invalid_voxel_spacing() -> None:
     volume = _volume()
     volume.header.set_zooms((0.0, 1.0, 1.0))
 
-    with pytest.raises(ValueError, match="voxel spacing must be positive"):
+    with pytest.raises(ValueError, match="voxel spacing is invalid"):
         _preprocess(volume, _volume(), "QSM")
 
 
 def test_preprocess_rejects_non_finite_volume_data() -> None:
     volume = nib.Nifti1Image(np.full((2, 2, 2), np.nan), np.eye(4))
 
-    with pytest.raises(ValueError, match="image contains non-finite values"):
+    with pytest.raises(ValueError, match="non-finite values"):
         _preprocess(volume, _volume(), "QSM")
 
 
 def test_preprocess_rejects_non_finite_mask_data() -> None:
     mask = nib.Nifti1Image(np.full((2, 2, 2), np.nan), np.eye(4))
 
-    with pytest.raises(ValueError, match="mask contains non-finite values"):
+    with pytest.raises(ValueError, match="non-finite values"):
         _preprocess(_volume(), mask, "QSM")
 
 
@@ -131,7 +131,7 @@ def test_preprocess_rejects_non_binary_mask() -> None:
     mask_data[0, 0, 0] = 2
     mask = nib.Nifti1Image(mask_data, np.eye(4))
 
-    with pytest.raises(ValueError, match="mask must be binary"):
+    with pytest.raises(ValueError, match="not binary"):
         _preprocess(_volume(), mask, "QSM")
 
 
@@ -139,7 +139,7 @@ def test_preprocess_rejects_empty_volume() -> None:
     volume = nib.Nifti1Image(np.zeros((2, 2, 2)), np.eye(4))
 
     with pytest.raises(
-        ValueError, match="image must contain at least one positive voxel"
+        ValueError, match="no positive voxels"
     ):
         _preprocess(volume, _volume(), "QSM")
 

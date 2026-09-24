@@ -16,6 +16,9 @@ from microbleednet.orchestration.manifests import (
     InferredSubject,
     Manifest,
     ManifestStatus,
+    PatchManifest,
+    PreprocessedDatasetManifest,
+    PreprocessedSubject,
     RawDatasetManifest,
     TrainManifest,
     TrainStageManifest,
@@ -87,7 +90,7 @@ def test_raw_dataset_manifest_rejects_duplicate_subject_ids() -> None:
         "volume_path": "/a",
         "mask_path": "/a-mask",
     }
-    with pytest.raises(ValidationError, match="duplicate subject ID"):
+    with pytest.raises(ValidationError, match="Duplicate subject ID"):
         RawDatasetManifest.model_validate(
             _envelope(
                 manifest_type="raw_dataset", sources=[], subjects=[subject, subject]
@@ -105,7 +108,7 @@ def test_raw_dataset_manifest_rejects_duplicate_source_ids() -> None:
         "modality": "QSM",
         "added_on": timestamp(),
     }
-    with pytest.raises(ValidationError, match="duplicate source ID"):
+    with pytest.raises(ValidationError, match="Duplicate source ID"):
         RawDatasetManifest.model_validate(
             _envelope(
                 manifest_type="raw_dataset", sources=[source, source], subjects=[]
@@ -127,13 +130,10 @@ def test_read_manifest_returns_incomplete_status(tmp_path: Path) -> None:
     manifest = RawDatasetManifest.read(path)
 
     assert manifest.status is ManifestStatus.RUNNING
-    with pytest.raises(ValueError, match="a consumer may only read a complete"):
+    with pytest.raises(ValueError, match="Manifest is incomplete"):
         manifest = RawDatasetManifest.read(path)
         if manifest.status is not ManifestStatus.COMPLETE:
-            raise ValueError(
-                f"manifest at {path} has status {manifest.status.value!r}; "
-                "a consumer may only read a complete manifest."
-            )
+            raise ValueError("Manifest is incomplete")
 
 
 def test_read_manifest_rejects_payload_that_fails_schema_validation(
@@ -141,8 +141,83 @@ def test_read_manifest_rejects_payload_that_fails_schema_validation(
 ) -> None:
     path = tmp_path / "raw.json"
     core_io.write_json(path, _envelope())
-    with pytest.raises(ValueError, match="invalid manifest at"):
+    with pytest.raises(ValueError, match="Manifest schema validation failed"):
         RawDatasetManifest.read(path)
+
+
+def test_read_manifest_wraps_invalid_json(tmp_path: Path) -> None:
+    path = tmp_path / "raw.json"
+    path.write_text("{invalid", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Could not read manifest") as raised:
+        RawDatasetManifest.read(path)
+
+    assert raised.value.__cause__ is not None
+
+
+def test_complete_preprocessed_manifest_rejects_incomplete_subject() -> None:
+    with pytest.raises(ValidationError, match="incomplete variants"):
+        PreprocessedDatasetManifest(
+            status=ManifestStatus.COMPLETE,
+            subjects=[
+                PreprocessedSubject(
+                    subject_id="subject-1",
+                    original_volume_path="volume",
+                    bounding_box=((0, 1), (0, 1), (0, 1)),
+                    variants=[],
+                )
+            ],
+            augmentation_factor=1,
+            raw_manifest_fingerprint="raw",
+        )
+
+
+def test_complete_patch_manifest_rejects_empty_subject_output() -> None:
+    with pytest.raises(ValidationError, match="contains no records"):
+        PatchManifest(
+            status=ManifestStatus.COMPLETE,
+            stage="detector",
+            split="train",
+            subject_ids=["subject-1"],
+            patch_size=48,
+            augmentation_factor=1,
+            records=[],
+        )
+
+
+def test_complete_inference_manifest_rejects_missing_output() -> None:
+    with pytest.raises(ValidationError, match="without outputs"):
+        InferManifest(
+            status=ManifestStatus.COMPLETE,
+            device="cpu",
+            detector_checkpoint_path="detector.pth",
+            student_checkpoint_path="student.pth",
+            detector_threshold=0.5,
+            student_threshold=0.5,
+            discriminator_patch_size=24,
+            minimum_volume_mm3=2.5,
+            maximum_ellipticity=0.2,
+            minimum_brain_distance_mm=5.0,
+            subjects=[InferredSubject(subject_id="subject-1", output_path="")],
+        )
+
+
+def test_running_inference_manifest_allows_missing_output() -> None:
+    manifest = InferManifest(
+        status=ManifestStatus.RUNNING,
+        device="cpu",
+        detector_checkpoint_path="detector.pth",
+        student_checkpoint_path="student.pth",
+        detector_threshold=0.5,
+        student_threshold=0.5,
+        discriminator_patch_size=24,
+        minimum_volume_mm3=2.5,
+        maximum_ellipticity=0.2,
+        minimum_brain_distance_mm=5.0,
+        subjects=[InferredSubject(subject_id="subject-1", output_path="")],
+    )
+
+    assert manifest.status is ManifestStatus.RUNNING
 
 
 def test_train_manifest_round_trips_split_and_training_settings(

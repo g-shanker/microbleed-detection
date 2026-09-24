@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import numpy as np
+import pytest
 
 from microbleednet.core.common.metrics import aggregate_metrics, score_masks
 from microbleednet.orchestration import configs
@@ -81,6 +82,56 @@ def test_aggregate_metrics_counts_subjects() -> None:
     aggregate = aggregate_metrics([metrics])
 
     assert aggregate.false_positives_per_subject == 1.0
+
+
+def test_evaluate_subjects_requires_reference_mask(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        evaluate.InferManifest,
+        "read",
+        lambda _: SimpleNamespace(status=ManifestStatus.COMPLETE, subjects=[]),
+    )
+    config = EvaluateConfig.model_construct(
+        dataset_dir=tmp_path / "dataset",
+        output_dir=tmp_path / "output",
+        detector_checkpoint_path=tmp_path / "detector.pth",
+        student_checkpoint_path=tmp_path / "student.pth",
+        device="cpu",
+        experiment_dir=None,
+    )
+
+    with pytest.raises(ValueError, match="requires a reference mask"):
+        evaluate.evaluate_subjects(
+            config,
+            tmp_path / "dataset",
+            ExperimentLayout(experiment_dir=tmp_path / "experiment"),
+            [("subject-1", None)],
+        )
+
+
+def test_evaluate_subjects_requires_matching_inference_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        evaluate.InferManifest,
+        "read",
+        lambda _: SimpleNamespace(status=ManifestStatus.COMPLETE, subjects=[]),
+    )
+    config = EvaluateConfig.model_construct(
+        dataset_dir=tmp_path / "dataset",
+        output_dir=tmp_path / "output",
+        detector_checkpoint_path=tmp_path / "detector.pth",
+        student_checkpoint_path=tmp_path / "student.pth",
+        device="cpu",
+        experiment_dir=None,
+    )
+
+    with pytest.raises(ValueError, match="Inference output is missing"):
+        evaluate.evaluate_subjects(
+            config,
+            tmp_path / "dataset",
+            ExperimentLayout(experiment_dir=tmp_path / "experiment"),
+            [("subject-1", "reference")],
+        )
 
 
 def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> None:
@@ -303,6 +354,6 @@ def test_evaluate_subjects_rejects_incomplete_inference_manifest(
             [(subject.subject_id, "reference")],
         )
     except ValueError as error:
-        assert "consumer may only read a complete manifest" in str(error)
+        assert "Cannot evaluate incomplete inference output" in str(error)
     else:
         raise AssertionError("incomplete inference manifest must fail")

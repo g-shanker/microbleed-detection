@@ -36,9 +36,6 @@ def get_nonoverlapping_patches(
     patch_size: int,
 ) -> list[np.ndarray]:
     """Extract non-overlapping cubic patches."""
-    if patch_size <= 0:
-        raise ValueError("patch_size must be positive")
-
     padding = [(0, max(patch_size - size, 0)) for size in volume.shape]
     padded = np.pad(volume, padding, mode="constant", constant_values=0)
     starts = [

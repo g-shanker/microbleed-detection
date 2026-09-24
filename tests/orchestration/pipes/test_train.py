@@ -43,26 +43,31 @@ def _hyperparameters(batch_size: int, max_epochs: int = 100) -> train.Hyperparam
     )
 
 
-def _subjects(count: int, directory: Path) -> list[PreprocessedSubject]:
+def _subjects(
+    count: int, directory: Path, augmentation_factor: int = 1
+) -> list[PreprocessedSubject]:
     directory.mkdir(parents=True, exist_ok=True)
     subjects = []
     for index in range(count):
-        volume_path = directory / f"volume-{index}.nii.gz"
-        mask_path = directory / f"mask-{index}.nii.gz"
-        volume_path.touch()
-        mask_path.touch()
+        variants = []
+        for variant_index in range(augmentation_factor):
+            volume_path = directory / f"volume-{index}-{variant_index}.nii.gz"
+            mask_path = directory / f"mask-{index}-{variant_index}.nii.gz"
+            volume_path.touch()
+            mask_path.touch()
+            variants.append(
+                PreprocessedVariant(
+                    volume_path=str(volume_path),
+                    mask_path=str(mask_path),
+                    frst_path=str(volume_path),
+                )
+            )
         subjects.append(
             PreprocessedSubject(
                 subject_id=f"subject-{index}",
-                original_volume_path=str(volume_path),
+                original_volume_path=str(variants[0].volume_path),
                 bounding_box=((0, 1), (0, 1), (0, 1)),
-                variants=[
-                    PreprocessedVariant(
-                        volume_path=str(volume_path),
-                        mask_path=str(mask_path),
-                        frst_path=str(volume_path),
-                    )
-                ],
+                variants=variants,
             )
         )
     return subjects
@@ -74,7 +79,7 @@ def test_execute_runs_stages_with_configured_training_values(
     dataset_dir = tmp_path / "dataset"
     dataset_dir.mkdir()
     now = timestamp()
-    subjects = _subjects(10, tmp_path / "inputs")
+    subjects = _subjects(10, tmp_path / "inputs", augmentation_factor=10)
     PreprocessedDatasetManifest(
         status=ManifestStatus.COMPLETE,
         created_at=now,
@@ -136,9 +141,9 @@ def test_execute_runs_stages_with_configured_training_values(
         ExperimentLayout(experiment_dir=experiment_dir).split_manifest_path()
     )
 
-    detector_hyperparameters = _hyperparameters(3, 7)
+    detector_hyperparameters = _hyperparameters(4, 7)
     teacher_hyperparameters = _hyperparameters(4, 8)
-    student_hyperparameters = _hyperparameters(5, 9)
+    student_hyperparameters = _hyperparameters(6, 9)
     config = TrainConfig(
         dataset_dir=dataset_dir,
         experiment_dir=experiment_dir,
@@ -324,9 +329,9 @@ def test_stage_functions_apply_fixed_training_recipe(
         discriminator_augmentation_factor=4,
         num_workers=2,
         pin_memory=True,
-        detector_hyperparameters=_hyperparameters(3),
+        detector_hyperparameters=_hyperparameters(4),
         teacher_hyperparameters=_hyperparameters(4),
-        student_hyperparameters=_hyperparameters(5),
+        student_hyperparameters=_hyperparameters(6),
     )
     train.train_detector(subjects, subjects, layout, device, config)
     train.train_teacher(subjects, subjects, layout, device, config)
@@ -400,7 +405,7 @@ def test_train_stage_resumes_from_latest_checkpoint(
         FakeDataset([object()]),  # pyright: ignore[reportArgumentType]
         experiment_layout,
         DETECTOR_STAGE,
-        _hyperparameters(1, 1),
+            _hyperparameters(2, 1),
         num_workers=0,
         pin_memory=False,
         resume=True,
@@ -454,7 +459,7 @@ def test_extract_patch_records_rejects_incomplete_manifest(
         lambda _: SimpleNamespace(status=ManifestStatus.RUNNING, records=[]),
     )
 
-    with pytest.raises(ValueError, match="consumer may only read a complete manifest"):
+    with pytest.raises(ValueError, match="incomplete patch output"):
         train.extract_patch_records(config)
 
 

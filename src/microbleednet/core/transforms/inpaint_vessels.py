@@ -6,6 +6,7 @@ from skimage.filters import frangi
 from skimage.measure import regionprops
 from sklearn.cluster import KMeans
 
+from ...errors import ApplicationError
 from .. import utils
 
 FRANGI_SIGMAS = (0.5, 1.2, 0.2)
@@ -144,6 +145,11 @@ def inpaint_with_neighborhood_mean(volume: np.ndarray, mask: np.ndarray) -> np.n
             break
 
     if np.any(working_mask):
-        raise ValueError("vessel mask contains unresolved voxels after inpainting")
+        raise ApplicationError(
+            category="Input data",
+            summary="Vessel mask contains unresolved regions",
+            cause="Some masked voxels have no valid neighboring values",
+            fix="Inspect the vessel mask or adjust the inpainting parameters",
+        )
 
     return inpainted_volume

@@ -51,7 +51,7 @@ def test_extract_subject_id_rejects_mismatched_repeated_placeholders(
 ) -> None:
     path = tmp_path / "subject_1" / "subject_2_volume.nii.gz"
 
-    with pytest.raises(ValueError, match="subject ID placeholders do not match"):
+    with pytest.raises(ValueError, match="inconsistent subject IDs"):
         extract_subject_id(
             tmp_path, path, "{subject_id}/{subject_id}_volume.nii.gz"
         )
@@ -70,7 +70,7 @@ def test_find_matching_paths_treats_pattern_text_literally(tmp_path: Path) -> No
 def test_build_subject_map_rejects_empty_subject_id(tmp_path: Path) -> None:
     path = tmp_path / "_volume.nii.gz"
     path.write_bytes(b"")
-    with pytest.raises(ValueError, match="empty ID"):
+    with pytest.raises(ValueError, match="could not be extracted"):
         build_subject_map(
             tmp_path,
             [path],
@@ -82,7 +82,7 @@ def test_build_subject_map_rejects_empty_subject_id(tmp_path: Path) -> None:
 def test_build_subject_map_rejects_duplicate_subject_id(tmp_path: Path) -> None:
     path = tmp_path / "subject_1_volume.nii.gz"
     path.write_bytes(b"")
-    with pytest.raises(ValueError, match="duplicate subject ID"):
+    with pytest.raises(ValueError, match="duplicate subject IDs"):
         build_subject_map(
             tmp_path,
             [path, path],
@@ -180,7 +180,7 @@ def test_merge_source_rejects_existing_source_id() -> None:
         ],
     )
 
-    with pytest.raises(ValueError, match="source already indexed"):
+    with pytest.raises(ValueError, match="Source ID already exists"):
         merge_source(
             existing,
             source=_source("first", "2026-01-02T00:00:00+00:00"),

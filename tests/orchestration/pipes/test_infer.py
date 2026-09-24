@@ -1,10 +1,13 @@
 from pathlib import Path
+from typing import Any, cast
 
 import nibabel as nib
 import numpy as np
+import pytest
 import torch.nn as nn
 
 from microbleednet.core.engines import processor
+from microbleednet.errors import ApplicationError
 from microbleednet.orchestration.configs import (
     InferConfig,
 )
@@ -194,6 +197,146 @@ def test_execute_writes_inference_manifest(tmp_path: Path, monkeypatch) -> None:
     assert [item.subject_id for item in manifest.subjects] == ["subject-1"]
     assert len(saved) == 1
     assert restore_calls[0][1] == ((0, 3), (0, 3), (0, 3))
+
+
+def test_infer_subjects_wraps_checkpoint_load_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class FakeModel(nn.Module):
+        def forward(self, inputs):
+            return inputs
+
+    monkeypatch.setattr(infer, "CandidateDetector", FakeModel)
+    monkeypatch.setattr(infer, "CandidateDiscriminatorStudent", FakeModel)
+    monkeypatch.setattr(
+        infer.core_io,
+        "load_model_weights",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("invalid checkpoint")),
+    )
+    monkeypatch.setattr(infer, "release_gpu_memory", lambda: None)
+
+    with pytest.raises(ValueError, match="Could not load the detector"):
+        infer.infer_subjects(
+            "cpu",
+            ExperimentLayout(experiment_dir=tmp_path),
+            tmp_path / "detector.pth",
+            tmp_path / "student.pth",
+            [],
+        )
+
+
+def test_infer_subjects_preserves_application_checkpoint_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class FakeModel(nn.Module):
+        def forward(self, inputs):
+            return inputs
+
+    expected = ApplicationError(
+        category="Checkpoint",
+        summary="checkpoint error",
+        cause="already structured",
+        fix="fix",
+    )
+    monkeypatch.setattr(infer, "CandidateDetector", FakeModel)
+    monkeypatch.setattr(infer, "CandidateDiscriminatorStudent", FakeModel)
+    monkeypatch.setattr(
+        infer.core_io,
+        "load_model_weights",
+        lambda *args: (_ for _ in ()).throw(expected),
+    )
+    monkeypatch.setattr(infer, "release_gpu_memory", lambda: None)
+
+    with pytest.raises(ApplicationError) as raised:
+        infer.infer_subjects(
+            "cpu",
+            ExperimentLayout(experiment_dir=tmp_path),
+            tmp_path / "detector.pth",
+            tmp_path / "student.pth",
+            [],
+        )
+
+    assert raised.value is expected
+
+
+def test_infer_subjects_wraps_manifest_write_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class FakeModel(nn.Module):
+        def forward(self, inputs):
+            return inputs
+
+    monkeypatch.setattr(infer, "CandidateDetector", FakeModel)
+    monkeypatch.setattr(infer, "CandidateDiscriminatorStudent", FakeModel)
+    monkeypatch.setattr(infer.core_io, "load_model_weights", lambda *args: None)
+    monkeypatch.setattr(
+        infer.InferManifest,
+        "write",
+        lambda *_args: (_ for _ in ()).throw(OSError("read-only")),
+    )
+    monkeypatch.setattr(infer, "release_gpu_memory", lambda: None)
+
+    with pytest.raises(ValueError, match="Could not write the inference manifest"):
+        infer.infer_subjects(
+            "cpu",
+            ExperimentLayout(experiment_dir=tmp_path),
+            tmp_path / "detector.pth",
+            tmp_path / "student.pth",
+            [],
+        )
+
+
+def test_infer_subject_wraps_output_write_failure(tmp_path: Path, monkeypatch) -> None:
+    subject = PreprocessedSubject(
+        subject_id="subject-1",
+        original_volume_path="original-volume",
+        bounding_box=((0, 3), (0, 3), (0, 3)),
+        variants=[
+            PreprocessedVariant(
+                volume_path="volume", mask_path=None, frst_path="frst"
+            )
+        ],
+    )
+    volume_image = nib.Nifti1Image(np.ones((3, 3, 3)), np.eye(4))
+    monkeypatch.setattr(infer.core_io, "load_volume", lambda _: volume_image)
+    monkeypatch.setattr(
+        infer.core_io,
+        "nifti_to_numpy",
+        lambda _: np.ones((3, 3, 3), dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        infer.core_inference,
+        "infer_detector",
+        lambda *args: np.ones((3, 3, 3), dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        infer.core_inference,
+        "infer_discriminator",
+        lambda *args: np.ones((3, 3, 3), dtype=np.uint8),
+    )
+    monkeypatch.setattr(
+        infer.core_processor,
+        "postprocess",
+        lambda *args: np.ones((3, 3, 3), dtype=np.uint8),
+    )
+    monkeypatch.setattr(
+        infer.core_processor.volume_ops,
+        "restore_cropped_volume",
+        lambda *args: volume_image,
+    )
+    monkeypatch.setattr(
+        infer.core_io,
+        "save_volume",
+        lambda *_args: (_ for _ in ()).throw(OSError("read-only")),
+    )
+
+    with pytest.raises(ValueError, match="Could not write the inference output"):
+        infer.infer_subject(
+            subject,
+            cast(Any, object()),
+            cast(Any, object()),
+            ExperimentLayout(experiment_dir=tmp_path),
+        )
 
 
 def test_execute_preprocesses_raw_subjects(tmp_path: Path, monkeypatch) -> None:
