@@ -57,5 +57,5 @@ def test_initialize_teacher_rejects_missing_detector_keys() -> None:
     teacher = CandidateDiscriminatorTeacher()
     del teacher.segmentor
 
-    with pytest.raises(RuntimeError, match="keys missing in teacher"):
+    with pytest.raises(ValueError, match="incompatible"):
         utils.initialize_teacher_from_detector(detector, teacher)

@@ -119,7 +119,7 @@ def test_inpaint_with_neighborhood_mean_fills_masked_voxel() -> None:
 
 
 def test_inpaint_with_neighborhood_mean_rejects_unresolvable_mask() -> None:
-    with pytest.raises(ValueError, match="unresolved voxels"):
+    with pytest.raises(ValueError, match="unresolved regions"):
         inpaint_vessels.inpaint_with_neighborhood_mean(
             np.ones((2, 2, 2)), np.ones((2, 2, 2), dtype=bool)
         )

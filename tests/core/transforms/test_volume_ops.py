@@ -27,7 +27,7 @@ def test_add_noise_requires_matching_shape() -> None:
         volume_ops.add_noise(volume, noise),
         np.full(volume.shape, 1.5),
     )
-    with pytest.raises(ValueError, match="noise must match volume shape"):
+    with pytest.raises(ValueError, match="shapes do not match"):
         volume_ops.add_noise(volume, np.ones((1, 1, 1)))
 
 
@@ -50,7 +50,7 @@ def test_normalize_volume_scales_by_positive_maximum() -> None:
 def test_normalize_volume_rejects_invalid_maximum(maximum: float) -> None:
     with pytest.raises(
         ValueError,
-        match="cannot normalize a volume without a finite positive maximum",
+        match="cannot be normalized",
     ):
         volume_ops.normalize_volume(np.array([[[maximum]]]))
 
@@ -112,7 +112,7 @@ def test_get_bounding_box_returns_positive_extent() -> None:
 
 
 def test_get_bounding_box_rejects_empty_volume() -> None:
-    with pytest.raises(ValueError, match="cannot crop an empty volume"):
+    with pytest.raises(ValueError, match="bounding box"):
         volume_ops.get_bounding_box(np.zeros((2, 2, 2)))
 
 
@@ -120,7 +120,7 @@ def test_extract_brain_requires_valid_fsldir(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.setenv("FSLDIR", str(tmp_path / "missing"))
     volume = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
 
-    with pytest.raises(EnvironmentError, match="Valid FSLDIR"):
+    with pytest.raises(ValueError, match="requires FSL"):
         volume_ops.extract_brain(volume)
 
 

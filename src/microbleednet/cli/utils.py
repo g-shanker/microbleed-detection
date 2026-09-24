@@ -18,8 +18,9 @@ from typing import (
     get_origin,
 )
 
-import typer
 from pydantic import BaseModel, ValidationError
+
+from ..errors import ApplicationError, format_validation_errors
 
 
 @dataclass(frozen=True)
@@ -47,14 +48,31 @@ def is_pipe_module(module: ModuleType) -> TypeGuard[PipeModule]:
 def load_config(path: Path) -> dict[str, Any]:
     """Read a TOML config file into a plain dict."""
     if not path.is_file():
-        raise ValueError(f"configuration file does not exist: {path}")
+        raise ApplicationError(
+            category="Configuration",
+            summary="Configuration file not found",
+            fix="Provide an existing TOML file with --config",
+            context={"path": str(path)},
+        )
     if path.suffix.lower() != ".toml":
-        raise ValueError(f"configuration file must be a .toml file: {path}")
+        raise ApplicationError(
+            category="Configuration",
+            summary="Configuration file must use the TOML format",
+            cause=f"Received suffix '{path.suffix or '<none>'}'",
+            fix="Use a file with a .toml extension",
+            context={"path": str(path)},
+        )
     try:
         with path.open("rb") as config_file:
             config = tomllib.load(config_file)
     except (OSError, ValueError) as error:
-        raise ValueError(f"could not read configuration {path}: {error}") from error
+        raise ApplicationError(
+            category="Configuration",
+            summary="Could not load configuration file",
+            cause=str(error).rstrip("."),
+            fix="Correct the file permissions or TOML syntax",
+            context={"path": str(path)},
+        ) from error
     return config
 
 
@@ -63,13 +81,22 @@ def parse_config[ConfigModel: BaseModel](
 ) -> ConfigModel:
     """Load a config file and validate it into a typed model.
 
-    Pydantic validation errors are surfaced as clean CLI errors rather than
-    tracebacks.
+    Pydantic validation errors become structured application errors.
     """
     try:
         return model.model_validate(load_config(path))
     except ValidationError as error:
-        raise typer.BadParameter(f"invalid configuration {path}:\n{error}") from error
+        details = format_validation_errors(error.errors())
+        raise ApplicationError(
+            category="Configuration",
+            summary="Configuration validation failed",
+            cause=details,
+            fix=(
+                "Correct the reported fields; run 'microbleednet describe <command>' "
+                "for valid configuration keys"
+            ),
+            context={"path": str(path), "model": model.__name__},
+        ) from error
 
 
 @dataclass(frozen=True)

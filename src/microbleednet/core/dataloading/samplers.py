@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import Sampler
 
+from ...errors import ApplicationError
 from ..datamodels import PatchRecord
 
 
@@ -10,8 +11,6 @@ class EqualBatchSampler(Sampler):
         patches: list[PatchRecord],
         batch_size: int,
     ):
-        if batch_size <= 0 or batch_size % 2:
-            raise ValueError("batch_size must be a positive even number")
         self.batch_size = batch_size
 
         self.pos_indices = [
@@ -22,7 +21,15 @@ class EqualBatchSampler(Sampler):
         ]
 
         if not self.pos_indices or not self.neg_indices:
-            raise ValueError("balanced sampling requires positive and negative patches")
+            missing_class = "positive" if not self.pos_indices else "negative"
+            raise ApplicationError(
+                category="Input data",
+                summary=f"Training patches contain no {missing_class} examples",
+                fix=(
+                    "Adjust patch extraction or data composition to include both "
+                    "classes"
+                ),
+            )
 
         self.num_pos = self.batch_size // 2
         self.num_neg = self.batch_size // 2

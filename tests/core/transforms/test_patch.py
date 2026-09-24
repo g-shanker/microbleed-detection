@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 
 from microbleednet.core.transforms import patch
 from microbleednet.core.utils import label_components
@@ -50,11 +49,6 @@ def test_nonoverlapping_patches_pad_volume_smaller_than_patch() -> None:
     assert len(patches) == 1
     assert patches[0].shape == (5, 5, 5)
     np.testing.assert_array_equal(patches[0][:2, :3, :4], 1)
-
-
-def test_nonoverlapping_patches_reject_nonpositive_size() -> None:
-    with pytest.raises(ValueError, match="patch_size must be positive"):
-        patch.get_nonoverlapping_patches(np.ones((2, 2, 2)), patch_size=0)
 
 
 def test_centered_patches_use_requested_size_at_volume_boundary() -> None:

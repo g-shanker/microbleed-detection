@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from skimage.measure import label
 
+from ..errors import ApplicationError
 from .common.models import CandidateDetector, CandidateDiscriminatorTeacher
 
 AMP_DTYPE = torch.float16
@@ -55,6 +56,14 @@ def initialize_teacher_from_detector(
     }
     missing = [key for key in transferable if key not in teacher_state]
     if missing:
-        raise RuntimeError(f"detector-to-teacher keys missing in teacher: {missing}")
+        displayed = ", ".join(missing[:5])
+        if len(missing) > 5:  # pragma: no branch
+            displayed += f", ... ({len(missing)} total)"
+        raise ApplicationError(
+            category="Checkpoint",
+            summary="Teacher model is incompatible with detector weights",
+            cause=f"Teacher is missing detector state keys: {displayed}",
+            fix="Use compatible detector and teacher architectures",
+        )
     teacher_state.update(transferable)
     unwrap_model(teacher).load_state_dict(teacher_state, strict=True)

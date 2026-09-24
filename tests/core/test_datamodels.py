@@ -13,10 +13,10 @@ def test_patch_sizes_are_fixed_model_input_contracts() -> None:
 @pytest.mark.parametrize(
     ("volume_affine", "mask_affine", "message"),
     [
-        (None, np.eye(4), "affine must be provided"),
-        (np.full((4, 4), np.nan), np.eye(4), "affine must contain only finite values"),
-        (np.eye(4), None, "affine must be provided"),
-        (np.eye(4), np.full((4, 4), np.nan), "affine must contain only finite values"),
+        (None, np.eye(4), "Volume affine is missing"),
+        (np.full((4, 4), np.nan), np.eye(4), "Volume affine is not finite"),
+        (np.eye(4), None, "Mask affine is missing"),
+        (np.eye(4), np.full((4, 4), np.nan), "Mask affine is not finite"),
     ],
 )
 def test_preprocess_input_rejects_invalid_affines(
@@ -36,5 +36,5 @@ def test_preprocess_input_rejects_invalid_mask_spacing() -> None:
     mask = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
     mask.header.set_zooms((0.0, 1.0, 1.0))
 
-    with pytest.raises(ValueError, match="mask voxel spacing must be positive"):
+    with pytest.raises(ValueError, match="Mask voxel spacing is invalid"):
         PreprocessInput(volume, mask, "QSM")

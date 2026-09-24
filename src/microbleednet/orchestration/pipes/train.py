@@ -30,6 +30,7 @@ from ...core.datamodels import (
     PatchSizes,
 )
 from ...core.engines.trainers import Trainer
+from ...errors import ApplicationError
 from .. import utils
 from ..configs import (
     BasePatchConfig,
@@ -234,9 +235,12 @@ def extract_patch_records(config: BasePatchConfig) -> list[PatchRecord]:
     )
     manifest = PatchManifest.read(manifest_path)
     if manifest.status is not ManifestStatus.COMPLETE:
-        raise ValueError(
-            f"manifest at {manifest_path} has status {manifest.status.value!r}; "
-            "a consumer may only read a complete manifest."
+        raise ApplicationError(
+            category="Manifest",
+            summary="Cannot train from incomplete patch output",
+            cause=f"Patch manifest status is '{manifest.status.value}'",
+            fix="Complete patch extraction or remove the stale incomplete artifact",
+            context={"path": str(manifest_path)},
         )
     return manifest.records
 

@@ -14,16 +14,12 @@ class BaseTask[BatchType](nn.Module):
     def training_step(
         self, model: nn.Module, batch: BatchType
     ) -> torch.Tensor:
-        raise NotImplementedError(
-            "Subclasses must implement the training_step method."
-        )
+        raise NotImplementedError("BaseTask.training_step must be implemented")
 
     def validation_step(
         self, model: nn.Module, batch: BatchType
     ) -> torch.Tensor:
-        raise NotImplementedError(
-            "Subclasses must implement the validation_step method."
-        )
+        raise NotImplementedError("BaseTask.validation_step must be implemented")
 
 
 class SegmentationTask(BaseTask[SegmentationBatch]):

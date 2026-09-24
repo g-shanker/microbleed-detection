@@ -58,7 +58,7 @@ class BasePatchDataset(Dataset):
         )
 
     def __getitem__(self, idx: int):
-        raise NotImplementedError("Subclasses must implement the __getitem__ method.")
+        raise NotImplementedError("BasePatchDataset.__getitem__ must be implemented")
 
 
 class SegmentationPatchDataset(BasePatchDataset):

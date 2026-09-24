@@ -73,7 +73,7 @@ def test_execute_materializes_supplied_subjects_and_writes_manifest(
         augmentation_factor=2,
     )
 
-    assert patch.execute(config) is None
+    patch.execute(config)
     records = PatchManifest.read(
         experiment_layout.patch_manifest_path("detector", "train")
     ).records
@@ -96,7 +96,7 @@ def test_execute_uses_configured_augmentation_factor(tmp_path: Path) -> None:
         augmentation_factor=1,
     )
 
-    assert patch.execute(config) is None
+    patch.execute(config)
     records = PatchManifest.read(
         experiment_layout.patch_manifest_path("teacher", "validation")
     ).records
@@ -106,8 +106,30 @@ def test_execute_uses_configured_augmentation_factor(tmp_path: Path) -> None:
 
 
 def test_execute_rejects_unsupported_patch_config(tmp_path: Path) -> None:
-    with pytest.raises(TypeError, match="unsupported patch configuration"):
+    with pytest.raises(TypeError, match="supported patch configuration"):
         patch.execute(object())  # pyright: ignore[reportArgumentType]
+
+
+def test_execute_rejects_variant_without_mask(tmp_path: Path) -> None:
+    subject = _write_subject(tmp_path / "inputs", "unmasked")
+    subject = subject.model_copy(
+        update={
+            "variants": [
+                subject.variants[0].model_copy(update={"mask_path": None})
+            ]
+        }
+    )
+    config = NonOverlappingPatchConfig(
+        experiment_layout=ExperimentLayout(experiment_dir=tmp_path / "experiment"),
+        stage="detector",
+        split="train",
+        subjects=[subject],
+        patch_size=2,
+        augmentation_factor=1,
+    )
+
+    with pytest.raises(ValueError, match="requires a variant mask"):
+        patch.execute(config)
 
 
 def test_target_centered_reuses_extractor_for_all_subjects(
@@ -221,10 +243,11 @@ def test_execute_skips_subject_with_no_extracted_patches(
         lambda size: lambda volume, mask, frst: ExtractedPatches(empty, empty, empty),
     )
 
-    assert patch.execute(config) is None
-    assert PatchManifest.read(
-        config.experiment_layout.patch_manifest_path("detector", "train")
-    ).records == []
+    with pytest.raises(ValueError, match="Patch extraction produced no records"):
+        patch.execute(config)
+    assert not config.experiment_layout.patch_manifest_path(
+        "detector", "train"
+    ).exists()
 
 
 
