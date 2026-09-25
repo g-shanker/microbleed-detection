@@ -1,0 +1,6 @@
+# Evaluate every masked subject using explicitly supplied compatible checkpoints.
+dataset_dir = "data/indexed"
+output_dir = "experiments/evaluation"
+detector_checkpoint_path = "checkpoints/detector.pth"
+student_checkpoint_path = "checkpoints/student.pth"
+device = "cpu"
