@@ -1,15 +1,25 @@
+import logging
 from pathlib import Path
 
+import torch
 import torch.nn as nn
 from torch import optim
 from torch.amp.autocast_mode import autocast
 from torch.amp.grad_scaler import GradScaler
 from torch.utils.data import DataLoader
 
+from ...constants import AMP_DTYPE_NAME
+from ...errors import ApplicationError
+from ...progress import progress
 from .. import io, utils
 from ..common.tasks import BaseTask
-from ..datamodels import CheckpointState, EpochLoss, Hyperparameters
-from .evaluators import Evaluator
+from ..datamodels import (
+    CheckpointState,
+    EpochLoss,
+    Hyperparameters,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class Trainer:
@@ -19,11 +29,16 @@ class Trainer:
         task: BaseTask,
         best_checkpoint: Path,
         hyperparameters: Hyperparameters,
+        latest_checkpoint: Path,
     ):
+        """Configure model optimization, scheduling, scaling, and checkpoint state."""
         self.model = model
         self.hyperparameters = hyperparameters
         self.best_checkpoint = best_checkpoint
+        self.latest_checkpoint = latest_checkpoint
         self.epochs_without_improvement = 0
+        self.start_epoch = 0
+        self.history: list[EpochLoss] = []
 
         self.device = utils.get_model_device(self.model)
         self.task = task.to(self.device)
@@ -54,22 +69,24 @@ class Trainer:
 
         self.best_val_loss = float("inf")
 
-        self.evaluator = Evaluator(
-            self.model,
-            self.task,
-            use_amp=self.use_amp,
-        )
-
     def fit(
         self,
         train_loader: DataLoader,
         validation_loader: DataLoader,
+        description: str,
     ) -> list[EpochLoss]:
-        history = []
+        """Train until the epoch limit or early stopping and return loss history."""
         for epoch in range(self.hyperparameters.max_epochs):
-            training_loss = self.train_epoch(train_loader)
-            val_loss = self.evaluator.validation_loss(validation_loader)
-            history.append(
+            if epoch < self.start_epoch:
+                continue
+            epoch_label = f"epoch {epoch + 1}/{self.hyperparameters.max_epochs}"
+            training_loss = self.train_epoch(
+                train_loader, f"Training {description} {epoch_label}"
+            )
+            val_loss = self.validate_epoch(
+                validation_loader, f"Validating {description} {epoch_label}"
+            )
+            self.history.append(
                 EpochLoss(
                     epoch=epoch + 1,
                     training_loss=training_loss,
@@ -86,21 +103,103 @@ class Trainer:
             else:
                 self.epochs_without_improvement += 1
 
-            if is_best:
-                self.save_checkpoint(epoch)
-            if self.epochs_without_improvement >= self.hyperparameters.patience:
-                break
-        return history
+            logger.info(
+                "%s epoch %d/%d: training_loss=%.6f validation_loss=%.6f "
+                "best_validation_loss=%.6f epochs_without_improvement=%d",
+                description,
+                epoch + 1,
+                self.hyperparameters.max_epochs,
+                training_loss,
+                val_loss,
+                self.best_val_loss,
+                self.epochs_without_improvement,
+            )
 
-    def train_epoch(self, dataloader: DataLoader) -> float:
+            self.save_checkpoint(epoch, self.latest_checkpoint)
+            if is_best:
+                self.save_checkpoint(epoch, self.best_checkpoint)
+            if self.epochs_without_improvement >= self.hyperparameters.patience:
+                logger.info(
+                    "%s stopped early at epoch %d/%d after %d epochs without "
+                    "improvement",
+                    description,
+                    epoch + 1,
+                    self.hyperparameters.max_epochs,
+                    self.epochs_without_improvement,
+                )
+                break
+        return self.history
+
+    def validate_epoch(self, dataloader: DataLoader, description: str) -> float:
+        """Evaluate the model and return sample-weighted mean validation loss."""
+        self.model.eval()
+        running_loss = 0.0
+        sample_count = 0
+
+        with torch.no_grad():
+            batches = progress.track(
+                dataloader,
+                description=description,
+            )
+            for batch in batches:
+                if self.use_amp:
+                    with autocast(
+                        device_type=self.device.type,
+                        dtype=getattr(torch, AMP_DTYPE_NAME),
+                    ):
+                        loss = self.task.validation_step(self.model, batch)
+                else:
+                    loss = self.task.validation_step(self.model, batch)
+                batch_size = batch.volume.shape[0]
+                running_loss += loss.item() * batch_size
+                sample_count += batch_size
+
+        if sample_count == 0:
+            raise ApplicationError(
+                category="Input data",
+                summary="Validation cannot continue with an empty DataLoader",
+                cause=f"No batches were produced for '{description}'",
+                fix=(
+                    "Check split sizes, subject masks, patch extraction, and "
+                    "batch settings"
+                ),
+            )
+
+        return running_loss / sample_count
+
+    def load_latest_checkpoint(self) -> None:
+        """Restore model and training state from the latest checkpoint."""
+        checkpoint = torch.load(
+            self.latest_checkpoint,
+            map_location=self.device,
+            weights_only=True,
+        )
+        utils.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
+        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        self.scaler.load_state_dict(checkpoint["scaler_state_dict"])
+        self.best_val_loss = checkpoint["best_val_loss"]
+        self.epochs_without_improvement = checkpoint["epochs_without_improvement"]
+        self.start_epoch = checkpoint["epoch"] + 1
+        self.history = checkpoint.get("history", [])
+
+    def train_epoch(self, dataloader: DataLoader, description: str) -> float:
+        """Optimize for one epoch and return sample-weighted mean training loss."""
         self.model.train()
         running_loss = 0.0
         sample_count = 0
 
-        for batch in dataloader:
+        batches = progress.track(
+            dataloader,
+            description=description,
+        )
+        for batch in batches:
             self.optimizer.zero_grad(set_to_none=True)
             if self.use_amp:
-                with autocast(device_type=self.device.type, dtype=utils.AMP_DTYPE):
+                with autocast(
+                    device_type=self.device.type,
+                    dtype=getattr(torch, AMP_DTYPE_NAME),
+                ):
                     loss = self.task.training_step(self.model, batch)
             else:
                 loss = self.task.training_step(self.model, batch)
@@ -114,11 +213,17 @@ class Trainer:
             sample_count += batch_size
 
         if sample_count == 0:
-            raise ValueError("cannot train on an empty DataLoader")
+            raise ApplicationError(
+                category="Input data",
+                summary="Training cannot continue with an empty DataLoader",
+                cause=f"No batches were produced for '{description}'",
+                fix="Check subject masks, patch extraction, and batch settings",
+            )
         self.scheduler.step()
         return running_loss / sample_count
 
-    def save_checkpoint(self, epoch: int) -> None:
+    def save_checkpoint(self, epoch: int, path: Path) -> None:
+        """Persist model and resumable training state for an epoch."""
         unwrapped_model = utils.unwrap_model(self.model)
 
         state: CheckpointState = {
@@ -129,7 +234,8 @@ class Trainer:
             "scaler_state_dict": self.scaler.state_dict(),
             "best_val_loss": self.best_val_loss,
             "epochs_without_improvement": self.epochs_without_improvement,
+            "history": self.history,
         }
 
-        io.save_checkpoint(state, self.best_checkpoint)
+        io.save_checkpoint(state, path)
 

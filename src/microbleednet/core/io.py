@@ -1,5 +1,3 @@
-"""Atomic JSON, NIfTI, array, and checkpoint I/O used by core operations."""
-
 import json
 import os
 import tempfile
@@ -12,12 +10,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from ..errors import ApplicationError
 from . import utils
 from .datamodels import CheckpointState
 
 
 @contextmanager
-def atomic_path(path: Path, suffix: str = "") -> Generator[Path, None, None]:
+def atomic_path(path: Path, suffix: str) -> Generator[Path, None, None]:
+    """Yield a temporary path and atomically replace the destination on success."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
     try:
@@ -34,7 +34,7 @@ def atomic_path(path: Path, suffix: str = "") -> Generator[Path, None, None]:
 
 def write_json(path: Path, data: dict[str, Any] | list[Any]) -> None:
     """Serialize ``data`` to ``path`` as JSON, replacing it atomically."""
-    with atomic_path(path) as temporary_path:
+    with atomic_path(path, suffix="") as temporary_path:
         with temporary_path.open("w", encoding="utf-8") as temporary_file:
             json.dump(data, temporary_file, indent=2, sort_keys=True)
             temporary_file.write("\n")
@@ -45,36 +45,50 @@ def write_json(path: Path, data: dict[str, Any] | list[Any]) -> None:
 def read_json(path: Path) -> Any:
     """Read and parse a JSON document from ``path``."""
     with path.open(encoding="utf-8") as json_file:
-        return json.load(json_file)
+        payload = json.load(json_file)
+    return payload
 
 
 def load_volume(path: Path | str) -> nib.Nifti1Image:
+    """Load a NIfTI-1 volume or raise a user-facing format error."""
     volume = nib.load(path)
     if not isinstance(volume, nib.Nifti1Image):
-        raise TypeError(f"expected a NIfTI-1 image, got {type(volume).__name__}")
+        raise ApplicationError(
+            category="Input data",
+            summary="Unsupported NIfTI image type",
+            cause=f"'{path}' is not a NIfTI-1 image",
+            fix="Convert the input to the supported NIfTI-1 format",
+            context={"path": str(path)},
+        )
     return volume
 
 
 def save_volume(volume: nib.Nifti1Image, path: Path) -> None:
+    """Save a NIfTI volume with atomic destination replacement."""
     with atomic_path(path, suffix="".join(path.suffixes)) as temporary_path:
         nib.save(volume, temporary_path)
 
 
 def nifti_to_numpy(volume: nib.Nifti1Image) -> np.ndarray:
+    """Materialize a NIfTI volume as a NumPy array."""
     return volume.get_fdata()
 
 
 def numpy_to_nifti(array: np.ndarray, reference: nib.Nifti1Image) -> nib.Nifti1Image:
+    """Wrap an array using a reference volume's spatial metadata."""
     return nib.Nifti1Image(array, reference.affine, reference.header)
 
 
 def load_array_mmap(path: str | Path) -> np.ndarray:
-    return np.load(path, mmap_mode="r")
+    """Open a NumPy array as a read-only memory map."""
+    array = np.load(path, mmap_mode="r")
+    return array
 
 
 def load_model_weights(
     model: nn.Module, checkpoint_path: Path
 ) -> None:
+    """Load checkpoint weights into the underlying model on its current device."""
     target_model = utils.unwrap_model(model)
     device = utils.get_model_device(target_model)
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
@@ -82,11 +96,13 @@ def load_model_weights(
 
 
 def save_array(array: np.ndarray, path: Path) -> None:
+    """Save a NumPy array with atomic destination replacement."""
     with atomic_path(path, suffix=".npy") as temporary_path:
         np.save(temporary_path, array)
 
 
 def save_checkpoint(state: CheckpointState, path: Path) -> None:
+    """Save checkpoint state with atomic destination replacement."""
     with atomic_path(path, suffix=path.suffix + ".tmp") as temporary_path:
         with temporary_path.open("wb") as temporary_file:
             torch.save(state, temporary_file)

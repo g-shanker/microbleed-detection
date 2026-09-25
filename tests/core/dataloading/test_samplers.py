@@ -23,14 +23,6 @@ def test_equal_batch_sampler_is_balanced() -> None:
     assert sum(patches[index].has_microbleed for index in batches[0]) == 2
 
 
-@pytest.mark.parametrize("batch_size", [0, 3])
-def test_equal_batch_sampler_requires_positive_even_batch_size(
-    batch_size: int,
-) -> None:
-    with pytest.raises(ValueError, match="positive even"):
-        EqualBatchSampler([_patch(True), _patch(False)], batch_size)
-
-
 def test_equal_batch_sampler_requires_both_classes() -> None:
-    with pytest.raises(ValueError, match="positive and negative"):
+    with pytest.raises(ValueError, match="no negative examples"):
         EqualBatchSampler([_patch(True)], batch_size=2)

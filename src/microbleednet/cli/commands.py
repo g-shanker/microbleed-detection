@@ -1,112 +1,73 @@
-"""Table-driven construction of the CLI commands.
-
-Every command is the same skeleton — parse a config, honor
-``--dry-run``, defer-import one pipe, run it, report — so each is described
-declaratively by a :class:`CommandSpec` and built by :func:`build_command`
-rather than hand-written in its own module. Only the per-command specifics
-(config model, help text, messages, and which pipe to run)
-vary, and those are exactly the spec's fields.
-
-The pipe is imported lazily inside the command body, by module name, so
-``--help`` and ``describe`` never pay to import torch.
-"""
-
-from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Annotated, Any, Callable
+from typing import Annotated
 
 import typer
-from pydantic import BaseModel
 from rich.console import Console
 from rich.table import Table
 
+from ..constants import (
+    DESCRIBE_COMMAND_HELP,
+    EVALUATE_COMMAND_HELP,
+    INDEX_DATA_COMMAND_HELP,
+    INFER_COMMAND_HELP,
+    PREPROCESS_COMMAND_HELP,
+    SPLIT_COMMAND_HELP,
+    TRAIN_COMMAND_HELP,
+)
+from ..errors import ApplicationError, error_renderer
 from ..orchestration.configs import (
     EvaluateConfig,
     IndexDataConfig,
+    InferConfig,
     PreprocessConfig,
     SplitConfig,
     TrainConfig,
 )
 from .utils import (
+    CommandSpec,
     config_fields,
     describe_hint,
+    is_pipe_module,
     parse_config,
-    report,
 )
-
-COMMAND_HELP = "TODO: write a help message"
-
-
-@dataclass(frozen=True)
-class CommandSpec:
-    """Everything that distinguishes one CLI command from the shared skeleton."""
-
-    name: str
-    help: str
-    config: type[BaseModel]
-    pipe: str  # module under orchestration.pipes; imported lazily to defer torch
-    dry_run_message: Callable[[Any], str]
-    success_message: Callable[[Any], str]
-
 
 SPECS: list[CommandSpec] = [
     CommandSpec(
         name="index-data",
-        help=COMMAND_HELP,
+        help=INDEX_DATA_COMMAND_HELP,
         config=IndexDataConfig,
         pipe="index_data",
-        dry_run_message=lambda s: (
-            f"Index configuration valid; manifests would be written under "
-            f"{s.dataset_dir} (dry run)"
-        ),
-        success_message=lambda s: (
-            f"Indexed dataset manifests written under {s.dataset_dir}"
-        ),
     ),
     CommandSpec(
         name="preprocess",
-        help=COMMAND_HELP,
+        help=PREPROCESS_COMMAND_HELP,
         config=PreprocessConfig,
         pipe="preprocess",
-        dry_run_message=lambda s: (
-            f"Preprocess configuration valid for {s.dataset_dir} (dry run)"
-        ),
-        success_message=lambda s: f"Preprocessed dataset written under {s.dataset_dir}",
     ),
     CommandSpec(
         name="split",
-        help=COMMAND_HELP,
+        help=SPLIT_COMMAND_HELP,
         config=SplitConfig,
         pipe="split",
-        dry_run_message=lambda s: (
-            f"Split configuration valid; split manifest would be written under "
-            f"{s.experiment_dir} (dry run)"
-        ),
-        success_message=lambda s: f"Split manifest written under {s.experiment_dir}",
     ),
     CommandSpec(
         name="train",
-        help=COMMAND_HELP,
+        help=TRAIN_COMMAND_HELP,
         config=TrainConfig,
         pipe="train",
-        dry_run_message=lambda s: (
-            f"Training configuration valid; artifacts would be written under "
-            f"{s.experiment_dir} (dry run)"
-        ),
-        success_message=lambda s: (
-            f"Training artifacts written under {s.experiment_dir}"
-        ),
     ),
     CommandSpec(
         name="evaluate",
-        help=COMMAND_HELP,
+        help=EVALUATE_COMMAND_HELP,
         config=EvaluateConfig,
         pipe="evaluate",
-        dry_run_message=lambda s: (
-            f"Evaluation configuration valid for {s.experiment_dir} (dry run)"
-        ),
-        success_message=lambda s: f"Evaluation written under {s.experiment_dir}",
+    ),
+    CommandSpec(
+        name="infer",
+        help=INFER_COMMAND_HELP,
+        config=InferConfig,
+        pipe="infer",
     ),
 ]
 
@@ -120,24 +81,30 @@ def build_command(app: typer.Typer, spec: CommandSpec) -> None:
 
     @app.command(spec.name, help=spec.help, epilog=describe_hint(spec.name))
     def command(
-        config: Annotated[Path, typer.Option(...)],
-        dry_run: Annotated[
-            bool, typer.Option(help="Validate configuration without writing outputs.")
-        ] = False,
+        config_path: Annotated[Path, typer.Option(..., "--config")],
     ) -> None:
-        settings = parse_config(config, spec.config)
-        if dry_run:
-            report(spec.dry_run_message(settings))
-            return
-        # Imported lazily, by module name, so torch stays out of --help/describe.
-        pipe = import_module(
-            f"..orchestration.pipes.{spec.pipe}", package=__package__
-        )
-        pipe.execute(settings)
-        report(spec.success_message(settings))
+        """Run the pipeline defined by the command specification."""
+        try:
+            config = parse_config(config_path, spec.config, spec.name)
+
+            # Imported lazily, by module name, so torch stays out of --help/describe.
+            pipe = import_module(
+                f"..orchestration.pipes.{spec.pipe}", package=__package__
+            )
+            if not is_pipe_module(pipe):
+                raise TypeError(
+                    f"Command '{spec.name}' pipe '{spec.pipe}' does not expose "
+                    "a callable execute(config)"
+                )
+            pipe.execute(config)
+        except ApplicationError as error:
+            error_renderer.render(error)
+            raise typer.Exit(code=1) from error
 
 
-def build_describe_command(app: typer.Typer, specs: list[CommandSpec]) -> None:
+def build_describe_command(
+    app: typer.Typer, specs: list[CommandSpec], console: Console
+) -> None:
     """Register the meta-command that documents each command's config keys.
 
     ``describe`` reads only the config models (via ``config_fields``), so it
@@ -148,7 +115,7 @@ def build_describe_command(app: typer.Typer, specs: list[CommandSpec]) -> None:
 
     @app.command(
         "describe",
-        help="Print the configuration keys, descriptions, and defaults for a command.",
+        help=DESCRIBE_COMMAND_HELP,
         no_args_is_help=True,
     )
     def describe_command(
@@ -157,10 +124,12 @@ def build_describe_command(app: typer.Typer, specs: list[CommandSpec]) -> None:
             typer.Argument(help=f"Command to describe: {', '.join(configs)}."),
         ],
     ) -> None:
+        """Display the configuration fields accepted by a command."""
         model = configs.get(command)
         if model is None:
             raise typer.BadParameter(
-                f"unknown command '{command}'; choose one of: {', '.join(configs)}"
+                f"Unknown command '{command}'. Available commands: "
+                f"{', '.join(configs)}"
             )
 
         table = Table(
@@ -181,18 +150,19 @@ def build_describe_command(app: typer.Typer, specs: list[CommandSpec]) -> None:
                 if config_field.section:
                     table.add_row(f"[bold]\\[{config_field.section}][/bold]", "", "")
                 current_section = config_field.section
-            required = config_field.default == "required"
             table.add_row(
                 config_field.key,
-                "[yellow]required[/yellow]" if required else config_field.default,
+                    config_field.default
+                    if config_field.default is not None
+                    else "[yellow]required[/yellow]",
                 config_field.description,
             )
 
-        Console().print(table)
+        console.print(table)
 
 
-def register_commands(app: typer.Typer) -> None:
+def register_commands(app: typer.Typer, console: Console) -> None:
     """Register every pipe command and the ``describe`` meta-command."""
     for spec in SPECS:
         build_command(app, spec)
-    build_describe_command(app, SPECS)
+    build_describe_command(app, SPECS, console)

@@ -10,8 +10,8 @@ from microbleednet.orchestration.manifests import (
 )
 from microbleednet.orchestration.pipes.index_data import (
     build_subject_map,
-    compute_paths,
     extract_subject_id,
+    find_matching_paths,
     index_source,
     merge_source,
 )
@@ -51,18 +51,18 @@ def test_extract_subject_id_rejects_mismatched_repeated_placeholders(
 ) -> None:
     path = tmp_path / "subject_1" / "subject_2_volume.nii.gz"
 
-    with pytest.raises(ValueError, match="subject ID placeholders do not match"):
+    with pytest.raises(ValueError, match="inconsistent subject IDs"):
         extract_subject_id(
             tmp_path, path, "{subject_id}/{subject_id}_volume.nii.gz"
         )
 
 
-def test_compute_paths_treats_pattern_text_literally(tmp_path: Path) -> None:
+def test_find_matching_paths_treats_pattern_text_literally(tmp_path: Path) -> None:
     expected = tmp_path / "scan[1]_subject_1.nii.gz"
     expected.write_bytes(b"")
     (tmp_path / "scan1_subject_2.nii.gz").write_bytes(b"")
 
-    paths = compute_paths(tmp_path, "scan[1]_{subject_id}.nii.gz")
+    paths = find_matching_paths(tmp_path, "scan[1]_{subject_id}.nii.gz")
 
     assert paths == [expected]
 
@@ -70,15 +70,25 @@ def test_compute_paths_treats_pattern_text_literally(tmp_path: Path) -> None:
 def test_build_subject_map_rejects_empty_subject_id(tmp_path: Path) -> None:
     path = tmp_path / "_volume.nii.gz"
     path.write_bytes(b"")
-    with pytest.raises(ValueError, match="empty ID"):
-        build_subject_map(tmp_path, [path], "{subject_id}_volume.nii.gz")
+    with pytest.raises(ValueError, match="could not be extracted"):
+        build_subject_map(
+            tmp_path,
+            [path],
+            "{subject_id}_volume.nii.gz",
+            "Indexing volumes",
+        )
 
 
 def test_build_subject_map_rejects_duplicate_subject_id(tmp_path: Path) -> None:
     path = tmp_path / "subject_1_volume.nii.gz"
     path.write_bytes(b"")
-    with pytest.raises(ValueError, match="duplicate subject ID"):
-        build_subject_map(tmp_path, [path, path], "{subject_id}_volume.nii.gz")
+    with pytest.raises(ValueError, match="duplicate subject IDs"):
+        build_subject_map(
+            tmp_path,
+            [path, path],
+            "{subject_id}_volume.nii.gz",
+            "Indexing volumes",
+        )
 
 
 def test_index_source_sorts_naturally_and_namespaces_subjects(tmp_path: Path) -> None:
@@ -91,9 +101,7 @@ def test_index_source_sorts_naturally_and_namespaces_subjects(tmp_path: Path) ->
         modality="SWI",
     )
 
-    source, subjects = index_source(
-        config, "2026-01-01T00:00:00+00:00"
-    )
+    source, subjects = index_source(config)
 
     assert [subject.subject_id for subject in subjects] == [
         "siteA_subject_2",
@@ -102,6 +110,24 @@ def test_index_source_sorts_naturally_and_namespaces_subjects(tmp_path: Path) ->
     assert source.source_id == "siteA"
     assert source.modality == "SWI"
     assert {subject.source_id for subject in subjects} == {"siteA"}
+
+
+def test_index_source_allows_missing_masks(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "subject_1_volume.nii.gz").write_bytes(b"")
+    config = make_index_config(
+        tmp_path,
+        input_dir=source_dir,
+        mask_dir=None,
+        mask_pattern=None,
+    )
+
+    source, subjects = index_source(config)
+
+    assert source.mask_dir is None
+    assert source.mask_pattern is None
+    assert subjects[0].mask_path is None
 
 
 def test_merge_source_preserves_creation_and_combines_state() -> None:
@@ -139,6 +165,38 @@ def test_merge_source_preserves_creation_and_combines_state() -> None:
         "subject_2",
         "subject_10",
     ]
+
+
+def test_merge_source_rejects_existing_source_id() -> None:
+    existing = RawDatasetManifest(
+        status=ManifestStatus.COMPLETE,
+        sources=[_source("first", "2026-01-01T00:00:00+00:00")],
+        subjects=[
+            RawSubject(
+                subject_id="first_subject_1",
+                source_id="first",
+                volume_path="/subject_1",
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError) as error:
+        merge_source(
+            existing,
+            source=_source("first", "2026-01-02T00:00:00+00:00"),
+            subjects=[
+                RawSubject(
+                    subject_id="first_subject_2",
+                    source_id="first",
+                    volume_path="/subject_2",
+                )
+            ],
+        )
+
+    message = str(error.value)
+    assert "Source ID already exists" in message
+    assert "new or empty dataset directory" in message
+    assert "replacement workflow" not in message
 
 
 def _source(name: str, added_on: str) -> RawSource:

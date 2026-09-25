@@ -1,4 +1,5 @@
 import shutil
+import subprocess
 from pathlib import Path
 
 import nibabel as nib
@@ -27,7 +28,7 @@ def test_add_noise_requires_matching_shape() -> None:
         volume_ops.add_noise(volume, noise),
         np.full(volume.shape, 1.5),
     )
-    with pytest.raises(ValueError, match="noise must match volume shape"):
+    with pytest.raises(ValueError, match="shapes do not match"):
         volume_ops.add_noise(volume, np.ones((1, 1, 1)))
 
 
@@ -48,7 +49,10 @@ def test_normalize_volume_scales_by_positive_maximum() -> None:
 
 @pytest.mark.parametrize("maximum", [0.0, np.nan])
 def test_normalize_volume_rejects_invalid_maximum(maximum: float) -> None:
-    with pytest.raises(ValueError, match="maximum is not positive and finite"):
+    with pytest.raises(
+        ValueError,
+        match="cannot be normalized",
+    ):
         volume_ops.normalize_volume(np.array([[[maximum]]]))
 
 
@@ -58,21 +62,6 @@ def test_invert_volume_preserves_zero_background() -> None:
     inverted = volume_ops.invert_volume(volume)
 
     np.testing.assert_array_equal(inverted, np.array([[[0.0, 2.0, 0.0]]]))
-
-
-def test_tight_crop_volume_returns_positive_extent() -> None:
-    volume = np.zeros((4, 5, 6))
-    volume[1:3, 2:4, 3:5] = 1
-
-    cropped, bounding_box = volume_ops.tight_crop_volume(volume)
-
-    assert bounding_box == ((1, 3), (2, 4), (3, 5))
-    np.testing.assert_array_equal(cropped, np.ones((2, 2, 2)))
-
-
-def test_tight_crop_volume_rejects_empty_volume() -> None:
-    with pytest.raises(ValueError, match="cannot crop an empty volume"):
-        volume_ops.tight_crop_volume(np.zeros((2, 2, 2)))
 
 
 def test_reorient_to_canonical_flips_negative_axis() -> None:
@@ -93,11 +82,64 @@ def test_adjust_affine_for_crop_translates_in_voxel_coordinates() -> None:
     np.testing.assert_array_equal(adjusted[:3, 3], np.array([2.0, 6.0, 12.0]))
 
 
+def test_restore_cropped_volume_restores_shape_and_orientation() -> None:
+    original_volume = nib.Nifti1Image(
+        np.zeros((4, 3, 2), dtype=np.uint8),
+        np.diag([-1.0, 1.0, 1.0, 1.0]),
+    )
+    cropped = np.ones((2, 2, 2), dtype=np.uint8)
+
+    restored = volume_ops.restore_cropped_volume(
+        cropped,
+        ((1, 3), (1, 3), (0, 2)),
+        original_volume,
+    )
+
+    assert restored.shape == (4, 3, 2)
+    assert restored.get_data_dtype() == np.dtype(np.uint8)
+    assert restored.get_fdata().sum() == cropped.sum()
+    np.testing.assert_array_equal(restored.affine, original_volume.affine)
+
+
+def test_get_bounding_box_returns_positive_extent() -> None:
+    volume = np.zeros((3, 4, 5))
+    volume[1:3, 2:4, 3:5] = 1
+
+    assert volume_ops.get_bounding_box(volume) == (
+        (1, 3),
+        (2, 4),
+        (3, 5),
+    )
+
+
+def test_get_bounding_box_rejects_empty_volume() -> None:
+    with pytest.raises(ValueError, match="bounding box"):
+        volume_ops.get_bounding_box(np.zeros((2, 2, 2)))
+
+
+def test_extract_brain_requires_fsldir(monkeypatch) -> None:
+    monkeypatch.delenv("FSLDIR", raising=False)
+    volume = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
+
+    with pytest.raises(ValueError, match="FSLDIR is not set"):
+        volume_ops.extract_brain(volume)
+
+
 def test_extract_brain_requires_valid_fsldir(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("FSLDIR", str(tmp_path / "missing"))
     volume = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
 
-    with pytest.raises(EnvironmentError, match="Valid FSLDIR"):
+    with pytest.raises(ValueError, match="requires FSL"):
+        volume_ops.extract_brain(volume)
+
+
+def test_extract_brain_requires_bet_executable(tmp_path: Path, monkeypatch) -> None:
+    fsldir = tmp_path / "fsl"
+    fsldir.mkdir()
+    monkeypatch.setenv("FSLDIR", str(fsldir))
+    volume = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
+
+    with pytest.raises(ValueError, match="BET executable not found"):
         volume_ops.extract_brain(volume)
 
 
@@ -106,6 +148,7 @@ def test_extract_brain_runs_bet_and_materializes_output(
 ) -> None:
     fsldir = tmp_path / "fsl"
     (fsldir / "bin").mkdir(parents=True)
+    (fsldir / "bin" / "bet").touch()
     monkeypatch.setenv("FSLDIR", str(fsldir))
     calls = []
 
@@ -123,6 +166,38 @@ def test_extract_brain_runs_bet_and_materializes_output(
     assert calls[0][0][0] == str(fsldir / "bin" / "bet")
     assert calls[0][1] is True
     np.testing.assert_array_equal(extracted.get_fdata(), volume.get_fdata())
+
+
+@pytest.mark.parametrize(
+    ("process_error", "message"),
+    [
+        (FileNotFoundError("missing"), "Could not start FSL BET"),
+        (
+            subprocess.CalledProcessError(2, "bet"),
+            "FSL BET failed",
+        ),
+    ],
+)
+def test_extract_brain_translates_bet_failures(
+    tmp_path: Path,
+    monkeypatch,
+    process_error: Exception,
+    message: str,
+) -> None:
+    fsldir = tmp_path / "fsl"
+    bet_path = fsldir / "bin" / "bet"
+    bet_path.parent.mkdir(parents=True)
+    bet_path.touch()
+    monkeypatch.setenv("FSLDIR", str(fsldir))
+    monkeypatch.setattr(
+        volume_ops.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(process_error),
+    )
+    volume = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
+
+    with pytest.raises(ValueError, match=message):
+        volume_ops.extract_brain(volume)
 
 
 def test_bias_field_correct_n4_preserves_nifti_geometry(monkeypatch) -> None:

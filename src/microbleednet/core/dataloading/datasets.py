@@ -30,13 +30,16 @@ class BasePatchDataset(Dataset):
         self,
         patches: list[PatchRecord],
     ):
+        """Initialize patch records and an empty memory-map cache."""
         self.patches = patches
         self.mmaps: dict[str, np.ndarray] = {}
 
     def __len__(self):
+        """Return the number of available patch records."""
         return len(self.patches)
 
     def mmap(self, path: str) -> np.ndarray:
+        """Return a cached read-only memory map for an array path."""
         array = self.mmaps.get(path)
         if array is None:
             array = load_array_mmap(path)
@@ -44,6 +47,7 @@ class BasePatchDataset(Dataset):
         return array
 
     def load_patch(self, idx: int) -> LoadedPatch:
+        """Load and combine the volume, mask, and FRST data for one patch."""
         record = self.patches[idx]
         volume = np.array(self.mmap(record.volume_path)[record.patch_index])
         mask = np.array(self.mmap(record.mask_path)[record.patch_index])
@@ -58,11 +62,13 @@ class BasePatchDataset(Dataset):
         )
 
     def __getitem__(self, idx: int):
-        raise NotImplementedError("Subclasses must implement the __getitem__ method.")
+        """Require subclasses to convert a patch into a task-specific sample."""
+        raise NotImplementedError("BasePatchDataset.__getitem__ must be implemented")
 
 
 class SegmentationPatchDataset(BasePatchDataset):
     def __getitem__(self, idx: int) -> SegmentationBatch:
+        """Return one patch as segmentation tensors."""
         patch = self.load_patch(idx)
 
         volume = patch.volume
@@ -76,6 +82,7 @@ class SegmentationPatchDataset(BasePatchDataset):
 
 class SegmentationClassificationPatchDataset(BasePatchDataset):
     def __getitem__(self, idx: int) -> SegmentationClassificationBatch:
+        """Return one patch as joint segmentation and classification tensors."""
         patch = self.load_patch(idx)
 
         volume = patch.volume
@@ -90,6 +97,7 @@ class SegmentationClassificationPatchDataset(BasePatchDataset):
 
 class ClassificationPatchDataset(BasePatchDataset):
     def __getitem__(self, idx: int) -> ClassificationBatch:
+        """Return one patch as classification tensors."""
         patch = self.load_patch(idx)
 
         volume = patch.volume

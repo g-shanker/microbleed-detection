@@ -1,9 +1,12 @@
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
+import nibabel as nib
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field
+
+from ..errors import ApplicationError
 
 FloatArray = NDArray[np.floating]
 IntArray = NDArray[np.integer]
@@ -30,81 +33,59 @@ class CheckpointState(TypedDict):
     scaler_state_dict: TorchStateDict
     best_val_loss: float
     epochs_without_improvement: int
+    history: list["EpochLoss"]
 
 
-class EpochLoss(FrozenModel):
+class EpochLoss(TypedDict):
     """Mean training and validation losses completed during one epoch."""
 
-    epoch: int = Field(gt=0, description="One-based completed epoch number.")
-    training_loss: float = Field(
-        ge=0, description="Sample-weighted mean loss on the training split."
-    )
-    validation_loss: float = Field(
-        ge=0, description="Sample-weighted mean loss on the validation split."
-    )
-
-
-class PatchSizes:
-    """Fixed patch dimensions shared by training and inference."""
-
-    DETECTOR = 48
-    DISCRIMINATOR = 24
+    epoch: int
+    training_loss: float
+    validation_loss: float
 
 
 class Hyperparameters(FrozenModel):
     """Optimization and training-loop settings for a model run."""
 
     batch_size: int = Field(
-        default=8, gt=0, description="Samples per training batch shared by all models."
+        gt=0,
+        multiple_of=2,
+        description=(
+            "Positive even number of samples per training batch shared by all "
+            "models."
+        ),
     )
     max_epochs: int = Field(
-        default=100,
-        ge=0,
-        description="Maximum number of epochs permitted for all models.",
+        ge=0, description="Maximum number of epochs permitted for all models."
     )
     patience: int = Field(
-        default=20,
         ge=0,
         description="Epochs without validation improvement allowed for all models.",
     )
     learning_rate: float = Field(
-        default=1e-3,
-        gt=0,
-        description="Initial learning rate shared by all model optimizers.",
+        gt=0, description="Initial learning rate shared by all model optimizers."
     )
     adam_epsilon: float = Field(
-        default=1e-4,
-        gt=0,
-        description="Adam numerical-stability epsilon shared by all models.",
+        gt=0, description="Adam numerical-stability epsilon shared by all models."
     )
     learning_rate_factor: float = Field(
-        default=0.1,
-        gt=0,
-        description="Shared factor applied when the learning rate decays.",
+        gt=0, description="Shared factor applied when the learning rate decays."
     )
     learning_rate_period: int = Field(
-        default=2,
-        gt=0,
-        description="Shared number of epochs between learning-rate decays.",
+        gt=0, description="Shared number of epochs between learning-rate decays."
     )
     minimum_learning_rate: float = Field(
-        default=1e-6,
-        gt=0,
-        description="Shared lower bound for the scheduled learning rate.",
+        gt=0, description="Shared lower bound for the scheduled learning rate."
     )
     weight_decay: float = Field(
-        default=0.0,
-        ge=0,
-        description="Shared L2 weight-decay coefficient for all optimizers.",
+        ge=0, description="Shared L2 weight-decay coefficient for all optimizers."
     )
     minimum_improvement: float = Field(
-        default=0.0,
         ge=0,
         description="Shared minimum validation-loss improvement considered meaningful.",
     )
     use_amp: bool = Field(
-        default=False,
-        description="Whether automatic mixed precision is enabled for all models.",
+        description="Whether automatic mixed precision is enabled for all models."
     )
 
 
@@ -141,18 +122,125 @@ class EvaluationAggregate(EvaluationMetrics):
 
 
 @dataclass(frozen=True)
-class PreprocessResult:
-    image: VolumeArray
-    mask: MaskArray
-    affine: FloatArray
+class PreprocessInput:
+    volume: nib.Nifti1Image
+    mask: nib.Nifti1Image | None
+    modality: Modality
 
     def __post_init__(self) -> None:
-        if self.image.ndim != 3:
-            raise ValueError("image must be a 3D array")
-        if not np.isfinite(self.image).all():
-            raise ValueError("image must contain only finite values")
-        if self.mask.shape != self.image.shape:
-            raise ValueError("mask must match image shape")
+        """Validate input geometry, spatial metadata, and voxel values."""
+        if len(self.volume.shape) != 3:
+            raise ApplicationError(
+                category="Input data",
+                summary="Preprocessing requires a 3D volume",
+                cause=f"The volume has {len(self.volume.shape)} dimensions",
+                fix="Provide a three-dimensional NIfTI volume",
+            )
+        if self.mask is not None and self.volume.shape != self.mask.shape:
+            raise ApplicationError(
+                category="Input data",
+                summary="Volume and mask shapes do not match",
+                cause=(
+                    f"Volume shape is {self.volume.shape}, "
+                    f"mask shape is {self.mask.shape}"
+                ),
+                fix="Provide a mask on the same voxel grid as the volume",
+            )
+
+        if self.volume.affine is None:
+            raise ApplicationError(
+                category="Input data",
+                summary="Volume affine is missing",
+                fix="Repair the NIfTI spatial metadata before preprocessing",
+            )
+        if not np.isfinite(np.asarray(self.volume.affine)).all():
+            raise ApplicationError(
+                category="Input data",
+                summary="Volume affine is not finite",
+                fix="Repair the NIfTI affine before preprocessing",
+            )
+        if self.mask is not None:
+            if self.mask.affine is None:
+                raise ApplicationError(
+                    category="Input data",
+                    summary="Mask affine is missing",
+                    fix="Repair the mask NIfTI spatial metadata",
+                )
+            if not np.isfinite(np.asarray(self.mask.affine)).all():
+                raise ApplicationError(
+                    category="Input data",
+                    summary="Mask affine is not finite",
+                    fix="Repair the mask NIfTI affine before preprocessing",
+                )
+            if not np.allclose(self.volume.affine, self.mask.affine):
+                raise ApplicationError(
+                    category="Input data",
+                    summary="Volume and mask affines do not match",
+                    fix="Register or resample the mask to the volume grid",
+                )
+
+        volume_spacing = np.asarray(self.volume.header.get_zooms()[:3], dtype=float)
+        if (
+            volume_spacing.shape != (3,)
+            or not np.isfinite(volume_spacing).all()
+            or np.any(volume_spacing <= 0)
+        ):
+            raise ApplicationError(
+                category="Input data",
+                summary="Volume voxel spacing is invalid",
+                cause=f"Observed spacing {tuple(volume_spacing)}",
+                fix="Repair the NIfTI header with finite positive voxel spacing",
+            )
+        if self.mask is not None:
+            mask_spacing = np.asarray(self.mask.header.get_zooms()[:3], dtype=float)
+            if (
+                mask_spacing.shape != (3,)
+                or not np.isfinite(mask_spacing).all()
+                or np.any(mask_spacing <= 0)
+            ):
+                raise ApplicationError(
+                    category="Input data",
+                    summary="Mask voxel spacing is invalid",
+                    cause=f"Observed spacing {tuple(mask_spacing)}",
+                    fix="Repair the mask NIfTI header with finite positive spacing",
+                )
+
+        volume_data = np.asarray(self.volume.get_fdata())
+        if not np.isfinite(volume_data).all():
+            raise ApplicationError(
+                category="Input data",
+                summary="Volume contains non-finite values",
+                fix="Remove NaN and infinite values from the source volume",
+            )
+        if not np.any(volume_data > 0):
+            raise ApplicationError(
+                category="Input data",
+                summary="Volume contains no positive voxels",
+                fix="Verify the source volume and preprocessing normalization",
+            )
+        if self.mask is not None:
+            mask_data = np.asarray(self.mask.get_fdata())
+            if not np.isfinite(mask_data).all():
+                raise ApplicationError(
+                    category="Input data",
+                    summary="Mask contains non-finite values",
+                    fix="Remove NaN and infinite values from the reference mask",
+                )
+            if not np.isin(mask_data, [0, 1]).all():
+                raise ApplicationError(
+                    category="Input data",
+                    summary="Mask is not binary",
+                    fix="Convert the reference mask to values 0 and 1",
+                )
+
+
+@dataclass(frozen=True)
+class PreprocessOutput:
+    volume: FloatArray
+    mask: IntArray | None
+    affine: FloatArray
+    bounding_box: BoundingBox
+    original_volume: nib.Nifti1Image
 
 
 @dataclass(frozen=True)

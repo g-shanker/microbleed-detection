@@ -1,25 +1,5 @@
-"""Manifests the orchestration layer writes and reads, with their durability contract.
-
-A manifest is a typed, versioned record a pipe stage writes to advertise
-what it produced and whether it finished. Every manifest shares one envelope — a
-schema version, a stable type discriminator, a lifecycle status, and
-creation/update timestamps — wrapped around a payload typed for that stage.
-
-Rules enforced here (see ``ARCHITECTURE.md``):
-
-- Every manifest carries ``schema_version``, ``manifest_type``, ``status``,
-  ``created_at`` and ``updated_at``.
-- A consumer may only read a ``complete`` manifest; a ``failed`` manifest must
-  carry a nonempty error string.
-- Models forbid unknown fields, are immutable, and never type a field as
-  ``Any``.
-
-The models and their read/write helpers live together because the behavior is
-intrinsic to the type and layer-agnostic: the helpers depend only on
-:mod:`microbleednet.core.io`, so manifest persistence does not
-pull in the ML stack.
-"""
-
+import hashlib
+import json
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -29,6 +9,7 @@ from pydantic import Field, ValidationError, model_validator
 
 from ..core import io as core_io
 from ..core.datamodels import (
+    BoundingBox,
     EpochLoss,
     EvaluationAggregate,
     EvaluationMetrics,
@@ -37,8 +18,8 @@ from ..core.datamodels import (
     Modality,
     PatchRecord,
 )
-
-SCHEMA_VERSION = 1
+from ..errors import ApplicationError, format_validation_errors
+from .layouts import SplitName, StageName
 
 
 def timestamp() -> str:
@@ -51,18 +32,13 @@ class ManifestStatus(str, Enum):
 
     RUNNING = "running"
     COMPLETE = "complete"
-    FAILED = "failed"
 
 
 class Manifest(FrozenModel):
     """Envelope shared by every manifest."""
 
-    schema_version: Literal[1] = Field(
-        default=SCHEMA_VERSION,
-        description="Manifest schema version; readers reject other versions.",
-    )
     status: ManifestStatus = Field(
-        description="Whether the producing stage is running, complete, or failed.",
+        description="Whether the producing stage is running or complete.",
     )
     created_at: str = Field(
         default_factory=timestamp,
@@ -72,49 +48,67 @@ class Manifest(FrozenModel):
         default_factory=timestamp,
         description="ISO-8601 UTC time of the last write.",
     )
-    error: str | None = Field(
-        default=None,
-        description="Failure detail; required when status is failed, otherwise unset.",
-    )
-
-    @model_validator(mode="after")
-    def check_status_error(self) -> "Manifest":
-        if self.status is ManifestStatus.FAILED and not (self.error or "").strip():
-            raise ValueError("a failed manifest must carry a nonempty error string")
-        if self.status is not ManifestStatus.FAILED and self.error is not None:
-            raise ValueError("only a failed manifest may carry an error string")
-        return self
 
     def write(self, path: Path) -> None:
         """Serialize this manifest to ``path`` atomically as versioned JSON."""
         payload = self.model_dump(mode="json")
+
         if path.exists():
             existing = core_io.read_json(path)
             payload["created_at"] = existing.get("created_at", timestamp())
+
         payload["updated_at"] = timestamp()
+
         core_io.write_json(path, payload)
+
 
     @classmethod
     def read[ManifestType: Manifest](
         cls: type[ManifestType], path: Path
     ) -> ManifestType:
-        """Load and validate a complete manifest from ``path``."""
-        payload = core_io.read_json(path)
-        if not isinstance(payload, dict) or "schema_version" not in payload:
-            raise ValueError(
-                f"{path} is not a versioned manifest; regenerate it with the current "
-                "pipeline (it predates the schema_version contract)."
-            )
+        """Load and validate a manifest from ``path``."""
+        try:
+            payload = core_io.read_json(path)
+        except (OSError, ValueError) as error:
+            raise ApplicationError(
+                category="Manifest",
+                summary="Could not read manifest",
+                cause=str(error).rstrip("."),
+                fix=(
+                    "Restore a readable JSON manifest or rerun the producing "
+                    "pipeline stage"
+                ),
+                context={"path": str(path), "type": cls.__name__},
+            ) from error
+
         try:
             manifest = cls.model_validate(payload)
         except ValidationError as error:
-            raise ValueError(f"invalid manifest at {path}:\n{error}") from error
-        if manifest.status is not ManifestStatus.COMPLETE:
-            raise ValueError(
-                f"manifest at {path} has status {manifest.status.value!r}; "
-                "a consumer may only read a complete manifest."
-            )
+            details = format_validation_errors(error.errors())
+            raise ApplicationError(
+                category="Manifest",
+                summary="Manifest schema validation failed",
+                cause=details,
+                fix=(
+                    "Regenerate the artifact with the matching pipeline version "
+                    "or restore a valid manifest"
+                ),
+                context={"path": str(path), "type": cls.__name__},
+            ) from error
+        
         return manifest
+
+
+def content_fingerprint(manifest: Manifest) -> str:
+    """Return a stable hash of manifest content excluding lifecycle fields."""
+    payload = manifest.model_dump(
+        mode="json",
+        exclude={"status", "created_at", "updated_at"},
+    )
+    canonical_payload = json.dumps(
+        payload, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(canonical_payload).hexdigest()
 
 
 class RawSubject(FrozenModel):
@@ -125,16 +119,22 @@ class RawSubject(FrozenModel):
         description="Identifier of the source that contributed this subject.",
     )
     volume_path: str = Field(description="Absolute path to the raw volume.")
-    mask_path: str = Field(description="Absolute path to the lesion mask.")
+    mask_path: str | None = Field(
+        default=None, description="Absolute path to the lesion mask, when provided."
+    )
 
 
 class RawSource(FrozenModel):
     """A directory pair and filename patterns that contributed subjects."""
 
     input_dir: str = Field(description="Directory the volumes were indexed from.")
-    mask_dir: str = Field(description="Directory the mask volumes were indexed from.")
+    mask_dir: str | None = Field(
+        default=None, description="Directory the mask volumes were indexed from."
+    )
     volume_pattern: str = Field(description="Glob/regex pattern matching volumes.")
-    mask_pattern: str = Field(description="Pattern matching masks.")
+    mask_pattern: str | None = Field(
+        default=None, description="Pattern matching masks, when provided."
+    )
     source_id: str = Field(
         description="Namespace prepended to this source's subject IDs.",
     )
@@ -142,7 +142,10 @@ class RawSource(FrozenModel):
         default="T2*-GRE",
         description="Imaging modality used to select preprocessing operations.",
     )
-    added_on: str = Field(description="ISO-8601 time this source was indexed.")
+    added_on: str = Field(
+        default_factory=timestamp,
+        description="ISO-8601 time this source was indexed.",
+    )
 
 
 class RawDatasetManifest(Manifest):
@@ -157,6 +160,7 @@ class RawDatasetManifest(Manifest):
 
     @model_validator(mode="after")
     def unique_subjects(self) -> "RawDatasetManifest":
+        """Reject duplicate subject identifiers in an indexed dataset."""
         reject_duplicate_ids(
             (subject.subject_id for subject in self.subjects), "subject"
         )
@@ -164,6 +168,7 @@ class RawDatasetManifest(Manifest):
 
     @model_validator(mode="after")
     def unique_sources(self) -> "RawDatasetManifest":
+        """Reject duplicate source identifiers in an indexed dataset."""
         reject_duplicate_ids((source.source_id for source in self.sources), "source")
         return self
 
@@ -172,16 +177,25 @@ class PreprocessedSubject(FrozenModel):
     """One subject produced by the preprocessing stage."""
 
     subject_id: str = Field(description="Unique subject identifier.")
+    original_volume_path: str = Field(
+        description="Absolute path to the original volume for restoring inference.",
+    )
+    bounding_box: BoundingBox = Field(
+        description="Crop bounds applied during preprocessing.",
+    )
     variants: list["PreprocessedVariant"] = Field(
         description="Ordered preprocessed variants, including the original.",
     )
 
 
 class PreprocessedVariant(FrozenModel):
-    """One persisted volume, mask, and FRST result for a subject."""
+    """One persisted volume, optional mask, and FRST result for a subject."""
 
     volume_path: str = Field(description="Absolute path to the variant volume.")
-    mask_path: str = Field(description="Absolute path to the variant mask.")
+    mask_path: str | None = Field(
+        default=None,
+        description="Absolute path to the variant mask, when available.",
+    )
     frst_path: str = Field(description="Absolute path to the variant FRST volume.")
 
 
@@ -200,6 +214,25 @@ class PreprocessedDatasetManifest(Manifest):
         gt=0,
         description="Total persisted variants per subject, including the original.",
     )
+    raw_manifest_fingerprint: str = Field(
+        description="Fingerprint of the raw manifest used to create this dataset.",
+    )
+
+    @model_validator(mode="after")
+    def complete_subjects_have_all_variants(self) -> "PreprocessedDatasetManifest":
+        """Require every subject in a complete manifest to have all variants."""
+        if self.status is ManifestStatus.COMPLETE:
+            incomplete = [
+                subject.subject_id
+                for subject in self.subjects
+                if len(subject.variants) != self.augmentation_factor
+            ]
+            if incomplete:
+                raise ValueError(
+                    "Complete preprocessing manifest contains subjects with "
+                    f"incomplete variants: {', '.join(incomplete[:5])}"
+                )
+        return self
 
 
 class SplitManifest(Manifest):
@@ -211,6 +244,9 @@ class SplitManifest(Manifest):
     )
     dataset_dir: str = Field(
         description="Absolute path to the preprocessed dataset that was split."
+    )
+    preprocessed_manifest_fingerprint: str = Field(
+        description="Fingerprint of the preprocessed manifest used for this split."
     )
     seed: int | None = Field(
         default=None, ge=0, description="Random seed used for subject splitting."
@@ -244,6 +280,9 @@ class TrainManifest(Manifest):
     dataset_dir: str = Field(
         description="Absolute path to the preprocessed dataset used for training."
     )
+    split_manifest_fingerprint: str = Field(
+        description="Fingerprint of the split manifest used for training."
+    )
     device: str = Field(description="Torch device requested for the training run.")
     seed: int | None = Field(
         default=None, ge=0, description="Random seed used for the training run."
@@ -275,23 +314,23 @@ class TrainManifest(Manifest):
     pin_memory: bool = Field(
         description="Whether training loaders pin batches in host memory."
     )
-    detector_hyperparameters: Hyperparameters = Field(
-        description="Optimizer and training-loop settings for detector training."
+
+
+class TrainStageManifest(Manifest):
+    """Manifest published when an individual training stage completes."""
+
+    manifest_type: Literal["train_stage"] = Field(
+        default="train_stage",
+        description="Stable discriminator for a training stage manifest.",
     )
-    teacher_hyperparameters: Hyperparameters = Field(
-        description="Optimizer and training-loop settings for teacher training."
+    stage: StageName = Field(
+        description="Training stage represented by this manifest."
     )
-    student_hyperparameters: Hyperparameters = Field(
-        description="Optimizer and training-loop settings for student training."
+    hyperparameters: Hyperparameters = Field(
+        description="Optimizer and training-loop settings for this stage."
     )
-    detector_history: list[EpochLoss] = Field(
-        description="Epoch loss history for candidate detector training."
-    )
-    teacher_history: list[EpochLoss] = Field(
-        description="Epoch loss history for candidate teacher training."
-    )
-    student_history: list[EpochLoss] = Field(
-        description="Epoch loss history for candidate student training."
+    history: list[EpochLoss] = Field(
+        description="Epoch loss history for the completed training stage."
     )
 
 
@@ -300,13 +339,6 @@ class InferredSubject(FrozenModel):
 
     subject_id: str = Field(description="Subject identifier.")
     output_path: str = Field(description="Absolute path to the final detection mask.")
-
-
-class EvaluatedSubject(FrozenModel):
-    """Evaluation metrics published for one subject."""
-
-    subject_id: str = Field(description="Subject identifier.")
-    metrics: EvaluationMetrics = Field(description="Metrics for the subject.")
 
 
 class InferManifest(Manifest):
@@ -349,7 +381,27 @@ class InferManifest(Manifest):
         description="Results published for each inferred subject."
     )
 
+    @model_validator(mode="after")
+    def complete_subjects_have_outputs(self) -> "InferManifest":
+        """Require every subject in a complete inference manifest to have output."""
+        if self.status is ManifestStatus.COMPLETE:
+            missing_outputs = [
+                subject.subject_id
+                for subject in self.subjects
+                if not subject.output_path
+            ]
+            if missing_outputs:
+                raise ValueError(
+                    "Complete inference manifest contains subjects without "
+                    f"outputs: {', '.join(missing_outputs[:5])}"
+                )
+        return self
 
+class EvaluatedSubject(FrozenModel):
+    """Evaluation metrics published for one subject."""
+
+    subject_id: str = Field(description="Subject identifier.")
+    metrics: EvaluationMetrics = Field(description="Metrics for the subject.")
 class EvaluateManifest(Manifest):
     """Manifest written after scoring held-out inference results."""
 
@@ -379,8 +431,8 @@ class PatchManifest(Manifest):
         default="patch",
         description="Stable discriminator for a materialized patch manifest.",
     )
-    stage: str = Field(description="Training stage owning these patches.")
-    split: str = Field(description="Dataset split owning these patches.")
+    stage: StageName = Field(description="Training stage owning these patches.")
+    split: SplitName = Field(description="Dataset split owning these patches.")
     subject_ids: list[str] = Field(
         description="Subject IDs requested for patch extraction."
     )
@@ -400,12 +452,32 @@ class PatchManifest(Manifest):
         description="Materialized patch records produced by extraction."
     )
 
+    @model_validator(mode="after")
+    def complete_output_matches_subjects(self) -> "PatchManifest":
+        """Require complete patch manifests with subjects to contain records."""
+        if (
+            self.status is ManifestStatus.COMPLETE
+            and self.subject_ids
+            and not self.records
+        ):
+            raise ValueError(
+                "Complete patch manifest contains no records for its subjects"
+            )
+        return self
+
 
 def reject_duplicate_ids(ids, entity_name: str) -> None:
+    """Reject repeated entity identifiers while preserving streaming input."""
     seen: set[str] = set()
     for entity_id in ids:
         if entity_id in seen:
-            raise ValueError(f"duplicate {entity_name} ID in manifest: {entity_id!r}")
+            raise ApplicationError(
+                category="Manifest",
+                summary=f"Duplicate {entity_name} ID in manifest",
+                cause=f"The ID '{entity_id}' appears more than once",
+                fix="Regenerate the manifest from unique source records",
+                context={"id": entity_id, "entity": entity_name},
+            )
         seen.add(entity_id)
 
 

@@ -6,18 +6,19 @@ from skimage.filters import frangi
 from skimage.measure import regionprops
 from sklearn.cluster import KMeans
 
+from ...constants import (
+    CLUSTERER_N_CLUSTERS,
+    CLUSTERER_RANDOM_STATE,
+    FRANGI_ALPHA,
+    FRANGI_BETA,
+    FRANGI_BLACK_RIDGES,
+    FRANGI_SIGMAS,
+    MAXIMUM_VESSEL_SOLIDITY,
+    MINIMUM_VESSEL_ECCENTRICITY,
+    VESSEL_CONNECTIVITY,
+)
+from ...errors import ApplicationError
 from .. import utils
-
-FRANGI_SIGMAS = (0.5, 1.2, 0.2)
-FRANGI_ALPHA = 0.9
-FRANGI_BETA = 20
-FRANGI_BLACK_RIDGES = False
-
-CLUSTERER_N_CLUSTERS = 2
-CLUSTERER_RANDOM_STATE = 0
-MINIMUM_VESSEL_ECCENTRICITY = 0.9
-MAXIMUM_VESSEL_SOLIDITY = 0.5
-VESSEL_CONNECTIVITY = 1
 
 
 def apply(volume: np.ndarray) -> np.ndarray:
@@ -49,6 +50,7 @@ def get_volume_vessel_mask(volume: np.ndarray) -> np.ndarray:
 
 
 def get_slice_vessel_mask(image_slice: np.ndarray) -> np.ndarray:
+    """Segment vessel-like regions from a slice using clustered shape features."""
 
     brain_mask = image_slice > 0
 
@@ -100,6 +102,7 @@ def get_slice_vessel_mask(image_slice: np.ndarray) -> np.ndarray:
 
 
 def get_linearity_measure(image_slice: np.ndarray) -> np.ndarray:
+    """Measure local linear structure from the slice structure-tensor eigenvalues."""
 
     ixx, ixy, iyy = structure_tensor(image_slice)
     eigenvalues = structure_tensor_eigenvalues((ixx, ixy, iyy))
@@ -143,6 +146,11 @@ def inpaint_with_neighborhood_mean(volume: np.ndarray, mask: np.ndarray) -> np.n
             break
 
     if np.any(working_mask):
-        raise ValueError("vessel mask contains unresolved voxels after inpainting")
-    
+        raise ApplicationError(
+            category="Input data",
+            summary="Vessel mask contains unresolved regions",
+            cause="Some masked voxels have no valid neighboring values",
+            fix="Inspect the vessel mask or adjust the inpainting parameters",
+        )
+
     return inpainted_volume

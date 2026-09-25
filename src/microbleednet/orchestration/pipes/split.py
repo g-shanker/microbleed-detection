@@ -1,4 +1,4 @@
-"""Create and persist the subject split consumed by training."""
+import logging
 
 from sklearn.model_selection import train_test_split
 
@@ -8,15 +8,20 @@ from ..manifests import (
     ManifestStatus,
     PreprocessedDatasetManifest,
     SplitManifest,
+    content_fingerprint,
 )
+from ..utils import resolve_path_string
 
+logger = logging.getLogger(__name__)
 
 def execute(config: SplitConfig) -> None:
-    dataset_manifest = PreprocessedDatasetManifest.read(
-        DatasetLayout(dataset_dir=config.dataset_dir).preprocessed_manifest_path()
-    )
+    """Partition preprocessed subjects and persist the reproducible split."""
+    manifest_path = DatasetLayout(
+        dataset_dir=config.dataset_dir
+    ).preprocessed_manifest_path()
+    preprocessed_manifest = PreprocessedDatasetManifest.read(manifest_path)
     train_subjects, held_out_subjects = train_test_split(
-        dataset_manifest.subjects,
+        preprocessed_manifest.subjects,
         train_size=config.train_size,
         random_state=config.seed,
     )
@@ -27,9 +32,13 @@ def execute(config: SplitConfig) -> None:
         random_state=config.seed,
     )
 
+    split_manifest_path = ExperimentLayout(
+        experiment_dir=config.experiment_dir
+    ).split_manifest_path()
     SplitManifest(
         status=ManifestStatus.COMPLETE,
-        dataset_dir=str(config.dataset_dir.resolve()),
+        dataset_dir=resolve_path_string(config.dataset_dir),
+        preprocessed_manifest_fingerprint=content_fingerprint(preprocessed_manifest),
         seed=config.seed,
         train_size=config.train_size,
         validation_size=config.validation_size,
@@ -37,4 +46,13 @@ def execute(config: SplitConfig) -> None:
         train_subject_ids=[subject.subject_id for subject in train_subjects],
         validation_subject_ids=[subject.subject_id for subject in validation_subjects],
         test_subject_ids=[subject.subject_id for subject in test_subjects],
-    ).write(ExperimentLayout(experiment_dir=config.experiment_dir).split_manifest_path())
+    ).write(split_manifest_path)
+    logger.info(
+        "Split dataset into train=%d validation=%d test=%d subjects; "
+        "seed=%s; manifest written to %s",
+        len(train_subjects),
+        len(validation_subjects),
+        len(test_subjects),
+        config.seed,
+        split_manifest_path,
+    )

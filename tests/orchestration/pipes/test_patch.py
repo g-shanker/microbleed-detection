@@ -51,6 +51,8 @@ def _write_subject(
         )
     return PreprocessedSubject(
         subject_id=subject_id,
+        original_volume_path=str(volume_path),
+        bounding_box=((0, 1), (0, 1), (0, 1)),
         variants=variants,
     )
 
@@ -71,7 +73,7 @@ def test_execute_materializes_supplied_subjects_and_writes_manifest(
         augmentation_factor=2,
     )
 
-    assert patch.execute(config) is None
+    patch.execute(config)
     records = PatchManifest.read(
         experiment_layout.patch_manifest_path("detector", "train")
     ).records
@@ -94,7 +96,7 @@ def test_execute_uses_configured_augmentation_factor(tmp_path: Path) -> None:
         augmentation_factor=1,
     )
 
-    assert patch.execute(config) is None
+    patch.execute(config)
     records = PatchManifest.read(
         experiment_layout.patch_manifest_path("teacher", "validation")
     ).records
@@ -104,8 +106,73 @@ def test_execute_uses_configured_augmentation_factor(tmp_path: Path) -> None:
 
 
 def test_execute_rejects_unsupported_patch_config(tmp_path: Path) -> None:
-    with pytest.raises(TypeError, match="unsupported patch configuration"):
+    with pytest.raises(TypeError, match="supported patch configuration"):
         patch.execute(object())  # pyright: ignore[reportArgumentType]
+
+
+def test_config_rejects_later_subject_without_mask_before_output(
+    tmp_path: Path,
+) -> None:
+    first = _write_subject(tmp_path / "inputs", "first")
+    second = _write_subject(tmp_path / "inputs", "unmasked")
+    second = second.model_copy(
+        update={
+            "variants": [
+                second.variants[0].model_copy(update={"mask_path": None})
+            ]
+        }
+    )
+    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
+
+    with pytest.raises(ValueError, match="requires a variant mask"):
+        NonOverlappingPatchConfig(
+            experiment_layout=layout,
+            stage="detector",
+            split="train",
+            subjects=[first, second],
+            patch_size=2,
+            augmentation_factor=1,
+        )
+
+    assert not layout.patch_dir_path("detector", "train").exists()
+    assert not layout.patch_manifest_path("detector", "train").exists()
+
+
+def test_config_rejects_missing_variant_file_before_output(tmp_path: Path) -> None:
+    subject = _write_subject(tmp_path / "inputs", "missing")
+    Path(subject.variants[0].frst_path).unlink()
+    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
+
+    with pytest.raises(ValueError, match="patch input file is missing"):
+        NonOverlappingPatchConfig(
+            experiment_layout=layout,
+            stage="detector",
+            split="train",
+            subjects=[subject],
+            patch_size=2,
+            augmentation_factor=1,
+        )
+
+    assert not layout.patch_dir_path("detector", "train").exists()
+    assert not layout.patch_manifest_path("detector", "train").exists()
+
+
+def test_config_rejects_unavailable_augmentation_factor(tmp_path: Path) -> None:
+    subject = _write_subject(tmp_path / "inputs", "selected")
+    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
+
+    with pytest.raises(ValueError, match="augmentation factor exceeds"):
+        NonOverlappingPatchConfig(
+            experiment_layout=layout,
+            stage="detector",
+            split="train",
+            subjects=[subject],
+            patch_size=2,
+            augmentation_factor=3,
+        )
+
+    assert not layout.patch_dir_path("detector", "train").exists()
+    assert not layout.patch_manifest_path("detector", "train").exists()
 
 
 def test_target_centered_reuses_extractor_for_all_subjects(
@@ -160,25 +227,35 @@ def test_target_centered_extractor_uses_supplied_detector(
     tmp_path: Path, monkeypatch
 ) -> None:
     detector = CandidateDetector()
+    extraction_calls = []
     monkeypatch.setattr(
         utils,
         "predict_logits",
         lambda model, volume: torch.zeros((2, 2, 2, 2)),
+    )
+    monkeypatch.setattr(
+        patch.patch_transforms,
+        "extract_centered_patches",
+        lambda *args: extraction_calls.append(args),
     )
     extractor = patch.TargetCenteredExtractor(
         detector=detector,
         threshold=0.9,
         patch_size=24,
     )
-    volume = np.ones((2, 2, 2))
+    volume = np.ones((2, 2, 2), dtype=np.float32)
     mask = np.zeros((2, 2, 2), dtype=np.uint8)
+    frst = np.ones((2, 2, 2), dtype=np.float64)
 
-    extracted = extractor(volume, mask, volume)
-    assert extracted.volumes.size == 0
-    assert extracted.masks.size == 0
-    extracted = extractor(volume, mask, volume)
-    assert extracted.volumes.size == 0
-    assert extracted.masks.size == 0
+    extracted = extractor(volume, mask, frst)
+
+    assert extraction_calls == []
+    assert extracted.volumes.shape == (0, 24, 24, 24)
+    assert extracted.masks.shape == (0, 24, 24, 24)
+    assert extracted.frst.shape == (0, 24, 24, 24)
+    assert extracted.volumes.dtype == volume.dtype
+    assert extracted.masks.dtype == mask.dtype
+    assert extracted.frst.dtype == frst.dtype
 
 
 def test_target_centered_extracts_candidate(monkeypatch) -> None:
@@ -206,7 +283,7 @@ def test_execute_skips_subject_with_no_extracted_patches(
     subject = _write_subject(tmp_path / "inputs", "empty")
     config = NonOverlappingPatchConfig(
         experiment_layout=ExperimentLayout(experiment_dir=tmp_path),
-        stage="empty",
+        stage="detector",
         split="train",
         subjects=[subject],
         patch_size=2,
@@ -219,8 +296,11 @@ def test_execute_skips_subject_with_no_extracted_patches(
         lambda size: lambda volume, mask, frst: ExtractedPatches(empty, empty, empty),
     )
 
-    assert patch.execute(config) is None
-    assert PatchManifest.read(
-        config.experiment_layout.patch_manifest_path("empty", "train")
-    ).records == []
+    with pytest.raises(ValueError, match="Patch extraction produced no records"):
+        patch.execute(config)
+    assert not config.experiment_layout.patch_manifest_path(
+        "detector", "train"
+    ).exists()
+
+
 

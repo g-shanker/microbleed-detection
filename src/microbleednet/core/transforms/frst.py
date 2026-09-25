@@ -4,10 +4,7 @@ import numpy as np
 import torch
 import torchvision.transforms.functional as F
 
-# Fast Radial Symmetry Transform structural parameters.
-FRST_RADII = [2, 3, 4, 6]
-FRST_ALPHA = 2
-FRST_FACTOR_STD = 0.1
+from ...constants import FRST_ALPHA, FRST_FACTOR_STD, FRST_RADII
 
 
 def apply(
@@ -85,10 +82,12 @@ def apply(
 
     output = output[:, offset:-offset, offset:-offset]
 
-    return output.permute(1, 2, 0).numpy()
+    result = output.permute(1, 2, 0).numpy()
+    return result
 
 
 def normalize_tensor_slicewise(tensor: torch.Tensor) -> torch.Tensor:
+    """Scale each 2D tensor slice independently to the zero-to-one range."""
     # Assumes tensor shape is (N, H, W)
     t_min = tensor.amin(dim=(1, 2), keepdim=True)
     t_max = tensor.amax(dim=(1, 2), keepdim=True)

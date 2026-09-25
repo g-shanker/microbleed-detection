@@ -2,18 +2,21 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-DICE_SMOOTH = 1.0
-FOREGROUND_CLASS = 1
-DETECTOR_CLASS_WEIGHTS = (1.0, 10.0)
-DISTILLATION_ALPHA = 0.4
-DISTILLATION_BETA = 0.6
-DISTILLATION_TEMPERATURE = 4.0
+from ...constants import (
+    DETECTOR_CLASS_WEIGHTS,
+    DICE_SMOOTH,
+    DISTILLATION_ALPHA,
+    DISTILLATION_BETA,
+    DISTILLATION_TEMPERATURE,
+    FOREGROUND_CLASS,
+)
 
 
 class DiceLoss(nn.Module):
     def forward(
         self, prediction: torch.Tensor, target: torch.Tensor
     ) -> torch.Tensor:
+        """Compute mean soft Dice loss across a batch."""
         prediction = prediction.reshape(prediction.size(0), -1)
         target = target.reshape(target.size(0), -1)
 
@@ -27,12 +30,14 @@ class DiceLoss(nn.Module):
 
 class KnowledgeDistillationLoss(nn.Module):
     def __init__(self):
+        """Initialize distillation with the configured temperature."""
         super().__init__()
         self.temperature = DISTILLATION_TEMPERATURE
 
     def forward(
         self, teacher_logits: torch.Tensor, student_logits: torch.Tensor
     ) -> torch.Tensor:
+        """Measure KL divergence between softened teacher and student outputs."""
         teacher_predictions = F.softmax(teacher_logits / self.temperature, dim=1)
         student_predictions = F.log_softmax(student_logits / self.temperature, dim=1)
 
@@ -43,6 +48,7 @@ class KnowledgeDistillationLoss(nn.Module):
 
 class DetectorLoss(nn.Module):
     def __init__(self):
+        """Build the combined Dice and weighted cross-entropy loss."""
         super().__init__()
         self.dice_loss = DiceLoss()
         self.cross_entropy_loss = nn.CrossEntropyLoss(
@@ -50,6 +56,7 @@ class DetectorLoss(nn.Module):
         )
 
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Combine foreground Dice loss with voxel-wise cross entropy."""
         prediction = F.softmax(logits, dim=1)
         dice_loss = self.dice_loss(
             prediction[:, FOREGROUND_CLASS], target == FOREGROUND_CLASS
@@ -64,6 +71,7 @@ class DiscriminatorTeacherLoss(nn.Module):
     """
 
     def __init__(self):
+        """Build the teacher's segmentation and classification losses."""
         super().__init__()
         self.segmentation_loss = DetectorLoss()
         self.classification_loss = nn.CrossEntropyLoss()
@@ -75,6 +83,7 @@ class DiscriminatorTeacherLoss(nn.Module):
         segmentation_logits: torch.Tensor,
         segmentation_target: torch.Tensor,
     ) -> torch.Tensor:
+        """Sum teacher segmentation and classification losses."""
         segmentation_loss = self.segmentation_loss(
             segmentation_logits, segmentation_target
         )
@@ -92,6 +101,7 @@ class DiscriminatorStudentLoss(nn.Module):
     """
 
     def __init__(self):
+        """Build the weighted supervised and distillation losses."""
         super().__init__()
         self.alpha = DISTILLATION_ALPHA
         self.beta = DISTILLATION_BETA
@@ -104,6 +114,7 @@ class DiscriminatorStudentLoss(nn.Module):
         student_logits: torch.Tensor,
         target: torch.Tensor,
     ) -> torch.Tensor:
+        """Blend student cross entropy with teacher-guided distillation loss."""
         cross_entropy_loss = self.cross_entropy_loss(student_logits, target)
         knowledge_distillation_loss = self.knowledge_distillation_loss(
             teacher_logits,

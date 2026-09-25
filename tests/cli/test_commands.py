@@ -5,20 +5,22 @@ command it currently registers.
 
 import json
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
+import pytest
 import typer
 from click.testing import Result
 from pydantic import BaseModel, Field
+from rich.console import Console
 from typer.testing import CliRunner
 
-from microbleednet.cli.commands import CommandSpec, build_describe_command
-from microbleednet.cli.entrypoint import app
-from microbleednet.orchestration.layouts import DatasetLayout
-from microbleednet.orchestration.manifests import (
-    ManifestStatus,
-    RawDatasetManifest,
-    timestamp,
+from microbleednet.cli.commands import (
+    build_command,
+    build_describe_command,
 )
+from microbleednet.cli.entrypoint import app, render_application_error
+from microbleednet.cli.utils import CommandSpec, is_pipe_module
+from microbleednet.errors import ApplicationError
 from tests.support import create_volume_source, write_index_config
 
 runner = CliRunner()
@@ -53,10 +55,8 @@ def test_describe_renders_a_section_header_for_nested_config() -> None:
         help="Fake command for testing.",
         config=_FakeConfig,
         pipe="unused",
-        dry_run_message=lambda s: "",
-        success_message=lambda s: "",
     )
-    build_describe_command(scratch_app, [spec])
+    build_describe_command(scratch_app, [spec], Console())
 
     result = runner.invoke(scratch_app, ["describe", "fake"])
     assert result.exit_code == 0, result.output
@@ -65,10 +65,176 @@ def test_describe_renders_a_section_header_for_nested_config() -> None:
     assert "trailing" in result.output
 
 
-def test_index_data_help_points_to_describe() -> None:
-    result = runner.invoke(app, ["index-data", "--help"])
+def test_build_command_runs_without_progress_reporter(
+    tmp_path: Path, monkeypatch
+) -> None:
+    scratch_app = typer.Typer()
+    executed: list[str] = []
+    fake_pipe = SimpleNamespace(
+        execute=lambda config: executed.append(config.top_level)
+    )
+    monkeypatch.setattr(
+        "microbleednet.cli.commands.import_module",
+        lambda *args, **kwargs: fake_pipe,
+    )
+    spec = CommandSpec(
+        name="fake",
+        help="Fake command for testing.",
+        config=_FakeConfig,
+        pipe="unused",
+    )
+    build_command(scratch_app, spec)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('top_level = "value"', encoding="utf-8")
+
+    result = runner.invoke(scratch_app, ["--config", str(config_path)])
+
     assert result.exit_code == 0, result.output
-    assert "describe index-data" in " ".join(result.output.split())
+    assert executed == ["value"]
+
+
+def test_build_command_rejects_pipe_without_execute(
+    tmp_path: Path, monkeypatch
+) -> None:
+    scratch_app = typer.Typer()
+    monkeypatch.setattr(
+        "microbleednet.cli.commands.import_module",
+        lambda *args, **kwargs: ModuleType("broken"),
+    )
+    spec = CommandSpec(
+        name="fake",
+        help="Fake command for testing.",
+        config=_FakeConfig,
+        pipe="unused",
+    )
+    build_command(scratch_app, spec)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('top_level = "value"', encoding="utf-8")
+
+    result = runner.invoke(scratch_app, ["--config", str(config_path)])
+
+    assert result.exit_code != 0
+    assert result.exception is not None
+    assert "does not expose a callable execute" in str(result.exception)
+
+
+def test_build_command_renders_application_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    scratch_app = typer.Typer()
+    fake_pipe = SimpleNamespace(
+        execute=lambda config: (_ for _ in ()).throw(
+            ApplicationError(
+                category="Input data",
+                summary="Input data is invalid",
+                cause="The test fixture is incomplete.",
+                fix="Provide the missing input.",
+                context={"path": "input.nii.gz"},
+            )
+        )
+    )
+    monkeypatch.setattr(
+        "microbleednet.cli.commands.import_module",
+        lambda *args, **kwargs: fake_pipe,
+    )
+    spec = CommandSpec(
+        name="fake",
+        help="Fake command for testing.",
+        config=_FakeConfig,
+        pipe="unused",
+    )
+    build_command(scratch_app, spec)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('top_level = "value"', encoding="utf-8")
+
+    result = runner.invoke(scratch_app, ["--config", str(config_path)])
+
+    assert result.exit_code == 1
+    assert "Input data is invalid" in result.output
+    assert "The test fixture is incomplete." in result.output
+    assert "Provide the missing input." in result.output
+    assert "input.nii.gz" in result.output
+
+def test_build_command_renders_missing_config_error(tmp_path: Path) -> None:
+    scratch_app = typer.Typer()
+    spec = CommandSpec(
+        name="fake",
+        help="Fake command for testing.",
+        config=_FakeConfig,
+        pipe="unused",
+    )
+    build_command(scratch_app, spec)
+
+    result = runner.invoke(
+        scratch_app, ["--config", str(tmp_path / "missing.toml")]
+    )
+
+    assert result.exit_code == 1
+    assert "Configuration file not found" in result.output
+
+
+def test_render_application_error_supports_summary_only() -> None:
+    console = Console(record=True)
+    render_application_error(
+        ApplicationError(category="Internal", summary="Operation failed"),
+        target_console=console,
+    )
+
+    output = console.export_text()
+    assert "Internal error" in output
+    assert "Operation failed" in output
+
+
+def test_render_application_error_includes_traceback_in_verbose_mode() -> None:
+    console = Console(record=True)
+    try:
+        raise RuntimeError("root failure")
+    except RuntimeError as cause:
+        error = ApplicationError(
+            category="Input data",
+            summary="Input data is invalid",
+            cause="The test fixture is incomplete.",
+            fix="Provide the missing input.",
+        )
+        error.__cause__ = cause
+
+    render_application_error(error, target_console=console, verbose=True)
+
+    output = console.export_text()
+    assert "Details:" in output
+    assert "RuntimeError: root failure" in output
+
+
+def test_is_pipe_module_rejects_module_without_execute() -> None:
+    assert not is_pipe_module(ModuleType("broken"))
+
+
+@pytest.mark.parametrize(
+    ("command", "summary"),
+    [
+        ("index-data", "Index one raw NIfTI source"),
+        ("preprocess", "Preprocess every indexed subject"),
+        ("split", "Assign preprocessed subjects"),
+        ("train", "Train detector, teacher, and student stages"),
+        ("infer", "Apply explicit detector and student checkpoints"),
+        ("evaluate", "Run inference and lesion-level scoring"),
+    ],
+)
+def test_command_help_explains_operation_without_repeating_config_reference(
+    command: str, summary: str
+) -> None:
+    result = runner.invoke(app, [command, "--help"])
+    assert result.exit_code == 0, result.output
+    normalized_output = " ".join(result.output.split())
+    assert summary in normalized_output
+    assert f"describe {command}" in normalized_output
+
+
+def test_describe_infer_lists_explicit_checkpoint_keys() -> None:
+    result = runner.invoke(app, ["describe", "infer"])
+    assert result.exit_code == 0, result.output
+    assert "detector_checkpoint_path" in result.output
+    assert "student_checkpoint_path" in result.output
 
 
 def test_describe_index_data_lists_config_keys() -> None:
@@ -93,26 +259,7 @@ def test_describe_split_lists_partition_keys() -> None:
 def test_describe_rejects_unknown_command() -> None:
     result = runner.invoke(app, ["describe", "bogus"])
     assert result.exit_code != 0
-    assert "unknown command" in result.output
-
-
-def test_index_data_dry_run_does_not_write_manifest(tmp_path: Path) -> None:
-    dataset_dir = tmp_path / "dataset"
-    source = create_volume_source(tmp_path, "first", ["subject_1"])
-    config_path = tmp_path / "index.toml"
-    write_index_config(
-        config_path,
-        dataset_dir=dataset_dir,
-        input_dir=source,
-        mask_dir=tmp_path / "first_masks",
-    )
-
-    result = runner.invoke(
-        app, ["index-data", "--config", str(config_path), "--dry-run"]
-    )
-    assert result.exit_code == 0, result.output
-    assert "dry run" in result.output
-    assert not (dataset_dir / "manifests" / "raw.json").exists()
+    assert "Unknown command 'bogus'" in result.output
 
 
 def test_index_data_rejects_missing_mask_dir(tmp_path: Path) -> None:
@@ -125,7 +272,8 @@ def test_index_data_rejects_missing_mask_dir(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["index-data", "--config", str(config_path)])
     assert result.exit_code != 0
-    assert "mask_dir" in result.output
+    assert "Required mask_dir directory not found" in result.output
+    assert "Configuration validation failed" not in result.output
 
 
 def test_index_data_rejects_unmatched_subjects_when_masks_required(
@@ -147,31 +295,7 @@ def test_index_data_rejects_unmatched_subjects_when_masks_required(
 
     result = runner.invoke(app, ["index-data", "--config", str(config_path)])
     assert result.exit_code != 0
-    assert "unmatched subjects" in str(result.exception)
-
-
-def test_preprocess_dry_run_accepts_indexed_dataset(tmp_path: Path) -> None:
-    now = timestamp()
-    RawDatasetManifest(
-        status=ManifestStatus.COMPLETE,
-        created_at=now,
-        updated_at=now,
-        sources=[],
-        subjects=[],
-    ).write(DatasetLayout(dataset_dir=tmp_path).raw_manifest_path())
-    config_path = tmp_path / "preprocess.toml"
-    config_path.write_text(
-        f"dataset_dir = {json.dumps(str(tmp_path))}\n"
-        "augmentation_factor = 1\n",
-        encoding="utf-8",
-    )
-
-    result = runner.invoke(
-        app, ["preprocess", "--config", str(config_path), "--dry-run"]
-    )
-
-    assert result.exit_code == 0, result.output
-    assert "dry run" in result.output
+    assert "Volume and mask subject IDs do not match" in result.output
 
 
 def test_preprocess_rejects_missing_dataset_dir(tmp_path: Path) -> None:
@@ -183,7 +307,7 @@ def test_preprocess_rejects_missing_dataset_dir(tmp_path: Path) -> None:
     result = runner.invoke(app, ["preprocess", "--config", str(config_path)])
 
     assert result.exit_code != 0
-    assert "dataset_dir" in result.output
+    assert "Configuration validation failed" in result.output
 
 
 def _run_index_data(
@@ -224,7 +348,7 @@ def test_index_data_accumulates_sources(tmp_path: Path) -> None:
     assert manifest["created_at"] <= manifest["updated_at"]
 
 
-def test_index_data_rejects_duplicate_subject_across_sources(tmp_path: Path) -> None:
+def test_index_data_rejects_duplicate_source_id(tmp_path: Path) -> None:
     dataset_dir = tmp_path / "dataset"
     first = create_volume_source(tmp_path, "first", ["subject_1"])
     second = create_volume_source(tmp_path, "second", ["subject_1"])
@@ -232,7 +356,7 @@ def test_index_data_rejects_duplicate_subject_across_sources(tmp_path: Path) -> 
     assert _run_index_data(tmp_path, dataset_dir, first).exit_code == 0
     result = _run_index_data(tmp_path, dataset_dir, second)
     assert result.exit_code != 0
-    assert "source_subject_1" in str(result.exception)
+    assert "Source ID already exists" in result.output
 
     # The failed run must not have clobbered the existing manifest.
     manifest = _read_raw_manifest(dataset_dir)

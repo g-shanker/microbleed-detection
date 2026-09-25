@@ -1,12 +1,11 @@
-"""Connected-component metrics for binary detection masks."""
-
 from typing import Iterable
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+from ...constants import COMPONENT_CONNECTIVITY
 from ..datamodels import EvaluationAggregate, EvaluationMetrics
-from ..utils import COMPONENT_CONNECTIVITY, label_components
+from ..utils import label_components
 
 
 def score_masks(

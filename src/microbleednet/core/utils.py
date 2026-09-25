@@ -4,10 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from skimage.measure import label
 
+from ..errors import ApplicationError
 from .common.models import CandidateDetector, CandidateDiscriminatorTeacher
-
-AMP_DTYPE = torch.float16
-COMPONENT_CONNECTIVITY = 3
 
 
 def label_components(mask: np.ndarray, connectivity: int) -> np.ndarray:
@@ -21,15 +19,18 @@ def stack_volume_and_frst(volume: np.ndarray, frst: np.ndarray) -> np.ndarray:
 
 
 def unwrap_model(model: nn.Module) -> nn.Module:
+    """Return the original module behind a compiled wrapper when present."""
     original_model = getattr(model, "_orig_mod", None)
     return original_model if isinstance(original_model, nn.Module) else model
 
 
 def get_model_device(model: nn.Module) -> torch.device:
+    """Return the device hosting a model's parameters."""
     return next(model.parameters()).device
 
 
 def predict_logits(model: nn.Module, model_input: np.ndarray) -> torch.Tensor:
+    """Run single-sample inference and return unbatched logits."""
     model.eval()
     model_device = get_model_device(model)
     tensor_input = torch.from_numpy(model_input).float().unsqueeze(0)
@@ -46,6 +47,7 @@ def initialize_teacher_from_detector(
     detector: CandidateDetector,
     teacher: CandidateDiscriminatorTeacher,
 ) -> None:
+    """Initialize compatible teacher feature and segmentation weights."""
     detector_state = unwrap_model(detector).state_dict()
     teacher_state = unwrap_model(teacher).state_dict()
     transferable = {
@@ -55,6 +57,14 @@ def initialize_teacher_from_detector(
     }
     missing = [key for key in transferable if key not in teacher_state]
     if missing:
-        raise RuntimeError(f"detector-to-teacher keys missing in teacher: {missing}")
+        displayed = ", ".join(missing[:5])
+        if len(missing) > 5:  # pragma: no branch
+            displayed += f", ... ({len(missing)} total)"
+        raise ApplicationError(
+            category="Checkpoint",
+            summary="Teacher model is incompatible with detector weights",
+            cause=f"Teacher is missing detector state keys: {displayed}",
+            fix="Use compatible detector and teacher architectures",
+        )
     teacher_state.update(transferable)
     unwrap_model(teacher).load_state_dict(teacher_state, strict=True)

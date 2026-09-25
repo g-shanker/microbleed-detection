@@ -1,0 +1,5 @@
+# Evaluate the held-out test split from a completed training experiment.
+# Checkpoint and output paths are derived from experiment_dir.
+dataset_dir = "data/indexed"
+experiment_dir = "experiments/default"
+device = "cpu"

@@ -2,6 +2,7 @@ import numpy as np
 import torch.nn as nn
 from skimage.measure import regionprops
 
+from ...constants import COMPONENT_CONNECTIVITY
 from .. import utils
 from ..transforms import patch as patch_transforms
 
@@ -28,7 +29,7 @@ def infer_discriminator(
 ) -> np.ndarray:
     """Threshold detector candidates, classify patches, and return retained labels."""
     candidate_labels = utils.label_components(
-        detector_probability > detector_threshold, utils.COMPONENT_CONNECTIVITY
+        detector_probability > detector_threshold, COMPONENT_CONNECTIVITY
     )
     centers = patch_transforms.get_target_centers(candidate_labels)
     if not centers:

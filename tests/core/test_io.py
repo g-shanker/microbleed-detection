@@ -32,6 +32,13 @@ def test_save_and_load_volume_round_trip(tmp_path: Path) -> None:
     np.testing.assert_array_equal(io.nifti_to_numpy(loaded), np.ones((2, 2, 2)))
 
 
+def test_load_volume_rejects_non_nifti_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(io.nib, "load", lambda _: object())
+
+    with pytest.raises(ValueError, match="Unsupported NIfTI image type"):
+        io.load_volume("volume.nii.gz")
+
+
 def test_save_volume_preserves_geometry_and_binary_dtype(tmp_path: Path) -> None:
     reference = nib.Nifti1Image(np.zeros((2, 2, 2), dtype=np.uint8), np.eye(4))
     path = tmp_path / "detections.nii.gz"
