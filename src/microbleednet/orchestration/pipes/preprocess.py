@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def execute(config: PreprocessConfig) -> None:
+    """Preprocess pending subjects and maintain a resumable dataset manifest."""
     layout = DatasetLayout(dataset_dir=config.dataset_dir)
     raw_manifest = RawDatasetManifest.read(layout.raw_manifest_path())
     preprocessed_manifest_path = layout.preprocessed_manifest_path()
@@ -98,6 +99,7 @@ def preprocess_subject(
     layout: DatasetLayout,
     augmentation_factor: int,
 ) -> PreprocessedSubject:
+    """Preprocess, augment, and persist all variants for one raw subject."""
     raw_volume = io.load_volume(subject.volume_path)
     raw_mask = io.load_volume(subject.mask_path) if subject.mask_path else None
     preprocess_output = processor.preprocess(

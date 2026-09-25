@@ -4,7 +4,15 @@ import torch
 import torch.nn as nn
 from torch.utils.data import BatchSampler, DataLoader, SequentialSampler
 
-from ...core import io as core_io
+from ...constants import (
+    DETECTOR_PATCH_SIZE,
+    DETECTOR_STAGE,
+    DISCRIMINATOR_PATCH_SIZE,
+    SKIPPING_COMPLETED_STAGE_MESSAGE,
+    STUDENT_STAGE,
+    TEACHER_STAGE,
+    VALIDATION_AUGMENTATION_FACTOR,
+)
 from ...core import utils as core_utils
 from ...core.common.models import (
     CandidateDetector,
@@ -27,7 +35,6 @@ from ...core.dataloading.samplers import EqualBatchSampler
 from ...core.datamodels import (
     Hyperparameters,
     PatchRecord,
-    PatchSizes,
 )
 from ...core.engines.trainers import Trainer
 from ...errors import ApplicationError
@@ -39,9 +46,6 @@ from ..configs import (
     TrainConfig,
 )
 from ..layouts import (
-    DETECTOR_STAGE,
-    STUDENT_STAGE,
-    TEACHER_STAGE,
     DatasetLayout,
     ExperimentLayout,
     StageName,
@@ -58,11 +62,10 @@ from ..manifests import (
 )
 from . import patch
 
-VALIDATION_AUGMENTATION_FACTOR = 1
-
 logger = logging.getLogger(__name__)
 
 def execute(config: TrainConfig) -> None:
+    """Run the detector, teacher, and student training stages in sequence."""
     if config.seed is not None:
         torch.manual_seed(config.seed)
         torch.cuda.manual_seed_all(config.seed)
@@ -132,6 +135,7 @@ def write_train_manifest(
     split_manifest_fingerprint: str,
     status: ManifestStatus,
 ) -> None:
+    """Persist training provenance and lifecycle status for an experiment."""
     TrainManifest(
         status=status,
         dataset_dir=utils.resolve_path_string(config.dataset_dir),
@@ -142,8 +146,8 @@ def write_train_manifest(
         detector_augmentation_factor=config.detector_augmentation_factor,
         discriminator_augmentation_factor=config.discriminator_augmentation_factor,
         validation_augmentation_factor=VALIDATION_AUGMENTATION_FACTOR,
-        detector_patch_size=PatchSizes.DETECTOR,
-        discriminator_patch_size=PatchSizes.DISCRIMINATOR,
+        detector_patch_size=DETECTOR_PATCH_SIZE,
+        discriminator_patch_size=DISCRIMINATOR_PATCH_SIZE,
         num_workers=config.num_workers,
         pin_memory=config.pin_memory,
     ).write(experiment_layout.train_manifest_path())
@@ -161,6 +165,7 @@ def train_stage(
     pin_memory: bool,
     resume: bool = False,
 ) -> None:
+    """Fit one model stage and persist its lifecycle and training history."""
     train_loader = DataLoader(
         train_dataset,
         batch_sampler=EqualBatchSampler(
@@ -219,6 +224,7 @@ def train_stage(
 def is_stage_completed(
     experiment_layout: ExperimentLayout, stage: StageName, resume: bool
 ) -> bool:
+    """Check whether resume mode can skip a previously completed stage."""
     if not resume:
         return False
     stage_manifest_path = experiment_layout.stage_manifest_path(stage)
@@ -228,18 +234,37 @@ def is_stage_completed(
     return stage_manifest.status is ManifestStatus.COMPLETE
 
 
-def extract_patch_records(config: BasePatchConfig) -> list[PatchRecord]:
-    patch.execute(config)
+def extract_patch_records(
+    config: BasePatchConfig, resume: bool = False
+) -> list[PatchRecord]:
+    """Reuse compatible patches or extract and validate a fresh patch set."""
     manifest_path = config.experiment_layout.patch_manifest_path(
         config.stage, config.split
     )
+
+    if resume and manifest_path.is_file():
+        existing_manifest = PatchManifest.read(manifest_path)
+        if patch.manifest_matches_config(existing_manifest, config):
+            logger.info(
+                "Reusing %d %s %s patches from %s",
+                len(existing_manifest.records),
+                config.stage,
+                config.split,
+                manifest_path,
+            )
+            return existing_manifest.records
+
+    patch.execute(config)
     manifest = PatchManifest.read(manifest_path)
     if manifest.status is not ManifestStatus.COMPLETE:
         raise ApplicationError(
             category="Manifest",
             summary="Cannot train from incomplete patch output",
             cause=f"Patch manifest status is '{manifest.status.value}'",
-            fix="Complete patch extraction or remove the stale incomplete artifact",
+            fix=(
+                "Rerun the train command with resume set to false to regenerate "
+                "patch artifacts"
+            ),
             context={"path": str(manifest_path)},
         )
     return manifest.records
@@ -252,10 +277,11 @@ def train_detector(
     device: torch.device,
     config: TrainConfig,
 ) -> None:
+    """Train the candidate detector from non-overlapping subject patches."""
     if is_stage_completed(
         experiment_layout, DETECTOR_STAGE, config.resume
     ):
-        logger.info("Skipping completed %s stage", DETECTOR_STAGE)
+        logger.info(SKIPPING_COMPLETED_STAGE_MESSAGE, DETECTOR_STAGE)
         return
     train_records = extract_patch_records(
         NonOverlappingPatchConfig(
@@ -263,9 +289,10 @@ def train_detector(
             stage=DETECTOR_STAGE,
             split="train",
             subjects=train_subjects,
-            patch_size=PatchSizes.DETECTOR,
+            patch_size=DETECTOR_PATCH_SIZE,
             augmentation_factor=config.detector_augmentation_factor,
-        )
+        ),
+        resume=config.resume,
     )
     validation_records = extract_patch_records(
         NonOverlappingPatchConfig(
@@ -273,9 +300,10 @@ def train_detector(
             stage=DETECTOR_STAGE,
             split="validation",
             subjects=validation_subjects,
-            patch_size=PatchSizes.DETECTOR,
+            patch_size=DETECTOR_PATCH_SIZE,
             augmentation_factor=VALIDATION_AUGMENTATION_FACTOR,
-        )
+        ),
+        resume=config.resume,
     )
     detector = CandidateDetector().to(device)
     try:
@@ -303,17 +331,19 @@ def train_teacher(
     device: torch.device,
     config: TrainConfig,
 ) -> None:
+    """Initialize and train the teacher discriminator from detector features."""
     if is_stage_completed(
         experiment_layout, TEACHER_STAGE, config.resume
     ):
-        logger.info("Skipping completed %s stage", TEACHER_STAGE)
+        logger.info(SKIPPING_COMPLETED_STAGE_MESSAGE, TEACHER_STAGE)
         return
     teacher = CandidateDiscriminatorTeacher()
     initializer = CandidateDetector()
     try:
-        core_io.load_model_weights(
+        utils.load_stage_checkpoint(
             initializer,
             experiment_layout.best_checkpoint_path(DETECTOR_STAGE),
+            DETECTOR_STAGE,
         )
         core_utils.initialize_teacher_from_detector(initializer, teacher)
     finally:
@@ -327,9 +357,10 @@ def train_teacher(
             stage=TEACHER_STAGE,
             split="train",
             subjects=train_subjects,
-            patch_size=PatchSizes.DISCRIMINATOR,
+            patch_size=DISCRIMINATOR_PATCH_SIZE,
             augmentation_factor=config.discriminator_augmentation_factor,
-        )
+        ),
+        resume=config.resume,
     )
     validation_records = extract_patch_records(
         NonOverlappingPatchConfig(
@@ -337,9 +368,10 @@ def train_teacher(
             stage=TEACHER_STAGE,
             split="validation",
             subjects=validation_subjects,
-            patch_size=PatchSizes.DISCRIMINATOR,
+            patch_size=DISCRIMINATOR_PATCH_SIZE,
             augmentation_factor=VALIDATION_AUGMENTATION_FACTOR,
-        )
+        ),
+        resume=config.resume,
     )
     try:
         train_stage(
@@ -366,16 +398,18 @@ def train_student(
     device: torch.device,
     config: TrainConfig,
 ) -> None:
+    """Train the student discriminator on detector-centered candidate patches."""
     if is_stage_completed(
         experiment_layout, STUDENT_STAGE, config.resume
     ):
-        logger.info("Skipping completed %s stage", STUDENT_STAGE)
+        logger.info(SKIPPING_COMPLETED_STAGE_MESSAGE, STUDENT_STAGE)
         return
     detector = CandidateDetector().to(device)
     try:
-        core_io.load_model_weights(
+        utils.load_stage_checkpoint(
             detector,
             experiment_layout.best_checkpoint_path(DETECTOR_STAGE),
+            DETECTOR_STAGE,
         )
         train_records = extract_patch_records(
             TargetCenteredPatchConfig(
@@ -383,11 +417,12 @@ def train_student(
                 stage=STUDENT_STAGE,
                 split="train",
                 subjects=train_subjects,
-                patch_size=PatchSizes.DISCRIMINATOR,
+                patch_size=DISCRIMINATOR_PATCH_SIZE,
                 augmentation_factor=config.discriminator_augmentation_factor,
                 probability_threshold=config.detector_candidate_threshold,
                 detector=detector,
-            )
+            ),
+            resume=config.resume,
         )
         validation_records = extract_patch_records(
             TargetCenteredPatchConfig(
@@ -395,11 +430,12 @@ def train_student(
                 stage=STUDENT_STAGE,
                 split="validation",
                 subjects=validation_subjects,
-                patch_size=PatchSizes.DISCRIMINATOR,
+                patch_size=DISCRIMINATOR_PATCH_SIZE,
                 augmentation_factor=VALIDATION_AUGMENTATION_FACTOR,
                 probability_threshold=config.detector_candidate_threshold,
                 detector=detector,
-            )
+            ),
+            resume=config.resume,
         )
     finally:
         del detector
@@ -408,9 +444,10 @@ def train_student(
     student = CandidateDiscriminatorStudent().to(device)
     teacher = CandidateDiscriminatorTeacher().to(device)
     try:
-        core_io.load_model_weights(
+        utils.load_stage_checkpoint(
             teacher,
             experiment_layout.best_checkpoint_path(TEACHER_STAGE),
+            TEACHER_STAGE,
         )
         train_stage(
             student,

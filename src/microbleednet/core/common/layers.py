@@ -2,10 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-POINTWISE_KERNEL_SIZE = 1
-POOL_KERNEL_SIZE = 2
-UPSAMPLE_KERNEL_SIZE = 2
-UPSAMPLE_STRIDE = 2
+from ...constants import (
+    POINTWISE_KERNEL_SIZE,
+    POOL_KERNEL_SIZE,
+    UPSAMPLE_KERNEL_SIZE,
+    UPSAMPLE_STRIDE,
+)
 
 
 class SingleConv(nn.Module):
@@ -20,6 +22,7 @@ class SingleConv(nn.Module):
         kernel_size: int,
         padding: int,
     ):
+        """Build a 3D convolution, normalization, and activation block."""
         super().__init__()
         self.layer = nn.Sequential(
             nn.Conv3d(in_channels, out_channels, kernel_size, padding=padding),
@@ -28,6 +31,7 @@ class SingleConv(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the convolutional block to an input tensor."""
         return self.layer(x)
 
 
@@ -37,6 +41,7 @@ class LinearBlock(nn.Module):
     """
 
     def __init__(self, in_features: int, out_features: int):
+        """Build a linear, normalization, and activation block."""
         super().__init__()
         self.layer = nn.Sequential(
             nn.Linear(in_features, out_features),
@@ -45,6 +50,7 @@ class LinearBlock(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the linear block to an input tensor."""
         return self.layer(x)
 
 
@@ -60,6 +66,7 @@ class DoubleConv(nn.Module):
         kernel_size_1: int,
         kernel_size_2: int,
     ):
+        """Build two consecutive 3D convolutional blocks."""
         super().__init__()
 
         intermediate_channels = out_channels
@@ -72,6 +79,7 @@ class DoubleConv(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply both convolutional blocks to an input tensor."""
         return self.layer(x)
 
 
@@ -88,6 +96,7 @@ class DownConv(nn.Module):
         kernel_size_2: int,
         pool_padding: int,
     ):
+        """Build a max-pooling downsampling block followed by convolutions."""
         super().__init__()
         self.layer = nn.Sequential(
             nn.MaxPool3d(POOL_KERNEL_SIZE, padding=pool_padding),
@@ -100,6 +109,7 @@ class DownConv(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Downsample and transform an input tensor."""
         return self.layer(x)
 
 
@@ -116,6 +126,7 @@ class UpConv(nn.Module):
         kernel_size_1: int,
         kernel_size_2: int,
     ):
+        """Build an upsampling block that fuses a skip connection."""
         super().__init__()
         self.upsample = nn.ConvTranspose3d(
             in_channels,
@@ -131,6 +142,7 @@ class UpConv(nn.Module):
         )
 
     def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+        """Upsample, align, and fuse a tensor with its skip connection."""
 
         x1 = self.upsample(x1)
         target_shape = x2.shape[2:]
@@ -176,10 +188,12 @@ class OutConv(nn.Module):
     """
 
     def __init__(self, in_channels: int, out_channels: int):
+        """Build a pointwise 3D output convolution."""
         super().__init__()
         self.layer = nn.Conv3d(
             in_channels, out_channels, kernel_size=POINTWISE_KERNEL_SIZE
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Project an input tensor to the output channels."""
         return self.layer(x)

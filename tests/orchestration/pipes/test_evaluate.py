@@ -7,14 +7,13 @@ from typing import cast
 import numpy as np
 import pytest
 
+from microbleednet.constants import DETECTOR_STAGE, STUDENT_STAGE
 from microbleednet.core.common.metrics import aggregate_metrics, score_masks
 from microbleednet.orchestration import configs
 from microbleednet.orchestration.configs import (
     EvaluateConfig,
 )
 from microbleednet.orchestration.layouts import (
-    DETECTOR_STAGE,
-    STUDENT_STAGE,
     DatasetLayout,
     ExperimentLayout,
 )
@@ -125,13 +124,17 @@ def test_evaluate_subjects_requires_matching_inference_output(
         experiment_dir=None,
     )
 
-    with pytest.raises(ValueError, match="Inference output is missing"):
+    with pytest.raises(ValueError) as error:
         evaluate.evaluate_subjects(
             config,
             tmp_path / "dataset",
             ExperimentLayout(experiment_dir=tmp_path / "experiment"),
             [("subject-1", "reference")],
         )
+
+    message = str(error.value)
+    assert "Inference output is missing" in message
+    assert "Rerun the evaluate command" in message
 
 
 def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> None:
@@ -192,6 +195,17 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
         ),
     )
     monkeypatch.setattr(
+        evaluate.RawDatasetManifest,
+        "read",
+        lambda _: SimpleNamespace(
+            subjects=[
+                SimpleNamespace(
+                    subject_id="subject-1", mask_path="raw-reference"
+                )
+            ]
+        ),
+    )
+    monkeypatch.setattr(
         evaluate.InferManifest,
         "read",
         lambda _: SimpleNamespace(
@@ -204,7 +218,18 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
         "infer_subjects",
         lambda *args: experiment_layout.inference_manifest_path().touch(),
     )
-    monkeypatch.setattr(evaluate.core_io, "load_volume", lambda path: path)
+    monkeypatch.setattr(
+        evaluate.infer,
+        "load_inference_models",
+        lambda *args: (object(), object()),
+    )
+    loaded_paths = []
+
+    def load_volume(path):
+        loaded_paths.append(path)
+        return path
+
+    monkeypatch.setattr(evaluate.core_io, "load_volume", load_volume)
     monkeypatch.setattr(
         evaluate.core_io,
         "nifti_to_numpy",
@@ -227,6 +252,8 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
     assert [item.subject_id for item in manifest.subjects] == ["subject-1"]
     assert manifest.subjects[0].metrics.true_positive == 1
     assert manifest.aggregate.true_positive == 1
+    assert "raw-reference" in loaded_paths
+    assert "reference" not in loaded_paths
 
 
 def test_execute_explicit_checkpoints_evaluates_all_subjects(
@@ -354,6 +381,8 @@ def test_evaluate_subjects_rejects_incomplete_inference_manifest(
             [(subject.subject_id, "reference")],
         )
     except ValueError as error:
-        assert "Cannot evaluate incomplete inference output" in str(error)
+        message = str(error)
+        assert "Cannot evaluate incomplete inference output" in message
+        assert "Rerun the evaluate command" in message
     else:
         raise AssertionError("incomplete inference manifest must fail")

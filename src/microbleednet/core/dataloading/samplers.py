@@ -11,6 +11,7 @@ class EqualBatchSampler(Sampler):
         patches: list[PatchRecord],
         batch_size: int,
     ):
+        """Build balanced class pools and determine the epoch length."""
         self.batch_size = batch_size
 
         self.pos_indices = [
@@ -39,6 +40,7 @@ class EqualBatchSampler(Sampler):
         )
 
     def __iter__(self):
+        """Yield randomly sampled, class-balanced batches of patch indices."""
         for _ in range(self.num_batches):
             positive = torch.randint(
                 len(self.pos_indices), (self.num_pos,)
@@ -52,4 +54,5 @@ class EqualBatchSampler(Sampler):
             yield [batch[index] for index in order]
 
     def __len__(self):
+        """Return the number of balanced batches in an epoch."""
         return self.num_batches

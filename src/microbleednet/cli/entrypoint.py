@@ -18,6 +18,7 @@ from rich.progress import (
 )
 from rich.progress import Progress as RichProgress
 
+from ..constants import CLI_HELP
 from ..errors import ApplicationError, error_renderer
 from ..progress import ProgressItem, progress, silent_track
 from .commands import register_commands
@@ -53,7 +54,7 @@ def render_application_error(
 
 app = typer.Typer(
     name="microbleednet",
-    help="Run a microbleednet pipeline command.",
+    help=CLI_HELP,
     no_args_is_help=True,
 )
 
@@ -72,6 +73,7 @@ def configure_cli(
         )
 
     def rich_render_application_error(error: ApplicationError) -> None:
+        """Render an application error through the active Rich console."""
         render_application_error(error, verbose=verbose)
 
     error_renderer.configure(rich_render_application_error)
@@ -80,6 +82,7 @@ def configure_cli(
         items: Iterable[ProgressItem],
         description: str,
     ) -> Iterable[ProgressItem]:
+        """Yield items while displaying Rich progress on the CLI console."""
         with RichProgress(
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
@@ -120,4 +123,5 @@ def configure_cli(
 
 
 def main() -> None:
+    """Run the MicrobleedNet command-line application."""
     app()

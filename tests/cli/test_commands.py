@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
+import pytest
 import typer
 from click.testing import Result
 from pydantic import BaseModel, Field
@@ -208,15 +209,25 @@ def test_is_pipe_module_rejects_module_without_execute() -> None:
     assert not is_pipe_module(ModuleType("broken"))
 
 
-def test_index_data_help_points_to_describe() -> None:
-    result = runner.invoke(app, ["index-data", "--help"])
+@pytest.mark.parametrize(
+    ("command", "summary"),
+    [
+        ("index-data", "Index one raw NIfTI source"),
+        ("preprocess", "Preprocess every indexed subject"),
+        ("split", "Assign preprocessed subjects"),
+        ("train", "Train detector, teacher, and student stages"),
+        ("infer", "Apply explicit detector and student checkpoints"),
+        ("evaluate", "Run inference and lesion-level scoring"),
+    ],
+)
+def test_command_help_explains_operation_without_repeating_config_reference(
+    command: str, summary: str
+) -> None:
+    result = runner.invoke(app, [command, "--help"])
     assert result.exit_code == 0, result.output
-
-
-def test_infer_help_points_to_describe() -> None:
-    result = runner.invoke(app, ["infer", "--help"])
-    assert result.exit_code == 0, result.output
-    assert "describe infer" in " ".join(result.output.split())
+    normalized_output = " ".join(result.output.split())
+    assert summary in normalized_output
+    assert f"describe {command}" in normalized_output
 
 
 def test_describe_infer_lists_explicit_checkpoint_keys() -> None:
@@ -261,7 +272,8 @@ def test_index_data_rejects_missing_mask_dir(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["index-data", "--config", str(config_path)])
     assert result.exit_code != 0
-    assert "Configuration validation failed" in result.output
+    assert "Required mask_dir directory not found" in result.output
+    assert "Configuration validation failed" not in result.output
 
 
 def test_index_data_rejects_unmatched_subjects_when_masks_required(

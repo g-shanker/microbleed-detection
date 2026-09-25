@@ -8,6 +8,7 @@ from torch.amp.autocast_mode import autocast
 from torch.amp.grad_scaler import GradScaler
 from torch.utils.data import DataLoader
 
+from ...constants import AMP_DTYPE_NAME
 from ...errors import ApplicationError
 from ...progress import progress
 from .. import io, utils
@@ -30,6 +31,7 @@ class Trainer:
         hyperparameters: Hyperparameters,
         latest_checkpoint: Path,
     ):
+        """Configure model optimization, scheduling, scaling, and checkpoint state."""
         self.model = model
         self.hyperparameters = hyperparameters
         self.best_checkpoint = best_checkpoint
@@ -73,6 +75,7 @@ class Trainer:
         validation_loader: DataLoader,
         description: str,
     ) -> list[EpochLoss]:
+        """Train until the epoch limit or early stopping and return loss history."""
         for epoch in range(self.hyperparameters.max_epochs):
             if epoch < self.start_epoch:
                 continue
@@ -128,6 +131,7 @@ class Trainer:
         return self.history
 
     def validate_epoch(self, dataloader: DataLoader, description: str) -> float:
+        """Evaluate the model and return sample-weighted mean validation loss."""
         self.model.eval()
         running_loss = 0.0
         sample_count = 0
@@ -141,7 +145,7 @@ class Trainer:
                 if self.use_amp:
                     with autocast(
                         device_type=self.device.type,
-                        dtype=utils.AMP_DTYPE,
+                        dtype=getattr(torch, AMP_DTYPE_NAME),
                     ):
                         loss = self.task.validation_step(self.model, batch)
                 else:
@@ -164,6 +168,7 @@ class Trainer:
         return running_loss / sample_count
 
     def load_latest_checkpoint(self) -> None:
+        """Restore model and training state from the latest checkpoint."""
         checkpoint = torch.load(
             self.latest_checkpoint,
             map_location=self.device,
@@ -179,6 +184,7 @@ class Trainer:
         self.history = checkpoint.get("history", [])
 
     def train_epoch(self, dataloader: DataLoader, description: str) -> float:
+        """Optimize for one epoch and return sample-weighted mean training loss."""
         self.model.train()
         running_loss = 0.0
         sample_count = 0
@@ -190,7 +196,10 @@ class Trainer:
         for batch in batches:
             self.optimizer.zero_grad(set_to_none=True)
             if self.use_amp:
-                with autocast(device_type=self.device.type, dtype=utils.AMP_DTYPE):
+                with autocast(
+                    device_type=self.device.type,
+                    dtype=getattr(torch, AMP_DTYPE_NAME),
+                ):
                     loss = self.task.training_step(self.model, batch)
             else:
                 loss = self.task.training_step(self.model, batch)
@@ -214,6 +223,7 @@ class Trainer:
         return running_loss / sample_count
 
     def save_checkpoint(self, epoch: int, path: Path) -> None:
+        """Persist model and resumable training state for an epoch."""
         unwrapped_model = utils.unwrap_model(self.model)
 
         state: CheckpointState = {
