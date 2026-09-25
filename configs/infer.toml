@@ -1,0 +1,6 @@
+# Apply trained checkpoints to every subject in the indexed raw dataset.
+dataset_dir = "data/indexed"
+output_dir = "experiments/inference"
+detector_checkpoint_path = "experiments/default/train/detector/checkpoints/best_model.pth"
+student_checkpoint_path = "experiments/default/train/student/checkpoints/best_model.pth"
+device = "cpu"

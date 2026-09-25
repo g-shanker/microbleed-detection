@@ -1,0 +1,9 @@
+# Create the subject split consumed by training and held-out evaluation.
+dataset_dir = "data/indexed"
+experiment_dir = "experiments/default"
+
+# These proportions must sum to 1.0.
+train_size = 0.7
+validation_size = 0.1
+test_size = 0.2
+seed = 42
