@@ -1,25 +1,25 @@
-"""Top-level command configs the orchestration layer consumes.
-
-Each pipe's ``execute()`` takes one of these config objects whole. They live
-here because the orchestration layer owns them; the CLI imports them to parse
-TOML into already-validated objects, which keeps the dependency direction
-``cli -> orchestration`` intact. Loading a config from a TOML file is a CLI
-concern (``cli/utils.py``).
-"""
-
 import math
-import re
 from pathlib import Path
 from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
+from ..constants import (
+    DETECTOR_STAGE,
+    DEVICE_FIELD_DESCRIPTION,
+    PREPROCESSED_MANIFEST_LABEL,
+    RAW_MANIFEST_LABEL,
+    SOURCE_ID_PATTERN,
+    SOURCE_ID_PLACEHOLDER,
+    SPLIT_MANIFEST_LABEL,
+    STUDENT_STAGE,
+    SUBJECT_ID_PLACEHOLDER,
+    TEACHER_STAGE,
+    TRAIN_MANIFEST_LABEL,
+)
 from ..core.datamodels import FrozenModel, Hyperparameters, Modality
 from ..errors import ApplicationError
 from .layouts import (
-    DETECTOR_STAGE,
-    STUDENT_STAGE,
-    TEACHER_STAGE,
     DatasetLayout,
     ExperimentLayout,
     SplitName,
@@ -37,16 +37,6 @@ from .manifests import (
     TrainStageManifest,
     content_fingerprint,
 )
-
-# Token a volume/mask filename pattern must contain at least once; the text it
-# matches becomes the subject ID. Shared by the index-data pipeline (which
-# splits filenames on it) and IndexDataConfig (which validates its presence).
-SUBJECT_ID_PLACEHOLDER = "{subject_id}"
-SOURCE_ID_PLACEHOLDER = "{source_id}"
-
-# A source_id namespaces subject IDs and becomes part of on-disk paths, so it is
-# restricted to filesystem-safe characters.
-SOURCE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def ensure_device_available(device_name: str) -> None:
@@ -79,6 +69,7 @@ def ensure_device_available(device_name: str) -> None:
 
 
 def ensure_directory_exists(directory: Path, description: str) -> None:
+    """Require a configured path to reference an existing directory."""
     if not directory.is_dir():
         raise ApplicationError(
             category="Configuration",
@@ -89,6 +80,7 @@ def ensure_directory_exists(directory: Path, description: str) -> None:
 
 
 def ensure_file_exists(file_path: Path, description: str) -> None:
+    """Require a configured path to reference an existing file."""
     if not file_path.is_file():
         raise ApplicationError(
             category="Configuration",
@@ -101,27 +93,33 @@ def ensure_file_exists(file_path: Path, description: str) -> None:
 def ensure_manifest_complete(
     manifest: Manifest, manifest_path: Path, description: str
 ) -> None:
+    """Reject an upstream manifest that has not completed successfully."""
     if manifest.status is not ManifestStatus.COMPLETE:
         raise ApplicationError(
             category="Manifest",
             summary=f"Cannot use incomplete {description} manifest",
-            cause=f"Manifest status is '{manifest.status.value}'",
-            fix="Complete or resume the producing stage before continuing",
+            cause=(
+                f"Manifest at '{manifest_path}' has status "
+                f"'{manifest.status.value}'"
+            ),
+            fix="Rerun the producing stage to completion before continuing",
             context={"path": str(manifest_path)},
         )
 
 
 def ensure_manifest_not_complete(manifest: Manifest) -> None:
+    """Reject resume attempts for a pipeline stage that already completed."""
     if manifest.status is ManifestStatus.COMPLETE:
         raise ApplicationError(
             category="Manifest",
             summary="Cannot resume a completed manifest",
             cause="The producing stage is already complete",
-            fix="Disable resume or select a new output location",
+            fix="Set resume to false to run the stage again",
         )
 
 
 def ensure_training_resume_state(experiment_layout: ExperimentLayout) -> None:
+    """Require a checkpoint or completed stage from which training can resume."""
     for stage in (DETECTOR_STAGE, TEACHER_STAGE, STUDENT_STAGE):
         if experiment_layout.latest_checkpoint_path(stage).is_file():
             return
@@ -145,6 +143,7 @@ def ensure_training_resume_state(experiment_layout: ExperimentLayout) -> None:
 def ensure_subjects_have_masks(
     subjects: list[RawSubject] | list[PreprocessedSubject],
 ) -> None:
+    """Require every subject and preprocessed variant to provide a mask."""
     maskless_subjects = [
         subject.subject_id
         for subject in subjects
@@ -162,7 +161,10 @@ def ensure_subjects_have_masks(
             category="Input data",
             summary="Required subject masks are missing",
             cause=f"Subjects without masks: {displayed_ids}",
-            fix="Provide masks for every subject in this workflow",
+            fix=(
+                "Rebuild the indexed dataset with masks for every source, then "
+                "rerun preprocessing if required"
+            ),
         )
 
 
@@ -170,6 +172,7 @@ def ensure_fingerprint_matches(
     actual_fingerprint: str,
     expected_manifest: Manifest,
 ) -> None:
+    """Require a stored fingerprint to match the current upstream manifest."""
     if actual_fingerprint != content_fingerprint(expected_manifest):
         raise ApplicationError(
             category="Manifest",
@@ -204,7 +207,7 @@ def ensure_preprocessed_subjects_complete(
             category="Manifest",
             summary="Preprocessed manifest contains unknown subjects",
             cause=f"Subject IDs are not present in the raw manifest: {displayed_ids}",
-            fix="Remove the stale preprocessed manifest and rerun preprocessing",
+            fix="Set resume to false and rerun preprocessing from the raw manifest",
         )
 
     for subject in subjects:  # pragma: no branch
@@ -216,7 +219,10 @@ def ensure_preprocessed_subjects_complete(
                     f"Subject '{subject.subject_id}' has {len(subject.variants)} "
                     f"variants, but {augmentation_factor} are required"
                 ),
-                fix="Remove the incomplete subject output and rerun preprocessing",
+                fix=(
+                    "Set resume to false and rerun preprocessing from the raw "
+                    "manifest"
+                ),
                 context={"subject_id": subject.subject_id},
             )
         for variant_index, variant in enumerate(subject.variants):  # pragma: no branch
@@ -234,7 +240,10 @@ def ensure_preprocessed_subjects_complete(
                         f"Subject '{subject.subject_id}' variant {variant_index} "
                         f"references missing files: {', '.join(missing_paths)}"
                     ),
-                    fix="Remove the incomplete subject output and rerun preprocessing",
+                    fix=(
+                        "Set resume to false and rerun preprocessing from the raw "
+                        "manifest"
+                    ),
                     context={"subject_id": subject.subject_id},
                 )
 
@@ -278,6 +287,7 @@ class IndexDataConfig(FrozenModel):
 
     @model_validator(mode="after")
     def validate_config(self) -> "IndexDataConfig":
+        """Validate source naming patterns and input directory relationships."""
         if not SOURCE_ID_PATTERN.match(self.source_id):
             raise ApplicationError(
                 category="Configuration",
@@ -332,13 +342,15 @@ class PreprocessConfig(FrozenModel):
 
     @model_validator(mode="after")
     def validate_config(self) -> "PreprocessConfig":
+        """Validate raw inputs and resumable preprocessing state."""
         ensure_directory_exists(self.dataset_dir, "dataset_dir")
 
         layout = DatasetLayout(dataset_dir=self.dataset_dir)
         manifest_path = layout.raw_manifest_path()
-        ensure_file_exists(manifest_path, "raw manifest")
+        ensure_file_exists(manifest_path, RAW_MANIFEST_LABEL)
 
-        raw_manifest = RawDatasetManifest.read(layout.raw_manifest_path())
+        raw_manifest = RawDatasetManifest.read(manifest_path)
+        ensure_manifest_complete(raw_manifest, manifest_path, "raw")
         
         if not self.resume:
             return self
@@ -346,7 +358,7 @@ class PreprocessConfig(FrozenModel):
         preprocessed_manifest_path = layout.preprocessed_manifest_path()
         ensure_file_exists(
             preprocessed_manifest_path,
-            "preprocessed manifest",
+            PREPROCESSED_MANIFEST_LABEL,
         )
 
         existing_manifest = PreprocessedDatasetManifest.read(preprocessed_manifest_path)
@@ -398,6 +410,7 @@ class SplitConfig(FrozenModel):
 
     @model_validator(mode="after")
     def validate_config(self) -> "SplitConfig":
+        """Validate split proportions and the preprocessed dataset inputs."""
         split_total = self.train_size + self.validation_size + self.test_size
         if not math.isclose(split_total, 1.0, rel_tol=0.0, abs_tol=1e-9):
             raise ApplicationError(
@@ -414,7 +427,7 @@ class SplitConfig(FrozenModel):
 
         layout = DatasetLayout(dataset_dir=self.dataset_dir)
         manifest_path = layout.preprocessed_manifest_path()
-        ensure_file_exists(manifest_path, "preprocessed manifest")
+        ensure_file_exists(manifest_path, PREPROCESSED_MANIFEST_LABEL)
 
         manifest = PreprocessedDatasetManifest.read(manifest_path)
         
@@ -443,7 +456,7 @@ class TrainConfig(FrozenModel):
         ),
     )
     device: str = Field(
-        description="Torch device string, e.g. 'cpu' or 'cuda'.",
+        description=DEVICE_FIELD_DESCRIPTION,
     )
     seed: int | None = Field(
         default=None,
@@ -494,13 +507,14 @@ class TrainConfig(FrozenModel):
 
     @model_validator(mode="after")
     def validate_config(self) -> "TrainConfig":
+        """Validate training artifacts, augmentation limits, and resume state."""
         ensure_device_available(self.device)
 
         ensure_directory_exists(self.dataset_dir, "dataset_dir")
 
         dataset_layout = DatasetLayout(dataset_dir=self.dataset_dir)
         preprocessed_manifest_path = dataset_layout.preprocessed_manifest_path()
-        ensure_file_exists(preprocessed_manifest_path, "preprocessed manifest")
+        ensure_file_exists(preprocessed_manifest_path, PREPROCESSED_MANIFEST_LABEL)
 
         preprocessed_manifest = PreprocessedDatasetManifest.read(
             preprocessed_manifest_path
@@ -511,12 +525,37 @@ class TrainConfig(FrozenModel):
             preprocessed_manifest_path,
             "manifest",
         )
+        requested_factors = {
+            "detector": self.detector_augmentation_factor,
+            "discriminator": self.discriminator_augmentation_factor,
+        }
+        unavailable_factors = [
+            f"{name}={factor}"
+            for name, factor in requested_factors.items()
+            if factor > preprocessed_manifest.augmentation_factor
+        ]
+        if unavailable_factors:
+            raise ApplicationError(
+                category="Configuration",
+                summary="Training augmentation factor exceeds preprocessed output",
+                cause=(
+                    f"Requested {', '.join(unavailable_factors)}, but preprocessing "
+                    f"produced {preprocessed_manifest.augmentation_factor} variants "
+                    "per subject"
+                ),
+                fix=(
+                    "Reduce the training augmentation factors or rerun preprocessing "
+                    "with a larger augmentation factor"
+                ),
+                context={"path": str(preprocessed_manifest_path)},
+            )
 
         experiment_layout = ExperimentLayout(experiment_dir=self.experiment_dir)
         split_manifest_path = experiment_layout.split_manifest_path()
-        ensure_file_exists(split_manifest_path, "split manifest")
+        ensure_file_exists(split_manifest_path, SPLIT_MANIFEST_LABEL)
 
         split_manifest = SplitManifest.read(split_manifest_path)
+        ensure_manifest_complete(split_manifest, split_manifest_path, "split")
 
         if split_manifest.dataset_dir != str(self.dataset_dir.resolve()):
             raise ApplicationError(
@@ -538,12 +577,17 @@ class TrainConfig(FrozenModel):
             return self
 
         train_manifest_path = experiment_layout.train_manifest_path()
-        ensure_file_exists(train_manifest_path, "train manifest")
+        ensure_file_exists(train_manifest_path, TRAIN_MANIFEST_LABEL)
 
         train_manifest = TrainManifest.read(train_manifest_path)
 
         ensure_manifest_not_complete(
             train_manifest,
+        )
+
+        ensure_fingerprint_matches(
+            train_manifest.split_manifest_fingerprint,
+            split_manifest,
         )
         
         ensure_training_resume_state(experiment_layout)
@@ -564,11 +608,12 @@ class InferConfig(FrozenModel):
         description="Explicit student checkpoint path.",
     )
     device: str = Field(
-        description="Torch device string, e.g. 'cpu' or 'cuda'.",
+        description=DEVICE_FIELD_DESCRIPTION,
     )
 
     @model_validator(mode="after")
     def validate_config(self) -> "InferConfig":
+        """Validate inference checkpoints, device, and raw dataset inputs."""
         ensure_device_available(self.device)
         for stage, checkpoint in (
             (DETECTOR_STAGE, self.detector_checkpoint_path),
@@ -580,9 +625,10 @@ class InferConfig(FrozenModel):
 
         layout = DatasetLayout(dataset_dir=self.dataset_dir)
         manifest_path = layout.raw_manifest_path()
-        ensure_file_exists(manifest_path, "raw manifest")
+        ensure_file_exists(manifest_path, RAW_MANIFEST_LABEL)
 
-        RawDatasetManifest.read(manifest_path)
+        raw_manifest = RawDatasetManifest.read(manifest_path)
+        ensure_manifest_complete(raw_manifest, manifest_path, "raw")
         return self
 
 
@@ -602,12 +648,13 @@ class EvaluateConfig(FrozenModel):
         description="Student checkpoint for explicit evaluation.",
     )
     device: str = Field(
-        description="Torch device string, e.g. 'cpu' or 'cuda'.",
+        description=DEVICE_FIELD_DESCRIPTION,
     )
 
     @model_validator(mode="before")
     @classmethod
     def derive_experiment_paths(cls, values: Any) -> Any:
+        """Derive evaluation outputs and checkpoints from an experiment directory."""
         if not isinstance(values, dict) or values.get("experiment_dir") is None:
             return values
 
@@ -627,6 +674,7 @@ class EvaluateConfig(FrozenModel):
 
     @model_validator(mode="after")
     def validate_config(self) -> "EvaluateConfig":
+        """Validate explicit or experiment-backed evaluation artifacts."""
         ensure_device_available(self.device)
 
         if self.experiment_dir is not None:
@@ -635,26 +683,28 @@ class EvaluateConfig(FrozenModel):
             ensure_directory_exists(self.dataset_dir, "dataset_dir")
             dataset_layout = DatasetLayout(dataset_dir=self.dataset_dir)
             train_manifest_path = experiment_layout.train_manifest_path()
-            ensure_file_exists(train_manifest_path, "train manifest")
+            ensure_file_exists(train_manifest_path, TRAIN_MANIFEST_LABEL)
             train_manifest = TrainManifest.read(train_manifest_path)
             ensure_manifest_complete(
-                train_manifest, train_manifest_path, "train manifest"
+                train_manifest, train_manifest_path, TRAIN_MANIFEST_LABEL
             )
             split_manifest_path = experiment_layout.split_manifest_path()
-            ensure_file_exists(split_manifest_path, "split manifest")
+            ensure_file_exists(split_manifest_path, SPLIT_MANIFEST_LABEL)
             split_manifest = SplitManifest.read(split_manifest_path)
             ensure_manifest_complete(
-                split_manifest, split_manifest_path, "split manifest"
+                split_manifest, split_manifest_path, SPLIT_MANIFEST_LABEL
             )
             preprocessed_manifest_path = dataset_layout.preprocessed_manifest_path()
-            ensure_file_exists(preprocessed_manifest_path, "preprocessed manifest")
+            ensure_file_exists(
+                preprocessed_manifest_path, PREPROCESSED_MANIFEST_LABEL
+            )
             preprocessed_manifest = PreprocessedDatasetManifest.read(
                 preprocessed_manifest_path
             )
             ensure_manifest_complete(
                 preprocessed_manifest,
                 preprocessed_manifest_path,
-                "preprocessed manifest",
+                PREPROCESSED_MANIFEST_LABEL,
             )
             ensure_fingerprint_matches(
                 split_manifest.preprocessed_manifest_fingerprint,
@@ -674,8 +724,9 @@ class EvaluateConfig(FrozenModel):
         ensure_directory_exists(self.dataset_dir, "dataset_dir")
         layout = DatasetLayout(dataset_dir=self.dataset_dir)
         manifest_path = layout.raw_manifest_path()
-        ensure_file_exists(manifest_path, "raw manifest")
+        ensure_file_exists(manifest_path, RAW_MANIFEST_LABEL)
         manifest = RawDatasetManifest.read(manifest_path)
+        ensure_manifest_complete(manifest, manifest_path, "raw")
         ensure_subjects_have_masks(
             manifest.subjects,
         )
@@ -705,6 +756,66 @@ class BasePatchConfig(FrozenModel):
         description="Total records per patch, including one original record.",
     )
 
+    @model_validator(mode="after")
+    def validate_inputs(self) -> "BasePatchConfig":
+        """Validate patch variants, masks, and source artifacts for extraction."""
+        for subject in self.subjects:
+            if len(subject.variants) < self.augmentation_factor:
+                raise ApplicationError(
+                    category="Configuration",
+                    summary="Patch augmentation factor exceeds available variants",
+                    cause=(
+                        f"Subject '{subject.subject_id}' has "
+                        f"{len(subject.variants)} variants, but "
+                        f"{self.augmentation_factor} were requested"
+                    ),
+                    fix=(
+                        "Reduce the patch augmentation factor or rerun preprocessing "
+                        "with more variants"
+                    ),
+                    context={"subject_id": subject.subject_id},
+                )
+
+            for variant_index, variant in enumerate(
+                subject.variants[: self.augmentation_factor]
+            ):
+                if variant.mask_path is None:
+                    raise ApplicationError(
+                        category="Input data",
+                        summary="Patch extraction requires a variant mask",
+                        cause=(
+                            f"Subject '{subject.subject_id}' variant "
+                            f"{variant_index} has no mask"
+                        ),
+                        fix=(
+                            "Complete preprocessing with masks before extracting "
+                            "training patches"
+                        ),
+                        context={"subject_id": subject.subject_id},
+                    )
+
+                input_paths = (
+                    ("volume", variant.volume_path),
+                    ("mask", variant.mask_path),
+                    ("FRST", variant.frst_path),
+                )
+                for input_name, input_path in input_paths:
+                    if not Path(input_path).is_file():
+                        raise ApplicationError(
+                            category="Input data",
+                            summary="Required patch input file is missing",
+                            cause=(
+                                f"Subject '{subject.subject_id}' variant "
+                                f"{variant_index} {input_name} file was not found"
+                            ),
+                            fix=(
+                                "Restore the preprocessed output or rerun "
+                                "preprocessing"
+                            ),
+                            context={"path": str(input_path)},
+                        )
+        return self
+
 
 class NonOverlappingPatchConfig(BasePatchConfig):
     pass
@@ -723,6 +834,7 @@ class TargetCenteredPatchConfig(BasePatchConfig):
     @field_validator("detector")
     @classmethod
     def validate_detector(cls, detector: Any) -> Any:
+        """Require the detector implementation used for candidate localization."""
         from ..core.common.models import CandidateDetector
 
         if not isinstance(detector, CandidateDetector):

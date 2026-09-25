@@ -1,15 +1,3 @@
-"""Table-driven construction of the CLI commands.
-
-Every command is the same skeleton — parse a config, defer-import one pipe,
-and run it — so each is described declaratively by a :class:`CommandSpec` and
-built by :func:`build_command` rather than hand-written in its own module.
-Only the per-command specifics (config model, help text, and which pipe to
-run) vary, and those are exactly the spec's fields.
-
-The pipe is imported lazily inside the command body, by module name, so
-``--help`` and ``describe`` never pay to import torch.
-"""
-
 from importlib import import_module
 from pathlib import Path
 from typing import Annotated
@@ -18,6 +6,15 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from ..constants import (
+    DESCRIBE_COMMAND_HELP,
+    EVALUATE_COMMAND_HELP,
+    INDEX_DATA_COMMAND_HELP,
+    INFER_COMMAND_HELP,
+    PREPROCESS_COMMAND_HELP,
+    SPLIT_COMMAND_HELP,
+    TRAIN_COMMAND_HELP,
+)
 from ..errors import ApplicationError, error_renderer
 from ..orchestration.configs import (
     EvaluateConfig,
@@ -35,43 +32,40 @@ from .utils import (
     parse_config,
 )
 
-COMMAND_HELP = "Run the configured microbleednet pipeline command."
-
-
 SPECS: list[CommandSpec] = [
     CommandSpec(
         name="index-data",
-        help=COMMAND_HELP,
+        help=INDEX_DATA_COMMAND_HELP,
         config=IndexDataConfig,
         pipe="index_data",
     ),
     CommandSpec(
         name="preprocess",
-        help=COMMAND_HELP,
+        help=PREPROCESS_COMMAND_HELP,
         config=PreprocessConfig,
         pipe="preprocess",
     ),
     CommandSpec(
         name="split",
-        help=COMMAND_HELP,
+        help=SPLIT_COMMAND_HELP,
         config=SplitConfig,
         pipe="split",
     ),
     CommandSpec(
         name="train",
-        help=COMMAND_HELP,
+        help=TRAIN_COMMAND_HELP,
         config=TrainConfig,
         pipe="train",
     ),
     CommandSpec(
         name="evaluate",
-        help=COMMAND_HELP,
+        help=EVALUATE_COMMAND_HELP,
         config=EvaluateConfig,
         pipe="evaluate",
     ),
     CommandSpec(
         name="infer",
-        help=COMMAND_HELP,
+        help=INFER_COMMAND_HELP,
         config=InferConfig,
         pipe="infer",
     ),
@@ -89,8 +83,9 @@ def build_command(app: typer.Typer, spec: CommandSpec) -> None:
     def command(
         config_path: Annotated[Path, typer.Option(..., "--config")],
     ) -> None:
+        """Run the pipeline defined by the command specification."""
         try:
-            config = parse_config(config_path, spec.config)
+            config = parse_config(config_path, spec.config, spec.name)
 
             # Imported lazily, by module name, so torch stays out of --help/describe.
             pipe = import_module(
@@ -120,7 +115,7 @@ def build_describe_command(
 
     @app.command(
         "describe",
-        help="Print the configuration keys, descriptions, and defaults for a command.",
+        help=DESCRIBE_COMMAND_HELP,
         no_args_is_help=True,
     )
     def describe_command(
@@ -129,6 +124,7 @@ def build_describe_command(
             typer.Argument(help=f"Command to describe: {', '.join(configs)}."),
         ],
     ) -> None:
+        """Display the configuration fields accepted by a command."""
         model = configs.get(command)
         if model is None:
             raise typer.BadParameter(

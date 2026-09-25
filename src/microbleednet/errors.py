@@ -1,5 +1,3 @@
-"""Structured, presentation-neutral application errors."""
-
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import cast
@@ -27,9 +25,11 @@ class ApplicationError(ValueError):
     context: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Initialize the base exception with the error summary."""
         Exception.__init__(self, self.summary)
 
     def __str__(self) -> str:
+        """Combine the summary, cause, and fix into a readable message."""
         parts = [self.summary]
         if self.cause:
             parts.append(f"Cause: {self.cause}")
@@ -56,12 +56,15 @@ class ErrorRenderer:
     """Dispatch application errors through the configured presentation layer."""
 
     def __init__(self) -> None:
+        """Default error rendering to the presentation-neutral printer."""
         self._render: ErrorRenderFunction = print_application_error
 
     def configure(self, renderer: ErrorRenderFunction) -> None:
+        """Replace the active application-error renderer."""
         self._render = renderer
 
     def render(self, error: ApplicationError) -> None:
+        """Render an application error with the configured renderer."""
         self._render(error)
 
 

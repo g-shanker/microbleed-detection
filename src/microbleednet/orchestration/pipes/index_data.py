@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def execute(config: IndexDataConfig) -> None:
+    """Index a source and merge its subjects into the raw dataset manifest."""
     logger.info(
         "Indexing source %s from %s (masks=%s)",
         config.source_id,
@@ -108,6 +109,7 @@ def index_source(config: IndexDataConfig) -> tuple[RawSource, list[RawSubject]]:
             )
 
     def namespaced(subject_id: str) -> str:
+        """Prefix a subject ID with its source namespace."""
         return f"{config.source_id}_{subject_id}"
 
     subjects = [
@@ -157,7 +159,10 @@ def merge_source(
             category="Manifest",
             summary="Source ID already exists",
             cause=f"The manifest already contains source '{source.source_id}'",
-            fix="Choose a new source ID or use the supported replacement workflow",
+            fix=(
+                "Choose a new source ID or rebuild the dataset in a new or empty "
+                "dataset directory"
+            ),
         )
 
     return RawDatasetManifest(
@@ -175,6 +180,7 @@ def build_subject_map(
     pattern: str,
     description: str,
 ) -> dict[str, Path]:
+    """Map unique subject IDs extracted from matching paths to those paths."""
     subject_map: dict[str, Path] = {}
     for path in progress.track(paths, description=description):
         subject_id = extract_subject_id(root_dir, path, pattern) or ""
@@ -199,12 +205,14 @@ def build_subject_map(
 
 
 def find_matching_paths(root_dir: Path, pattern: str) -> list[Path]:
+    """Find paths matching a subject-ID filename pattern beneath a root."""
     pattern_parts = pattern.split(SUBJECT_ID_PLACEHOLDER)
     glob_pattern = "*".join(glob.escape(part) for part in pattern_parts)
     return list(root_dir.rglob(glob_pattern))
 
 
 def extract_subject_id(root_dir: Path, path: Path, pattern: str) -> Optional[str]:
+    """Extract the consistent subject ID captured by a path pattern."""
     clean_path = path.relative_to(root_dir).as_posix()
 
     pattern_parts = pattern.split(SUBJECT_ID_PLACEHOLDER)

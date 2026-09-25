@@ -3,9 +3,9 @@ from scipy.ndimage import distance_transform_edt
 from skimage.measure import regionprops
 from skimage.measure._regionprops import RegionProperties
 
+from ...constants import COMPONENT_CONNECTIVITY, INVERTED_MODALITIES
 from .. import io, utils
 from ..datamodels import (
-    INVERTED_MODALITIES,
     FloatArray,
     IntArray,
     PreprocessInput,
@@ -19,6 +19,7 @@ from ..transforms import inpaint_vessels, volume_ops
 def preprocess(
     preprocess_input: PreprocessInput,
 ) -> PreprocessOutput:
+    """Canonicalize, normalize, crop, and inpaint an input brain volume."""
     volume = preprocess_input.volume
     mask = preprocess_input.mask
     modality = preprocess_input.modality
@@ -77,7 +78,7 @@ def postprocess(
     brain_distance = np.asarray(
         distance_transform_edt(brain_mask, sampling=voxel_sizes)
     )
-    labels = utils.label_components(candidate_mask, utils.COMPONENT_CONNECTIVITY)
+    labels = utils.label_components(candidate_mask, COMPONENT_CONNECTIVITY)
     output = np.zeros_like(candidate_mask, dtype=np.uint8)
     voxel_volume = float(np.prod(voxel_sizes))
     voxel_regions = regionprops(labels)
@@ -101,6 +102,7 @@ def postprocess(
 
 
 def component_ellipticity(region: RegionProperties) -> float:
+    """Measure component elongation from its inertia eigenvalues."""
     eigenvalues = np.asarray(region.inertia_tensor_eigvals, dtype=float)
     maximum = float(np.max(eigenvalues)) if eigenvalues.size else 0.0
     if maximum <= 0:

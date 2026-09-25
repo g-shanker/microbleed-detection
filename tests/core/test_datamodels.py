@@ -2,12 +2,13 @@ import nibabel as nib
 import numpy as np
 import pytest
 
-from microbleednet.core.datamodels import PatchSizes, PreprocessInput
+from microbleednet.constants import DETECTOR_PATCH_SIZE, DISCRIMINATOR_PATCH_SIZE
+from microbleednet.core.datamodels import PreprocessInput
 
 
 def test_patch_sizes_are_fixed_model_input_contracts() -> None:
-    assert PatchSizes.DETECTOR == 48
-    assert PatchSizes.DISCRIMINATOR == 24
+    assert DETECTOR_PATCH_SIZE == 48
+    assert DISCRIMINATOR_PATCH_SIZE == 24
 
 
 @pytest.mark.parametrize(

@@ -5,18 +5,22 @@ import pytest
 import torch
 import torch.nn as nn
 
-from microbleednet.core.common.models import CandidateDetector
-from microbleednet.core.datamodels import PatchSizes
-from microbleednet.orchestration.configs import NonOverlappingPatchConfig, TrainConfig
-from microbleednet.orchestration.layouts import (
+from microbleednet.constants import (
+    DETECTOR_PATCH_SIZE,
     DETECTOR_STAGE,
     STUDENT_STAGE,
     TEACHER_STAGE,
+)
+from microbleednet.core.common.models import CandidateDetector
+from microbleednet.core.datamodels import PatchRecord
+from microbleednet.orchestration.configs import NonOverlappingPatchConfig, TrainConfig
+from microbleednet.orchestration.layouts import (
     DatasetLayout,
     ExperimentLayout,
 )
 from microbleednet.orchestration.manifests import (
     ManifestStatus,
+    PatchManifest,
     PreprocessedDatasetManifest,
     PreprocessedSubject,
     PreprocessedVariant,
@@ -274,9 +278,9 @@ def test_stage_functions_apply_fixed_training_recipe(
         train, "CandidateDiscriminatorStudent", lambda: nn.Linear(1, 1)
     )
     monkeypatch.setattr(
-        train.core_io,
-        "load_model_weights",
-        lambda model, path: loaded.append((model, path)),
+        train.utils,
+        "load_stage_checkpoint",
+        lambda model, path, stage: loaded.append((model, path, stage)),
     )
     monkeypatch.setattr(
         train.core_utils,
@@ -285,7 +289,7 @@ def test_stage_functions_apply_fixed_training_recipe(
     )
     monkeypatch.setattr(train.utils, "release_gpu_memory", lambda: None)
     layout = ExperimentLayout(experiment_dir=tmp_path)
-    subjects = _subjects(2, tmp_path / "inputs")
+    subjects = _subjects(2, tmp_path / "inputs", augmentation_factor=8)
     device = torch.device("cpu")
     detector_checkpoint = layout.best_checkpoint_path("detector")
     detector_checkpoint.parent.mkdir(parents=True)
@@ -299,6 +303,7 @@ def test_stage_functions_apply_fixed_training_recipe(
         created_at=now,
         updated_at=now,
         subjects=[],
+        augmentation_factor=8,
         raw_manifest_fingerprint="test-raw-manifest",
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
     preprocessed_manifest = PreprocessedDatasetManifest.read(
@@ -356,10 +361,15 @@ def test_stage_functions_apply_fixed_training_recipe(
     assert all(call["num_workers"] == 2 for call in loader_calls)
     assert all(call["pin_memory"] is True for call in loader_calls)
     assert len(initialized) == 1
-    assert [path for _, path in loaded] == [
+    assert [path for _, path, _ in loaded] == [
         layout.best_checkpoint_path("detector"),
         layout.best_checkpoint_path("detector"),
         layout.best_checkpoint_path("teacher"),
+    ]
+    assert [stage for _, _, stage in loaded] == [
+        "detector",
+        "detector",
+        "teacher",
     ]
 
 
@@ -449,7 +459,7 @@ def test_extract_patch_records_rejects_incomplete_manifest(
         stage=DETECTOR_STAGE,
         split="train",
         subjects=_subjects(1, tmp_path / "inputs"),
-        patch_size=PatchSizes.DETECTOR,
+        patch_size=DETECTOR_PATCH_SIZE,
         augmentation_factor=1,
     )
     monkeypatch.setattr(train.patch, "execute", lambda _: None)
@@ -459,16 +469,128 @@ def test_extract_patch_records_rejects_incomplete_manifest(
         lambda _: SimpleNamespace(status=ManifestStatus.RUNNING, records=[]),
     )
 
-    with pytest.raises(ValueError, match="incomplete patch output"):
+    with pytest.raises(ValueError) as error:
         train.extract_patch_records(config)
+
+    message = str(error.value)
+    assert "incomplete patch output" in message
+    assert "Rerun the train command with resume set to false" in message
+
+
+def test_extract_patch_records_reuses_compatible_manifest_on_resume(
+    tmp_path: Path, monkeypatch
+) -> None:
+    subject = _subjects(1, tmp_path / "inputs")[0]
+    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
+    config = NonOverlappingPatchConfig(
+        experiment_layout=layout,
+        stage=DETECTOR_STAGE,
+        split="train",
+        subjects=[subject],
+        patch_size=DETECTOR_PATCH_SIZE,
+        augmentation_factor=1,
+    )
+    paths = [tmp_path / name for name in ("volume.npy", "mask.npy", "frst.npy")]
+    for path in paths:
+        path.touch()
+    record = PatchRecord(
+        volume_path=str(paths[0]),
+        mask_path=str(paths[1]),
+        frst_path=str(paths[2]),
+        patch_index=0,
+        has_microbleed=True,
+    )
+    PatchManifest(
+        status=ManifestStatus.COMPLETE,
+        stage=config.stage,
+        split=config.split,
+        subject_ids=[subject.subject_id],
+        patch_size=config.patch_size,
+        augmentation_factor=config.augmentation_factor,
+        records=[record],
+    ).write(layout.patch_manifest_path(config.stage, config.split))
+    monkeypatch.setattr(
+        train.patch,
+        "execute",
+        lambda _: (_ for _ in ()).throw(AssertionError("unexpected extraction")),
+    )
+
+    assert train.extract_patch_records(config, resume=True) == [record]
+
+
+def test_extract_patch_records_regenerates_missing_cached_arrays(
+    tmp_path: Path, monkeypatch
+) -> None:
+    subject = _subjects(1, tmp_path / "inputs")[0]
+    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
+    config = NonOverlappingPatchConfig(
+        experiment_layout=layout,
+        stage=DETECTOR_STAGE,
+        split="train",
+        subjects=[subject],
+        patch_size=DETECTOR_PATCH_SIZE,
+        augmentation_factor=1,
+    )
+    manifest_path = layout.patch_manifest_path(config.stage, config.split)
+    stale_record = PatchRecord(
+        volume_path=str(tmp_path / "missing-volume.npy"),
+        mask_path=str(tmp_path / "missing-mask.npy"),
+        frst_path=str(tmp_path / "missing-frst.npy"),
+        patch_index=0,
+        has_microbleed=True,
+    )
+    PatchManifest(
+        status=ManifestStatus.COMPLETE,
+        stage=config.stage,
+        split=config.split,
+        subject_ids=[subject.subject_id],
+        patch_size=config.patch_size,
+        augmentation_factor=config.augmentation_factor,
+        records=[stale_record],
+    ).write(manifest_path)
+    regenerated_paths = [
+        tmp_path / name
+        for name in (
+            "regenerated-volume.npy",
+            "regenerated-mask.npy",
+            "regenerated-frst.npy",
+        )
+    ]
+    for path in regenerated_paths:
+        path.touch()
+    regenerated_record = stale_record.model_copy(
+        update={
+            "volume_path": str(regenerated_paths[0]),
+            "mask_path": str(regenerated_paths[1]),
+            "frst_path": str(regenerated_paths[2]),
+        }
+    )
+    extraction_calls = []
+
+    def regenerate(patch_config: NonOverlappingPatchConfig) -> None:
+        extraction_calls.append(patch_config)
+        PatchManifest(
+            status=ManifestStatus.COMPLETE,
+            stage=patch_config.stage,
+            split=patch_config.split,
+            subject_ids=[subject.subject_id],
+            patch_size=patch_config.patch_size,
+            augmentation_factor=patch_config.augmentation_factor,
+            records=[regenerated_record],
+        ).write(manifest_path)
+
+    monkeypatch.setattr(train.patch, "execute", regenerate)
+
+    assert train.extract_patch_records(config, resume=True) == [regenerated_record]
+    assert extraction_calls == [config]
 
 
 @pytest.mark.parametrize(
     ("stage_function", "loader_attr"),
     [
         ("train_detector", None),
-        ("train_teacher", "load_model_weights"),
-        ("train_student", "load_model_weights"),
+            ("train_teacher", "load_stage_checkpoint"),
+            ("train_student", "load_stage_checkpoint"),
     ],
 )
 def test_stage_functions_return_early_when_stage_already_complete(
@@ -504,7 +626,7 @@ def test_stage_functions_return_early_when_stage_already_complete(
     )
     if loader_attr is not None:
         monkeypatch.setattr(
-            train.core_io,
+                train.utils,
             loader_attr,
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 AssertionError("unexpected checkpoint load")

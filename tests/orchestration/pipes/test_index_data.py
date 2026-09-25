@@ -180,7 +180,7 @@ def test_merge_source_rejects_existing_source_id() -> None:
         ],
     )
 
-    with pytest.raises(ValueError, match="Source ID already exists"):
+    with pytest.raises(ValueError) as error:
         merge_source(
             existing,
             source=_source("first", "2026-01-02T00:00:00+00:00"),
@@ -192,6 +192,11 @@ def test_merge_source_rejects_existing_source_id() -> None:
                 )
             ],
         )
+
+    message = str(error.value)
+    assert "Source ID already exists" in message
+    assert "new or empty dataset directory" in message
+    assert "replacement workflow" not in message
 
 
 def _source(name: str, added_on: str) -> RawSource:

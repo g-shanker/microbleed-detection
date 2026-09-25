@@ -1,12 +1,21 @@
-"""Run the internal detector/discriminator inference pipeline."""
-
 import logging
+from pathlib import Path
 
 import torch
 
+from ...constants import (
+    DETECTOR_THRESHOLD,
+    DISCRIMINATOR_PATCH_SIZE,
+    MAXIMUM_ELLIPTICITY,
+    MINIMUM_BRAIN_DISTANCE_MM,
+    MINIMUM_VOLUME_MM3,
+    PREPROCESSING_AUGMENTATION_FACTOR,
+    STUDENT_THRESHOLD,
+    VARIANT_INDEX,
+)
 from ...core import io as core_io
 from ...core.common.models import CandidateDetector, CandidateDiscriminatorStudent
-from ...core.datamodels import Modality, PatchSizes, VoxelSpacing
+from ...core.datamodels import Modality, VoxelSpacing
 from ...core.engines import inference as core_inference
 from ...core.engines import processor as core_processor
 from ...errors import ApplicationError
@@ -20,16 +29,12 @@ from ..manifests import (
     PreprocessedSubject,
     RawDatasetManifest,
 )
-from ..utils import release_gpu_memory, resolve_path_string
+from ..utils import (
+    load_stage_checkpoint,
+    release_gpu_memory,
+    resolve_path_string,
+)
 from .preprocess import preprocess_subject
-
-VARIANT_INDEX = 0
-DETECTOR_THRESHOLD = 0.5
-STUDENT_THRESHOLD = 0.5
-MINIMUM_VOLUME_MM3 = 2.5
-MAXIMUM_ELLIPTICITY = 0.2
-MINIMUM_BRAIN_DISTANCE_MM = 5.0
-PREPROCESSING_AUGMENTATION_FACTOR = 1
 
 logger = logging.getLogger(__name__)
 
@@ -52,99 +57,102 @@ def execute(config: InferConfig) -> None:
         config.detector_checkpoint_path,
         config.student_checkpoint_path,
     )
-    for subject in progress.track(
-        manifest.subjects, description="Preprocessing inference subjects"
-    ):
-        subjects.append(
-            preprocess_subject(
-                subject,
-                modalities[subject.source_id],
-                preprocessing_layout,
-                PREPROCESSING_AUGMENTATION_FACTOR,
-            )
-        )
-    infer_subjects(
+    detector, student = load_inference_models(
         config.device,
-        layout,
         config.detector_checkpoint_path,
         config.student_checkpoint_path,
-        subjects,
     )
-    logger.info("Inference complete for %d subjects", len(subjects))
-
-
-def infer_subjects(
-    device_name: str,
-    output_layout: ExperimentLayout,
-    detector_checkpoint,
-    student_checkpoint,
-    subjects: list[PreprocessedSubject],
-) -> None:
-    device = torch.device(device_name)
-    logger.info(
-        "Loading inference models on %s for %d subjects",
-        device_name,
-        len(subjects),
-    )
-    detector = CandidateDetector().to(device)
-    student = CandidateDiscriminatorStudent().to(device)
     try:
-        for stage, model, checkpoint in (
-            ("detector", detector, detector_checkpoint),
-            ("student", student, student_checkpoint),
+        for subject in progress.track(
+            manifest.subjects, description="Preprocessing inference subjects"
         ):
-            try:
-                core_io.load_model_weights(model, checkpoint)
-            except ApplicationError:
-                raise
-            except (OSError, RuntimeError, ValueError, KeyError) as error:
-                raise ApplicationError(
-                    category="Checkpoint",
-                    summary=f"Could not load the {stage} inference checkpoint",
-                    cause=str(error),
-                    fix=(
-                        f"Verify that the {stage} checkpoint exists and matches "
-                        "the inference model"
-                    ),
-                    context={"path": str(checkpoint), "stage": stage},
-                ) from error
-
-        results = [
-            infer_subject(subject, detector, student, output_layout)
-            for subject in progress.track(subjects, description="Inferring subjects")
-        ]
-
-        manifest = InferManifest(
-            status=ManifestStatus.COMPLETE,
-            device=device_name,
-            detector_checkpoint_path=resolve_path_string(detector_checkpoint),
-            student_checkpoint_path=resolve_path_string(student_checkpoint),
-            detector_threshold=DETECTOR_THRESHOLD,
-            student_threshold=STUDENT_THRESHOLD,
-            discriminator_patch_size=PatchSizes.DISCRIMINATOR,
-            minimum_volume_mm3=MINIMUM_VOLUME_MM3,
-            maximum_ellipticity=MAXIMUM_ELLIPTICITY,
-            minimum_brain_distance_mm=MINIMUM_BRAIN_DISTANCE_MM,
-            subjects=results,
-        )
-        try:
-            manifest.write(output_layout.inference_manifest_path())
-        except (OSError, ValueError) as error:
-            raise ApplicationError(
-                category="Output",
-                summary="Could not write the inference manifest",
-                cause=str(error),
-                fix="Check the inference output directory and filesystem permissions",
-                context={"path": str(output_layout.inference_manifest_path())},
-            ) from error
-        logger.info(
-            "Inference manifest written to %s",
-            output_layout.inference_manifest_path(),
+            subjects.append(
+                preprocess_subject(
+                    subject,
+                    modalities[subject.source_id],
+                    preprocessing_layout,
+                    PREPROCESSING_AUGMENTATION_FACTOR,
+                )
+            )
+        infer_subjects(
+            config.device,
+            layout,
+            config.detector_checkpoint_path,
+            config.student_checkpoint_path,
+            subjects,
+            detector,
+            student,
         )
     finally:
         del detector
         del student
         release_gpu_memory()
+    logger.info("Inference complete for %d subjects", len(subjects))
+
+
+def load_inference_models(
+    device_name: str,
+    detector_checkpoint: Path,
+    student_checkpoint: Path,
+) -> tuple[CandidateDetector, CandidateDiscriminatorStudent]:
+    """Load detector and student checkpoints onto the requested device."""
+    device = torch.device(device_name)
+    logger.info("Loading inference models on %s", device_name)
+    detector = CandidateDetector().to(device)
+    student = CandidateDiscriminatorStudent().to(device)
+    try:
+        load_stage_checkpoint(detector, detector_checkpoint, "detector")
+        load_stage_checkpoint(student, student_checkpoint, "student")
+    except Exception:
+        del detector
+        del student
+        release_gpu_memory()
+        raise
+    return detector, student
+
+
+def infer_subjects(
+    device_name: str,
+    output_layout: ExperimentLayout,
+    detector_checkpoint: Path,
+    student_checkpoint: Path,
+    subjects: list[PreprocessedSubject],
+    detector: CandidateDetector,
+    student: CandidateDiscriminatorStudent,
+) -> None:
+    """Infer all preprocessed subjects and persist their output manifest."""
+    results = [
+        infer_subject(subject, detector, student, output_layout)
+        for subject in progress.track(subjects, description="Inferring subjects")
+    ]
+
+    manifest = InferManifest(
+        status=ManifestStatus.COMPLETE,
+        device=device_name,
+        detector_checkpoint_path=resolve_path_string(detector_checkpoint),
+        student_checkpoint_path=resolve_path_string(student_checkpoint),
+        detector_threshold=DETECTOR_THRESHOLD,
+        student_threshold=STUDENT_THRESHOLD,
+        discriminator_patch_size=DISCRIMINATOR_PATCH_SIZE,
+        minimum_volume_mm3=MINIMUM_VOLUME_MM3,
+        maximum_ellipticity=MAXIMUM_ELLIPTICITY,
+        minimum_brain_distance_mm=MINIMUM_BRAIN_DISTANCE_MM,
+        subjects=results,
+    )
+    try:
+        manifest.write(output_layout.inference_manifest_path())
+    except (OSError, ValueError) as error:
+        raise ApplicationError(
+            category="Output",
+            summary="Could not write the inference manifest",
+            cause=str(error),
+            fix="Check the inference output directory and filesystem permissions",
+            context={"path": str(output_layout.inference_manifest_path())},
+        ) from error
+    logger.info(
+        "Inference manifest written to %s",
+        output_layout.inference_manifest_path(),
+    )
 
 
 def infer_subject(
@@ -153,6 +161,7 @@ def infer_subject(
     student: CandidateDiscriminatorStudent,
     output_layout: ExperimentLayout,
 ) -> InferredSubject:
+    """Produce and save a restored binary detection mask for one subject."""
     volume_image = core_io.load_volume(subject.variants[VARIANT_INDEX].volume_path)
     volume = core_io.nifti_to_numpy(volume_image)
     frst_array = core_io.nifti_to_numpy(
@@ -166,7 +175,7 @@ def infer_subject(
         frst_array,
         detector_probability,
         DETECTOR_THRESHOLD,
-        PatchSizes.DISCRIMINATOR,
+        DISCRIMINATOR_PATCH_SIZE,
         STUDENT_THRESHOLD,
     )
 

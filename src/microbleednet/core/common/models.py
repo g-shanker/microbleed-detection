@@ -1,17 +1,18 @@
 import torch
 import torch.nn as nn
 
+from ...constants import (
+    BIAS_INIT_VALUE,
+    CLASSIFIER_FEATURES,
+    CLASSIFIER_HIDDEN_NODES,
+    CLASSIFIER_OUTPUT_NODES,
+    DROPOUT_RATE,
+    INPUT_CHANNELS,
+    LEVEL_CHANNELS,
+    OUTPUT_CLASSES,
+    WEIGHT_INIT_STD,
+)
 from . import layers
-
-INPUT_CHANNELS = 2
-OUTPUT_CLASSES = 2
-LEVEL_CHANNELS = (3, 64, 128, 256)
-CLASSIFIER_FEATURES = 1024
-CLASSIFIER_HIDDEN_NODES = 128
-CLASSIFIER_OUTPUT_NODES = 32
-DROPOUT_RATE = 0.2
-WEIGHT_INIT_STD = 0.05
-BIAS_INIT_VALUE = 0.1
 
 
 def weight_init(model):
@@ -25,6 +26,7 @@ def weight_init(model):
 
 class CandidateDetector(nn.Module):
     def __init__(self):
+        """Build the candidate segmentation network."""
         super().__init__()
 
         self.feature_extractor = FeatureExtractor()
@@ -33,6 +35,7 @@ class CandidateDetector(nn.Module):
         self.apply(weight_init)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Predict segmentation logits for candidate volumes."""
         features = self.feature_extractor(x)
         logits = self.segmentor(features)
         return logits
@@ -40,6 +43,7 @@ class CandidateDetector(nn.Module):
 
 class CandidateDiscriminatorTeacher(nn.Module):
     def __init__(self):
+        """Build the teacher network with segmentation and classification heads."""
         super().__init__()
 
         self.feature_extractor = FeatureExtractor()
@@ -49,6 +53,7 @@ class CandidateDiscriminatorTeacher(nn.Module):
         self.apply(weight_init)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Predict segmentation and classification logits for a volume."""
         features = self.feature_extractor(x)
         segmentation_logits = self.segmentor(features)
         classification_logits = self.classifier(features)
@@ -57,6 +62,7 @@ class CandidateDiscriminatorTeacher(nn.Module):
 
 class CandidateDiscriminatorStudent(nn.Module):
     def __init__(self):
+        """Build the compact student classification network."""
         super().__init__()
 
         self.feature_extractor = FeatureExtractor()
@@ -65,6 +71,7 @@ class CandidateDiscriminatorStudent(nn.Module):
         self.apply(weight_init)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Predict classification logits for a candidate volume."""
         features = self.feature_extractor(x)
         logits = self.classifier(features)
         return logits
@@ -72,6 +79,7 @@ class CandidateDiscriminatorStudent(nn.Module):
 
 class FeatureExtractor(nn.Module):
     def __init__(self):
+        """Build the shared multiscale 3D feature encoder."""
         super().__init__()
 
         self.in_conv = layers.SingleConv(INPUT_CHANNELS, LEVEL_CHANNELS[0], 1, 0)
@@ -89,6 +97,7 @@ class FeatureExtractor(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Encode an input volume into multiscale feature maps."""
         x0 = self.in_conv(x)
         x1 = self.conv_1(x0)
         x2 = self.down_1(x1)
@@ -99,6 +108,7 @@ class FeatureExtractor(nn.Module):
 
 class Segmentor(nn.Module):
     def __init__(self):
+        """Build the decoder that maps multiscale features to segmentation logits."""
         super().__init__()
 
         self.up_2 = layers.UpConv(LEVEL_CHANNELS[3], LEVEL_CHANNELS[2], 3, 3)
@@ -106,6 +116,7 @@ class Segmentor(nn.Module):
         self.out_conv = layers.OutConv(LEVEL_CHANNELS[1], OUTPUT_CLASSES)
 
     def forward(self, features: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Decode multiscale features into segmentation logits."""
         x1 = features["x1"]
         x2 = features["x2"]
         x3 = features["x3"]
@@ -119,6 +130,7 @@ class Segmentor(nn.Module):
 
 class Classifier(nn.Module):
     def __init__(self):
+        """Build the convolutional and dense candidate classifier."""
         super().__init__()
 
         self.in_conv = layers.SingleConv(LEVEL_CHANNELS[3], LEVEL_CHANNELS[2], 1, 0)
@@ -141,6 +153,7 @@ class Classifier(nn.Module):
         self.fc_3 = nn.Linear(CLASSIFIER_OUTPUT_NODES, OUTPUT_CLASSES)
 
     def forward(self, features: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Classify a candidate from its deepest encoded features."""
         x3 = features["x3"]
         x = self.in_conv(x3)
         x = self.down_1(x)

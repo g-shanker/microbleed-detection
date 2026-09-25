@@ -1,13 +1,12 @@
 import numpy as np
 
+from ...constants import (
+    AVAILABLE_TRANSFORMATIONS,
+    BLUR_SIGMA_RANGE,
+    NOISE_VARIANCE_RANGE,
+    TRANSLATION_OFFSET_RANGE,
+)
 from . import volume_ops
-
-TRANSLATION_OFFSET_RANGE = (-15, 15)
-NOISE_VARIANCE_RANGE = (0.01, 0.04)
-BLUR_SIGMA_RANGE = (0.1, 0.2)
-
-
-AVAILABLE_TRANSFORMATIONS = ("translate", "noise", "blur")
 
 
 def augment(
