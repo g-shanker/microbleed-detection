@@ -1,10 +1,3 @@
-"""Helpers shared by the CLI commands.
-
-The commands are generated from a declarative table in ``cli/commands.py`` and
-wired up by ``entrypoint.py``. Everything they need but do not own — config
-loading and parsing, config-key introspection, and output — lives here.
-"""
-
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,7 +29,9 @@ class CommandSpec:
 class PipeModule(Protocol):
     """Interface required by a lazily loaded orchestration pipe."""
 
-    def execute(self, config: BaseModel) -> None: ...
+    def execute(self, config: BaseModel) -> None:
+        """Run the pipe with a validated configuration model."""
+        ...
 
 
 def is_pipe_module(module: ModuleType) -> TypeGuard[PipeModule]:
@@ -77,7 +72,7 @@ def load_config(path: Path) -> dict[str, Any]:
 
 
 def parse_config[ConfigModel: BaseModel](
-    path: Path, model: type[ConfigModel]
+    path: Path, model: type[ConfigModel], command: str
 ) -> ConfigModel:
     """Load a config file and validate it into a typed model.
 
@@ -86,13 +81,19 @@ def parse_config[ConfigModel: BaseModel](
     try:
         return model.model_validate(load_config(path))
     except ValidationError as error:
-        details = format_validation_errors(error.errors())
+        validation_errors = error.errors()
+        if len(validation_errors) == 1:
+            nested_error = validation_errors[0].get("ctx", {}).get("error")
+            if isinstance(nested_error, ApplicationError):
+                raise nested_error from error
+
+        details = format_validation_errors(validation_errors)
         raise ApplicationError(
             category="Configuration",
             summary="Configuration validation failed",
             cause=details,
             fix=(
-                "Correct the reported fields; run 'microbleednet describe <command>' "
+                f"Correct the reported fields; run 'microbleednet describe {command}' "
                 "for valid configuration keys"
             ),
             context={"path": str(path), "model": model.__name__},

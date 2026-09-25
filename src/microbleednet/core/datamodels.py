@@ -16,7 +16,6 @@ VolumeArray = FloatArray
 MaskArray = IntArray
 VoxelSpacing = tuple[float, float, float]
 Modality = Literal["T2*-GRE", "SWI", "QSM"]
-INVERTED_MODALITIES: frozenset[Modality] = frozenset({"T2*-GRE", "SWI"})
 TorchStateDict = dict[str, Any]
 
 
@@ -43,13 +42,6 @@ class EpochLoss(TypedDict):
     epoch: int
     training_loss: float
     validation_loss: float
-
-
-class PatchSizes:
-    """Fixed patch dimensions shared by training and inference."""
-
-    DETECTOR = 48
-    DISCRIMINATOR = 24
 
 
 class Hyperparameters(FrozenModel):
@@ -136,6 +128,7 @@ class PreprocessInput:
     modality: Modality
 
     def __post_init__(self) -> None:
+        """Validate input geometry, spatial metadata, and voxel values."""
         if len(self.volume.shape) != 3:
             raise ApplicationError(
                 category="Input data",

@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from microbleednet.cli.utils import (
     ConfigField,
@@ -46,8 +46,32 @@ def test_parse_config_reports_validation_error_as_bad_parameter(
 ) -> None:
     path = tmp_path / "config.toml"
     path.write_text("dataset_dir = 'dataset'\n", encoding="utf-8")  # missing fields
-    with pytest.raises(ApplicationError, match="Configuration validation failed"):
-        parse_config(path, IndexDataConfig)
+    with pytest.raises(ApplicationError) as error:
+        parse_config(path, IndexDataConfig, "index-data")
+
+    assert "Configuration validation failed" in str(error.value)
+    assert "microbleednet describe index-data" in str(error.value)
+
+
+def test_parse_config_preserves_nested_application_error(tmp_path: Path) -> None:
+    class InvalidConfig(BaseModel):
+        @model_validator(mode="after")
+        def reject_config(self) -> "InvalidConfig":
+            raise ApplicationError(
+                category="Manifest",
+                summary="Upstream manifest is incomplete",
+                fix="Rerun the producing stage",
+            )
+
+    path = tmp_path / "config.toml"
+    path.write_text("", encoding="utf-8")
+
+    with pytest.raises(ApplicationError) as error:
+        parse_config(path, InvalidConfig, "example")
+
+    assert error.value.category == "Manifest"
+    assert error.value.summary == "Upstream manifest is incomplete"
+    assert error.value.fix == "Rerun the producing stage"
 
 
 def test_application_error_string_includes_optional_fields() -> None:

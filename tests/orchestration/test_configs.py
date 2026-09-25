@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from microbleednet.constants import DETECTOR_STAGE, STUDENT_STAGE
 from microbleednet.core.common.models import CandidateDetector
 from microbleednet.core.datamodels import Hyperparameters
 from microbleednet.orchestration.configs import (
@@ -19,8 +20,6 @@ from microbleednet.orchestration.configs import (
     ensure_training_resume_state,
 )
 from microbleednet.orchestration.layouts import (
-    DETECTOR_STAGE,
-    STUDENT_STAGE,
     DatasetLayout,
     ExperimentLayout,
 )
@@ -168,6 +167,25 @@ def test_preprocess_config_rejects_missing_dataset_dir(tmp_path) -> None:
         PreprocessConfig(dataset_dir=tmp_path / "missing", augmentation_factor=1)
 
 
+def test_preprocess_config_rejects_running_raw_manifest(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "dataset"
+    _write_raw_dataset_manifest(
+        tmp_path,
+        dataset_dir,
+        mask_path=str(tmp_path / "mask.nii.gz"),
+        status=ManifestStatus.RUNNING,
+    )
+    manifest_path = DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path()
+
+    with pytest.raises(ValidationError) as error:
+        PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1)
+
+    message = str(error.value)
+    assert "Cannot use incomplete raw manifest" in message
+    assert "Rerun the producing stage to completion" in message
+    assert str(manifest_path) in message
+
+
 def test_preprocess_config_ignores_existing_checkpoint_without_resume(
     tmp_path: Path,
 ) -> None:
@@ -242,11 +260,10 @@ def test_preprocess_config_resume_rejects_complete_manifest(tmp_path: Path) -> N
         raw_manifest_fingerprint=content_fingerprint(raw_manifest),
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
 
-    with pytest.raises(
-        ValidationError,
-        match="Value error",
-    ):
+    with pytest.raises(ValidationError) as error:
         PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=3, resume=True)
+
+    assert "Set resume to false to run the stage again" in str(error.value)
 
 
 def test_preprocessed_resume_rejects_unknown_subject() -> None:
@@ -260,8 +277,28 @@ def test_preprocessed_resume_rejects_unknown_subject() -> None:
         for index in range(6)
     ]
 
-    with pytest.raises(ValueError, match="unknown subjects"):
+    with pytest.raises(ValueError) as error:
         ensure_preprocessed_subjects_complete(subjects, {"current"}, 0)
+
+    message = str(error.value)
+    assert "unknown subjects" in message
+    assert "Set resume to false and rerun preprocessing" in message
+
+
+def test_preprocessed_resume_rejects_incomplete_variants() -> None:
+    subject = PreprocessedSubject(
+        subject_id="subject",
+        original_volume_path="volume.nii.gz",
+        bounding_box=((0, 1), (0, 1), (0, 1)),
+        variants=[],
+    )
+
+    with pytest.raises(ValueError) as error:
+        ensure_preprocessed_subjects_complete([subject], {"subject"}, 1)
+
+    message = str(error.value)
+    assert "incomplete variants" in message
+    assert "Set resume to false and rerun preprocessing" in message
 
 
 def test_preprocessed_resume_rejects_missing_variant_file(tmp_path: Path) -> None:
@@ -278,8 +315,12 @@ def test_preprocessed_resume_rejects_missing_variant_file(tmp_path: Path) -> Non
         ],
     )
 
-    with pytest.raises(ValueError, match="output is missing"):
+    with pytest.raises(ValueError) as error:
         ensure_preprocessed_subjects_complete([subject], {"subject"}, 1)
+
+    message = str(error.value)
+    assert "output is missing" in message
+    assert "Set resume to false and rerun preprocessing" in message
 
 
 def test_preprocessed_resume_accepts_existing_variant_files(tmp_path: Path) -> None:
@@ -377,8 +418,8 @@ def _train_config(
     values: dict[str, Any] = {
         "device": "cpu",
         "detector_candidate_threshold": 0.5,
-        "detector_augmentation_factor": 10,
-        "discriminator_augmentation_factor": 5,
+        "detector_augmentation_factor": 1,
+        "discriminator_augmentation_factor": 1,
         "num_workers": 0,
         "pin_memory": False,
         "detector_hyperparameters": hyperparameters,
@@ -508,6 +549,43 @@ def test_train_config_resume_requires_existing_stage_state(tmp_path: Path) -> No
         _train_config(dataset_dir, tmp_path / "experiment", resume=True)
 
 
+@pytest.mark.parametrize(
+    "factor_name",
+    ["detector_augmentation_factor", "discriminator_augmentation_factor"],
+)
+def test_train_config_rejects_unavailable_augmentation_factor(
+    tmp_path: Path, factor_name: str
+) -> None:
+    dataset_dir = _training_dataset(tmp_path)
+    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
+
+    with pytest.raises(ValidationError, match="augmentation factor exceeds"):
+        _train_config(
+            dataset_dir,
+            tmp_path / "experiment",
+            **{factor_name: 2},
+        )
+
+
+def test_train_config_rejects_running_split_manifest(tmp_path: Path) -> None:
+    dataset_dir = _training_dataset(tmp_path)
+    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
+    manifest_path = ExperimentLayout(
+        experiment_dir=tmp_path / "experiment"
+    ).split_manifest_path()
+    SplitManifest.read(manifest_path).model_copy(
+        update={"status": ManifestStatus.RUNNING}
+    ).write(manifest_path)
+
+    with pytest.raises(ValidationError) as error:
+        _train_config(dataset_dir, tmp_path / "experiment")
+
+    message = str(error.value)
+    assert "Cannot use incomplete split manifest" in message
+    assert "Rerun the producing stage to completion" in message
+    assert str(manifest_path) in message
+
+
 def test_train_config_resume_rejects_running_stage_without_checkpoint(
     tmp_path: Path,
 ) -> None:
@@ -568,6 +646,29 @@ def test_train_config_resume_accepts_changed_training_settings(tmp_path: Path) -
     assert resumed.resume is True
 
 
+def test_train_config_resume_rejects_changed_split(tmp_path: Path) -> None:
+    dataset_dir = _training_dataset(tmp_path)
+    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
+    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
+    split_manifest = SplitManifest.read(layout.split_manifest_path())
+    config = _train_config(dataset_dir, tmp_path / "experiment")
+    _train_manifest_for_config(
+        config, content_fingerprint(split_manifest)
+    ).write(layout.train_manifest_path())
+    TrainStageManifest(
+        status=ManifestStatus.COMPLETE,
+        stage=DETECTOR_STAGE,
+        hyperparameters=config.detector_hyperparameters,
+        history=[],
+    ).write(layout.stage_manifest_path(DETECTOR_STAGE))
+    split_manifest.model_copy(update={"seed": 99}).write(
+        layout.split_manifest_path()
+    )
+
+    with pytest.raises(ValidationError, match="fingerprint does not match"):
+        TrainConfig(**config.model_dump(exclude={"resume"}), resume=True)
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -604,8 +705,8 @@ def test_train_config_accepts_stage_training_settings_and_pin_memory(
             "experiment_dir": tmp_path / "experiment",
             "device": "cpu",
             "detector_candidate_threshold": 0.5,
-            "detector_augmentation_factor": 10,
-            "discriminator_augmentation_factor": 5,
+            "detector_augmentation_factor": 1,
+            "discriminator_augmentation_factor": 1,
             "num_workers": 0,
             "pin_memory": True,
             "detector_hyperparameters": Hyperparameters(
@@ -936,6 +1037,35 @@ def test_infer_config_accepts_raw_dataset_explicit_input(tmp_path: Path) -> None
     assert config.model_dump(mode="json")["dataset_dir"] == str(dataset_dir)
 
 
+def test_infer_config_rejects_running_raw_manifest(tmp_path: Path) -> None:
+    detector_checkpoint = tmp_path / "detector.pth"
+    student_checkpoint = tmp_path / "student.pth"
+    detector_checkpoint.touch()
+    student_checkpoint.touch()
+    dataset_dir = tmp_path / "dataset"
+    _write_raw_dataset_manifest(
+        tmp_path,
+        dataset_dir,
+        mask_path=None,
+        status=ManifestStatus.RUNNING,
+    )
+    manifest_path = DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path()
+
+    with pytest.raises(ValidationError) as error:
+        InferConfig(
+            output_dir=tmp_path / "inference",
+            dataset_dir=dataset_dir,
+            detector_checkpoint_path=detector_checkpoint,
+            student_checkpoint_path=student_checkpoint,
+            device="cpu",
+        )
+
+    message = str(error.value)
+    assert "Cannot use incomplete raw manifest" in message
+    assert "Rerun the producing stage to completion" in message
+    assert str(manifest_path) in message
+
+
 def test_infer_config_rejects_missing_explicit_detector_checkpoint(
     tmp_path: Path,
 ) -> None:
@@ -1004,6 +1134,37 @@ def test_evaluate_config_accepts_explicit_checkpoints(tmp_path: Path) -> None:
     )
 
     assert config.output_dir == tmp_path / "evaluation"
+
+
+def test_evaluate_config_rejects_running_raw_manifest(tmp_path: Path) -> None:
+    detector_checkpoint = tmp_path / "detector.pth"
+    student_checkpoint = tmp_path / "student.pth"
+    detector_checkpoint.touch()
+    student_checkpoint.touch()
+    dataset_dir = tmp_path / "dataset"
+    mask_path = tmp_path / "mask.nii.gz"
+    mask_path.touch()
+    _write_raw_dataset_manifest(
+        tmp_path,
+        dataset_dir,
+        mask_path=str(mask_path),
+        status=ManifestStatus.RUNNING,
+    )
+    manifest_path = DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path()
+
+    with pytest.raises(ValidationError) as error:
+        EvaluateConfig(
+            dataset_dir=dataset_dir,
+            output_dir=tmp_path / "evaluation",
+            detector_checkpoint_path=detector_checkpoint,
+            student_checkpoint_path=student_checkpoint,
+            device="cpu",
+        )
+
+    message = str(error.value)
+    assert "Cannot use incomplete raw manifest" in message
+    assert "Rerun the producing stage to completion" in message
+    assert str(manifest_path) in message
 
 
 def test_evaluate_config_derives_paths_from_experiment(tmp_path: Path) -> None:
@@ -1183,6 +1344,11 @@ def test_evaluate_config_requires_explicit_values_without_experiment(
 
 
 def test_target_centered_config_validates_threshold(tmp_path: Path) -> None:
+    volume_path = tmp_path / "volume.nii.gz"
+    mask_path = tmp_path / "mask.nii.gz"
+    frst_path = tmp_path / "frst.nii.gz"
+    for path in (volume_path, mask_path, frst_path):
+        path.touch()
     values = {
         "experiment_layout": ExperimentLayout(experiment_dir=tmp_path),
         "stage": "student",
@@ -1194,15 +1360,15 @@ def test_target_centered_config_validates_threshold(tmp_path: Path) -> None:
                 bounding_box=((0, 1), (0, 1), (0, 1)),
                 variants=[
                     PreprocessedVariant(
-                        volume_path="volume.nii.gz",
-                        mask_path="mask.nii.gz",
-                        frst_path="frst.nii.gz",
+                        volume_path=str(volume_path),
+                        mask_path=str(mask_path),
+                        frst_path=str(frst_path),
                     )
                 ],
             )
         ],
         "patch_size": 24,
-        "augmentation_factor": 5,
+        "augmentation_factor": 1,
         "probability_threshold": 0.5,
         "detector": CandidateDetector(),
     }

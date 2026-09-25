@@ -1,5 +1,3 @@
-"""Evaluate final binary detections on the held-out training split."""
-
 import logging
 from pathlib import Path
 
@@ -18,7 +16,7 @@ from ..manifests import (
     RawDatasetManifest,
     SplitManifest,
 )
-from ..utils import resolve_path_string, resolve_subjects
+from ..utils import release_gpu_memory, resolve_path_string, resolve_subjects
 from . import infer
 
 logger = logging.getLogger(__name__)
@@ -30,6 +28,9 @@ def execute(config: EvaluateConfig) -> None:
     experiment_layout = ExperimentLayout(experiment_dir=config.output_dir)
 
     if config.experiment_dir is not None:
+        raw_manifest = RawDatasetManifest.read(
+            dataset_layout.raw_manifest_path()
+        )
         preprocessed_manifest = PreprocessedDatasetManifest.read(
             dataset_layout.preprocessed_manifest_path()
         )
@@ -37,17 +38,32 @@ def execute(config: EvaluateConfig) -> None:
         inference_subjects = resolve_subjects(
             preprocessed_manifest.subjects, split_manifest.test_subject_ids
         )
+        raw_subjects_by_id = {
+            subject.subject_id: subject for subject in raw_manifest.subjects
+        }
         evaluation_subjects = [
-            (subject.subject_id, subject.variants[0].mask_path)
+            (subject.subject_id, raw_subjects_by_id[subject.subject_id].mask_path)
             for subject in inference_subjects
         ]
-        infer.infer_subjects(
+        detector, student = infer.load_inference_models(
             config.device,
-            experiment_layout,
             config.detector_checkpoint_path,
             config.student_checkpoint_path,
-            inference_subjects,
         )
+        try:
+            infer.infer_subjects(
+                config.device,
+                experiment_layout,
+                config.detector_checkpoint_path,
+                config.student_checkpoint_path,
+                inference_subjects,
+                detector,
+                student,
+            )
+        finally:
+            del detector
+            del student
+            release_gpu_memory()
     else:
         raw_manifest = RawDatasetManifest.read(
             dataset_layout.raw_manifest_path()
@@ -87,6 +103,7 @@ def evaluate_subjects(
     experiment_layout: ExperimentLayout,
     subjects: list[tuple[str, str | None]],
 ) -> None:
+    """Score inferred masks and persist per-subject and aggregate metrics."""
     inference_manifest_path = experiment_layout.inference_manifest_path()
     inference_manifest = InferManifest.read(inference_manifest_path)
     if inference_manifest.status is not ManifestStatus.COMPLETE:
@@ -94,7 +111,7 @@ def evaluate_subjects(
             category="Manifest",
             summary="Cannot evaluate incomplete inference output",
             cause=f"Inference manifest status is '{inference_manifest.status.value}'",
-            fix="Complete inference or rerun it before evaluation",
+            fix="Rerun the evaluate command with the same configuration",
             context={"path": str(inference_manifest_path)},
         )
     inference_output_paths = {
@@ -122,7 +139,7 @@ def evaluate_subjects(
                 cause=(
                     f"Inference manifest has no output for subject '{subject_id}'"
                 ),
-                fix="Rerun inference for the requested evaluation subjects",
+                fix="Rerun the evaluate command with the same configuration",
                 context={
                     "path": str(inference_manifest_path),
                     "subject_id": subject_id,

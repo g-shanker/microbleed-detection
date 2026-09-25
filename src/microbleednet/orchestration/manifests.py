@@ -1,25 +1,3 @@
-"""Manifests the orchestration layer writes and reads, with their durability contract.
-
-A manifest is a typed, versioned record a pipe stage writes to advertise
-what it produced and whether it finished. Every manifest shares one envelope — a
-schema version, a stable type discriminator, a lifecycle status, and
-creation/update timestamps — wrapped around a payload typed for that stage.
-
-Rules enforced here (see ``ARCHITECTURE.md``):
-
-- Every manifest carries ``manifest_type``, ``status``, ``created_at`` and
-    ``updated_at``.
-- Consumers must check that a manifest is ``complete`` before using its
-    published outputs.
-- Models forbid unknown fields, are immutable, and never type a field as
-  ``Any``.
-
-The models and their read/write helpers live together because the behavior is
-intrinsic to the type and layer-agnostic: the helpers depend only on
-:mod:`microbleednet.core.io`, so manifest persistence does not
-pull in the ML stack.
-"""
-
 import hashlib
 import json
 from datetime import datetime, timezone
@@ -182,6 +160,7 @@ class RawDatasetManifest(Manifest):
 
     @model_validator(mode="after")
     def unique_subjects(self) -> "RawDatasetManifest":
+        """Reject duplicate subject identifiers in an indexed dataset."""
         reject_duplicate_ids(
             (subject.subject_id for subject in self.subjects), "subject"
         )
@@ -189,6 +168,7 @@ class RawDatasetManifest(Manifest):
 
     @model_validator(mode="after")
     def unique_sources(self) -> "RawDatasetManifest":
+        """Reject duplicate source identifiers in an indexed dataset."""
         reject_duplicate_ids((source.source_id for source in self.sources), "source")
         return self
 
@@ -240,6 +220,7 @@ class PreprocessedDatasetManifest(Manifest):
 
     @model_validator(mode="after")
     def complete_subjects_have_all_variants(self) -> "PreprocessedDatasetManifest":
+        """Require every subject in a complete manifest to have all variants."""
         if self.status is ManifestStatus.COMPLETE:
             incomplete = [
                 subject.subject_id
@@ -402,6 +383,7 @@ class InferManifest(Manifest):
 
     @model_validator(mode="after")
     def complete_subjects_have_outputs(self) -> "InferManifest":
+        """Require every subject in a complete inference manifest to have output."""
         if self.status is ManifestStatus.COMPLETE:
             missing_outputs = [
                 subject.subject_id
@@ -472,6 +454,7 @@ class PatchManifest(Manifest):
 
     @model_validator(mode="after")
     def complete_output_matches_subjects(self) -> "PatchManifest":
+        """Require complete patch manifests with subjects to contain records."""
         if (
             self.status is ManifestStatus.COMPLETE
             and self.subject_ids
@@ -484,6 +467,7 @@ class PatchManifest(Manifest):
 
 
 def reject_duplicate_ids(ids, entity_name: str) -> None:
+    """Reject repeated entity identifiers while preserving streaming input."""
     seen: set[str] = set()
     for entity_id in ids:
         if entity_id in seen:

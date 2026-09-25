@@ -4,11 +4,6 @@ experiment_dir = "experiments/default"
 device = "cpu"
 resume = false
 
-# Subject split proportions. These values must sum to 1.0.
-train_size = 0.7
-validation_size = 0.1
-test_size = 0.2
-
 # Detector candidate selection and persisted-variant sampling.
 detector_candidate_threshold = 0.5
 detector_augmentation_factor = 10
@@ -18,7 +13,6 @@ discriminator_augmentation_factor = 5
 num_workers = 0
 pin_memory = false
 
-# Shared optimizer and training-loop settings.
 # Detector optimizer and training-loop settings.
 [detector_hyperparameters]
 batch_size = 8

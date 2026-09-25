@@ -1,5 +1,3 @@
-"""Create and persist the subject split consumed by training."""
-
 import logging
 
 from sklearn.model_selection import train_test_split
@@ -17,6 +15,7 @@ from ..utils import resolve_path_string
 logger = logging.getLogger(__name__)
 
 def execute(config: SplitConfig) -> None:
+    """Partition preprocessed subjects and persist the reproducible split."""
     manifest_path = DatasetLayout(
         dataset_dir=config.dataset_dir
     ).preprocessed_manifest_path()

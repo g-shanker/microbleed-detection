@@ -1,4 +1,5 @@
 import shutil
+import subprocess
 from pathlib import Path
 
 import nibabel as nib
@@ -116,6 +117,14 @@ def test_get_bounding_box_rejects_empty_volume() -> None:
         volume_ops.get_bounding_box(np.zeros((2, 2, 2)))
 
 
+def test_extract_brain_requires_fsldir(monkeypatch) -> None:
+    monkeypatch.delenv("FSLDIR", raising=False)
+    volume = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
+
+    with pytest.raises(ValueError, match="FSLDIR is not set"):
+        volume_ops.extract_brain(volume)
+
+
 def test_extract_brain_requires_valid_fsldir(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("FSLDIR", str(tmp_path / "missing"))
     volume = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
@@ -124,11 +133,22 @@ def test_extract_brain_requires_valid_fsldir(tmp_path: Path, monkeypatch) -> Non
         volume_ops.extract_brain(volume)
 
 
+def test_extract_brain_requires_bet_executable(tmp_path: Path, monkeypatch) -> None:
+    fsldir = tmp_path / "fsl"
+    fsldir.mkdir()
+    monkeypatch.setenv("FSLDIR", str(fsldir))
+    volume = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
+
+    with pytest.raises(ValueError, match="BET executable not found"):
+        volume_ops.extract_brain(volume)
+
+
 def test_extract_brain_runs_bet_and_materializes_output(
     tmp_path: Path, monkeypatch
 ) -> None:
     fsldir = tmp_path / "fsl"
     (fsldir / "bin").mkdir(parents=True)
+    (fsldir / "bin" / "bet").touch()
     monkeypatch.setenv("FSLDIR", str(fsldir))
     calls = []
 
@@ -146,6 +166,38 @@ def test_extract_brain_runs_bet_and_materializes_output(
     assert calls[0][0][0] == str(fsldir / "bin" / "bet")
     assert calls[0][1] is True
     np.testing.assert_array_equal(extracted.get_fdata(), volume.get_fdata())
+
+
+@pytest.mark.parametrize(
+    ("process_error", "message"),
+    [
+        (FileNotFoundError("missing"), "Could not start FSL BET"),
+        (
+            subprocess.CalledProcessError(2, "bet"),
+            "FSL BET failed",
+        ),
+    ],
+)
+def test_extract_brain_translates_bet_failures(
+    tmp_path: Path,
+    monkeypatch,
+    process_error: Exception,
+    message: str,
+) -> None:
+    fsldir = tmp_path / "fsl"
+    bet_path = fsldir / "bin" / "bet"
+    bet_path.parent.mkdir(parents=True)
+    bet_path.touch()
+    monkeypatch.setenv("FSLDIR", str(fsldir))
+    monkeypatch.setattr(
+        volume_ops.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(process_error),
+    )
+    volume = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
+
+    with pytest.raises(ValueError, match=message):
+        volume_ops.extract_brain(volume)
 
 
 def test_bias_field_correct_n4_preserves_nifti_geometry(monkeypatch) -> None:
