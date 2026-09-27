@@ -70,6 +70,7 @@ def _subjects(
             PreprocessedSubject(
                 subject_id=f"subject-{index}",
                 original_volume_path=str(variants[0].volume_path),
+                brain_mask_path=str(variants[0].volume_path),
                 bounding_box=((0, 1), (0, 1), (0, 1)),
                 variants=variants,
             )

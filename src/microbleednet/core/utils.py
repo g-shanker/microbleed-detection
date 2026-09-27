@@ -1,3 +1,7 @@
+import os
+import subprocess
+from pathlib import Path
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -6,6 +10,60 @@ from skimage.measure import label
 
 from ..errors import ApplicationError
 from .common.models import CandidateDetector, CandidateDiscriminatorTeacher
+
+
+def fsl_executable(name: str) -> Path:
+    """Return a validated executable path from the configured FSL installation."""
+    fsldir_value = os.getenv("FSLDIR")
+    if not fsldir_value:
+        raise ApplicationError(
+            category="Environment",
+            summary="Image preprocessing requires FSL",
+            cause="FSLDIR is not set",
+            fix="Install FSL and set FSLDIR to its installation directory",
+        )
+
+    fsldir = Path(fsldir_value)
+    if not fsldir.is_dir():
+        raise ApplicationError(
+            category="Environment",
+            summary="Image preprocessing requires FSL",
+            cause=f"FSLDIR does not reference a directory: '{fsldir}'",
+            fix="Install FSL and set FSLDIR to its installation directory",
+        )
+
+    executable_path = fsldir / "bin" / name
+    if not executable_path.is_file():
+        raise ApplicationError(
+            category="Environment",
+            summary=f"FSL {name.upper()} executable not found",
+            cause=f"Expected the executable at '{executable_path}'",
+            fix="Verify the FSL installation and correct FSLDIR",
+            context={"path": str(executable_path)},
+        )
+    return executable_path
+
+
+def run_fsl(command: list[str], operation: str) -> None:
+    """Run an FSL command and translate process failures."""
+    try:
+        subprocess.run(command, check=True)
+    except OSError as error:
+        raise ApplicationError(
+            category="Environment",
+            summary=f"Could not start FSL {operation}",
+            cause=str(error),
+            fix=f"Verify that the FSL {operation} executable can run",
+            context={"path": command[0]},
+        ) from error
+    except subprocess.CalledProcessError as error:
+        raise ApplicationError(
+            category="Preprocessing",
+            summary=f"FSL {operation} failed",
+            cause=f"FSL {operation} exited with status {error.returncode}",
+            fix="Check the input volume and the FSL installation",
+            context={"path": command[0]},
+        ) from error
 
 
 def label_components(mask: np.ndarray, connectivity: int) -> np.ndarray:

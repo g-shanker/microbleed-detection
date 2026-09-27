@@ -1,16 +1,14 @@
-import os
-import subprocess
 import tempfile
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-import SimpleITK as sitk
 from scipy.ndimage import gaussian_filter
 
 from ...errors import ApplicationError
 from .. import io
 from ..datamodels import BoundingBox, Shape3D
+from ..utils import fsl_executable, run_fsl
 
 
 def translate(volume: np.ndarray, offset_x: int, offset_y: int) -> np.ndarray:
@@ -133,83 +131,50 @@ def restore_cropped_volume(
     )
 
 
-def extract_brain(volume: nib.Nifti1Image) -> nib.Nifti1Image:
-    """Extract brain tissue by running FSL BET through temporary NIfTI files."""
-    fsldir_value = os.getenv("FSLDIR")
-    if not fsldir_value:
-        raise ApplicationError(
-            category="Environment",
-            summary="Brain extraction requires FSL",
-            cause="FSLDIR is not set",
-            fix="Install FSL and set FSLDIR to its installation directory",
-        )
-
-    fsldir = Path(fsldir_value)
-    if not fsldir.is_dir():
-        raise ApplicationError(
-            category="Environment",
-            summary="Brain extraction requires FSL",
-            cause=f"FSLDIR does not reference a directory: '{fsldir}'",
-            fix="Install FSL and set FSLDIR to its installation directory",
-        )
-
-    bet_path = fsldir / "bin" / "bet"
-    if not bet_path.is_file():
-        raise ApplicationError(
-            category="Environment",
-            summary="FSL BET executable not found",
-            cause=f"Expected the executable at '{bet_path}'",
-            fix="Verify the FSL installation and correct FSLDIR",
-            context={"path": str(bet_path)},
-        )
+def extract_brain(
+    volume: nib.Nifti1Image,
+) -> tuple[nib.Nifti1Image, nib.Nifti1Image]:
+    """Extract brain tissue and its binary mask with FSL BET."""
+    bet_path = fsl_executable("bet")
 
     with tempfile.TemporaryDirectory(prefix="microbleednet-fsl-bet-") as temp_dir:
         temp_dir = Path(temp_dir)
         input_path = temp_dir / "pre_bet.nii.gz"
         output_path = temp_dir / "post_bet.nii.gz"
+        mask_path = temp_dir / "post_bet_mask.nii.gz"
 
         # Save to disk just for BET
         io.save_volume(volume, input_path)
-        try:
-            subprocess.run(
-                [str(bet_path), str(input_path), str(output_path)], check=True
-            )
-        except OSError as error:
-            raise ApplicationError(
-                category="Environment",
-                summary="Could not start FSL BET",
-                cause=str(error),
-                fix="Verify that the FSL BET executable can run in this environment",
-                context={"path": str(bet_path)},
-            ) from error
-        except subprocess.CalledProcessError as error:
-            raise ApplicationError(
-                category="Preprocessing",
-                summary="FSL BET failed",
-                cause=f"BET exited with status {error.returncode}",
-                fix="Check the input volume and the FSL installation",
-                context={"path": str(bet_path)},
-            ) from error
+        run_fsl(
+            [str(bet_path), str(input_path), str(output_path), "-m"],
+            "BET",
+        )
 
         # Some potentially over-defensive programming:
         # Load back into memory immediately and let tempdir delete the files
         output_volume = io.load_volume(output_path)
-        # Force load data into memory so we don't rely on the deleted temp file
         output_data = io.nifti_to_numpy(output_volume)
         loaded_volume = io.numpy_to_nifti(output_data, output_volume)
+        mask_volume = io.load_volume(mask_path)
+        mask_data = io.nifti_to_numpy(mask_volume)
+        loaded_mask = io.numpy_to_nifti(mask_data, mask_volume)
 
-        return loaded_volume
+        return loaded_volume, loaded_mask
 
 
-def bias_field_correct_n4(volume: nib.Nifti1Image) -> nib.Nifti1Image:
-    """Correct foreground intensity bias with SimpleITK's N4 filter."""
-    volume_data = io.nifti_to_numpy(volume)
-
-    sitk_volume = sitk.GetImageFromArray(volume_data.T)
-    mask_image = sitk_volume > 0
-    corrector = sitk.N4BiasFieldCorrectionImageFilter()
-    corrected_sitk = corrector.Execute(sitk_volume, mask_image)
-    corrected_data = sitk.GetArrayFromImage(corrected_sitk).T
-    corrected_nifti = io.numpy_to_nifti(corrected_data, volume)
-
-    return corrected_nifti
+def bias_field_correct_fast(volume: nib.Nifti1Image) -> nib.Nifti1Image:
+    """Correct intensity bias with FSL FAST and materialize its restored image."""
+    fast_path = fsl_executable("fast")
+    with tempfile.TemporaryDirectory(prefix="microbleednet-fsl-fast-") as temp_dir:
+        temp_dir = Path(temp_dir)
+        input_path = temp_dir / "pre_fast.nii.gz"
+        output_prefix = temp_dir / "fast"
+        restored_path = temp_dir / "fast_restore.nii.gz"
+        io.save_volume(volume, input_path)
+        run_fsl(
+            [str(fast_path), "-B", "-o", str(output_prefix), str(input_path)],
+            "FAST",
+        )
+        corrected_volume = io.load_volume(restored_path)
+        corrected_data = io.nifti_to_numpy(corrected_volume)
+        return io.numpy_to_nifti(corrected_data, corrected_volume)

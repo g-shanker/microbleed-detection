@@ -12,9 +12,11 @@ from . import volume_ops
 def augment(
     volume: np.ndarray,
     mask: np.ndarray | None,
+    rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """Apply a random combination of the training augmentations."""
-    rng = np.random.default_rng()
+    if rng is None:
+        rng = np.random.default_rng()
     count = int(rng.integers(1, len(AVAILABLE_TRANSFORMATIONS) + 1))
     transformations = rng.choice(
         AVAILABLE_TRANSFORMATIONS,

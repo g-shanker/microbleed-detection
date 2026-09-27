@@ -180,6 +180,9 @@ class PreprocessedSubject(FrozenModel):
     original_volume_path: str = Field(
         description="Absolute path to the original volume for restoring inference.",
     )
+    brain_mask_path: str = Field(
+        description="Absolute path to the cropped binary FSL BET brain mask.",
+    )
     bounding_box: BoundingBox = Field(
         description="Crop bounds applied during preprocessing.",
     )
@@ -213,6 +216,11 @@ class PreprocessedDatasetManifest(Manifest):
         default=1,
         gt=0,
         description="Total persisted variants per subject, including the original.",
+    )
+    seed: int | None = Field(
+        default=None,
+        ge=0,
+        description="Seed used for reproducible preprocessing augmentation.",
     )
     raw_manifest_fingerprint: str = Field(
         description="Fingerprint of the raw manifest used to create this dataset.",

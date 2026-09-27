@@ -98,6 +98,12 @@ class DatasetLayout(FrozenModel):
             f"{subject_id}_variant_{variant_index}{self.mask_suffix}"
         )
 
+    def brain_mask_path(self, subject_id: str) -> Path:
+        """Return a subject's cropped binary brain mask path."""
+        return self.preprocessed_masks_path() / (
+            f"{subject_id}_brain_mask{self.mask_suffix}"
+        )
+
     def variant_frst_path(self, subject_id: str, variant_index: int) -> Path:
         """Return a subject variant's precomputed FRST path."""
         return self.preprocessed_frst_path() / (

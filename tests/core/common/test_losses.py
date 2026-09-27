@@ -38,7 +38,22 @@ def test_teacher_loss_combines_segmentation_and_classification() -> None:
     torch.testing.assert_close(actual, expected)
 
 
-def test_student_loss_uses_fixed_weights_without_temperature_square() -> None:
+def test_knowledge_distillation_loss_scales_by_temperature_square() -> None:
+    teacher = torch.tensor([[2.0, 0.0]])
+    student = torch.tensor([[0.0, 2.0]])
+    criterion = losses.KnowledgeDistillationLoss()
+
+    actual = criterion(teacher, student)
+    expected = F.kl_div(
+        F.log_softmax(student / criterion.temperature, dim=1),
+        F.softmax(teacher / criterion.temperature, dim=1),
+        reduction="batchmean",
+    ) * criterion.temperature**2
+
+    torch.testing.assert_close(actual, expected)
+
+
+def test_student_loss_uses_fixed_weights() -> None:
     teacher = torch.tensor([[2.0, 0.0]])
     student = torch.tensor([[0.0, 2.0]])
     target = torch.tensor([1])

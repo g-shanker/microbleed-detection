@@ -189,6 +189,7 @@ def test_execute_writes_inference_manifest(tmp_path: Path, monkeypatch) -> None:
     subject = PreprocessedSubject(
         subject_id="subject-1",
         original_volume_path="original-volume",
+        brain_mask_path="brain-mask",
         bounding_box=((0, 3), (0, 3), (0, 3)),
         variants=[
             PreprocessedVariant(
@@ -390,6 +391,7 @@ def test_infer_subject_wraps_output_write_failure(tmp_path: Path, monkeypatch) -
     subject = PreprocessedSubject(
         subject_id="subject-1",
         original_volume_path="original-volume",
+        brain_mask_path="brain-mask",
         bounding_box=((0, 3), (0, 3), (0, 3)),
         variants=[
             PreprocessedVariant(
@@ -456,6 +458,7 @@ def test_execute_preprocesses_raw_subjects(tmp_path: Path, monkeypatch) -> None:
     preprocessed_subject = PreprocessedSubject(
         subject_id="subject-1",
         original_volume_path="original-volume",
+        brain_mask_path="brain-mask",
         bounding_box=((0, 1), (0, 1), (0, 1)),
         variants=[
             PreprocessedVariant(

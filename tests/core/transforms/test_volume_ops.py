@@ -6,6 +6,7 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+from microbleednet.core import utils
 from microbleednet.core.transforms import volume_ops
 
 
@@ -155,17 +156,28 @@ def test_extract_brain_runs_bet_and_materializes_output(
     def fake_run(command: list[str], check: bool) -> None:
         calls.append((command, check))
         shutil.copyfile(command[1], command[2])
+        input_volume = volume_ops.io.load_volume(command[1])
+        mask_path = Path(command[2]).with_name("post_bet_mask.nii.gz")
+        nib.save(
+            nib.Nifti1Image(
+                (input_volume.get_fdata() > 0).astype(np.uint8),
+                input_volume.affine,
+            ),
+            mask_path,
+        )
 
-    monkeypatch.setattr(volume_ops.subprocess, "run", fake_run)
+    monkeypatch.setattr(utils.subprocess, "run", fake_run)
     volume = nib.Nifti1Image(
         np.arange(8, dtype=float).reshape((2, 2, 2)), np.eye(4)
     )
 
-    extracted = volume_ops.extract_brain(volume)
+    extracted, brain_mask = volume_ops.extract_brain(volume)
 
     assert calls[0][0][0] == str(fsldir / "bin" / "bet")
+    assert calls[0][0][-1] == "-m"
     assert calls[0][1] is True
     np.testing.assert_array_equal(extracted.get_fdata(), volume.get_fdata())
+    np.testing.assert_array_equal(brain_mask.get_fdata(), volume.get_fdata() > 0)
 
 
 @pytest.mark.parametrize(
@@ -190,7 +202,7 @@ def test_extract_brain_translates_bet_failures(
     bet_path.touch()
     monkeypatch.setenv("FSLDIR", str(fsldir))
     monkeypatch.setattr(
-        volume_ops.subprocess,
+        utils.subprocess,
         "run",
         lambda *args, **kwargs: (_ for _ in ()).throw(process_error),
     )
@@ -200,21 +212,35 @@ def test_extract_brain_translates_bet_failures(
         volume_ops.extract_brain(volume)
 
 
-def test_bias_field_correct_n4_preserves_nifti_geometry(monkeypatch) -> None:
-    class FakeCorrector:
-        def Execute(self, volume: np.ndarray, mask: np.ndarray) -> np.ndarray:
-            np.testing.assert_array_equal(mask, volume > 0)
-            return volume + 1
+def test_bias_field_correct_fast_runs_fast_and_preserves_geometry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fsldir = tmp_path / "fsl"
+    (fsldir / "bin").mkdir(parents=True)
+    (fsldir / "bin" / "fast").touch()
+    monkeypatch.setenv("FSLDIR", str(fsldir))
+    calls = []
 
-    monkeypatch.setattr(volume_ops.sitk, "GetImageFromArray", lambda array: array)
-    monkeypatch.setattr(
-        volume_ops.sitk, "N4BiasFieldCorrectionImageFilter", FakeCorrector
-    )
-    monkeypatch.setattr(volume_ops.sitk, "GetArrayFromImage", lambda array: array)
+    def fake_run(command: list[str], check: bool) -> None:
+        calls.append((command, check))
+        input_volume = volume_ops.io.load_volume(command[-1])
+        restored_path = Path(f"{command[3]}_restore.nii.gz")
+        nib.save(
+            nib.Nifti1Image(input_volume.get_fdata() + 1, input_volume.affine),
+            restored_path,
+        )
+
+    monkeypatch.setattr(utils.subprocess, "run", fake_run)
     affine = np.diag([2.0, 3.0, 4.0, 1.0])
     volume = nib.Nifti1Image(np.ones((2, 2, 2)), affine)
 
-    corrected = volume_ops.bias_field_correct_n4(volume)
+    corrected = volume_ops.bias_field_correct_fast(volume)
 
+    command, check = calls[0]
+    assert command[0] == str(fsldir / "bin" / "fast")
+    assert command[1:3] == ["-B", "-o"]
+    assert Path(command[3]).name == "fast"
+    assert Path(command[4]).name == "pre_fast.nii.gz"
+    assert check is True
     np.testing.assert_array_equal(corrected.get_fdata(), np.full((2, 2, 2), 2.0))
     np.testing.assert_array_equal(corrected.affine, affine)

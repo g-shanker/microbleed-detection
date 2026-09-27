@@ -144,6 +144,7 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
     subject = PreprocessedSubject(
         subject_id="subject-1",
         original_volume_path="original-volume",
+        brain_mask_path="brain-mask",
         bounding_box=((0, 1), (0, 1), (0, 1)),
         variants=[
             PreprocessedVariant(
@@ -359,6 +360,7 @@ def test_evaluate_subjects_rejects_incomplete_inference_manifest(
     subject = PreprocessedSubject(
         subject_id="subject-1",
         original_volume_path="original-volume",
+        brain_mask_path="brain-mask",
         bounding_box=((0, 1), (0, 1), (0, 1)),
         variants=[
             PreprocessedVariant(

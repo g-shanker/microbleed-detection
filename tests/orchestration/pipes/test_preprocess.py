@@ -28,6 +28,7 @@ def test_layout_uses_frst_suffix_for_frst_variants(tmp_path: Path) -> None:
 
     assert layout.variant_volume_path("subject", 0).name == "subject_variant_0.volume"
     assert layout.variant_mask_path("subject", 0).name == "subject_variant_0.mask"
+    assert layout.brain_mask_path("subject").name == "subject_brain_mask.mask"
     assert layout.variant_frst_path("subject", 0).name == "subject_variant_0.frst"
 
 
@@ -88,6 +89,7 @@ def test_execute_writes_volumes_masks_and_complete_manifest(
         return SimpleNamespace(
             volume=np.ones(fixture_shape),
             mask=output_mask,
+            brain_mask=np.ones(fixture_shape, dtype=np.uint8),
             affine=np.eye(4),
             bounding_box=((0, 32), (0, 32), (0, 32)),
         )
@@ -95,7 +97,7 @@ def test_execute_writes_volumes_masks_and_complete_manifest(
     monkeypatch.setattr(preprocess.processor, "preprocess", fake_preprocess)
 
     preprocess.execute(
-        PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=2)
+        PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=2, seed=42)
     )
 
     layout = DatasetLayout(dataset_dir=dataset_dir)
@@ -104,7 +106,9 @@ def test_execute_writes_volumes_masks_and_complete_manifest(
     assert [subject.subject_id for subject in manifest.subjects] == ["source_masked"]
     subject = manifest.subjects[0]
     assert manifest.augmentation_factor == 2
+    assert manifest.seed == 42
     assert len(subject.variants) == 2
+    assert Path(subject.brain_mask_path).is_file()
     variant = subject.variants[0]
     assert variant.volume_path is not None
     assert Path(variant.volume_path).is_file()
@@ -127,6 +131,7 @@ def test_execute_writes_maskless_subject_without_mask_output(
         return SimpleNamespace(
             volume=np.ones(fixture_shape),
             mask=None,
+            brain_mask=np.ones(fixture_shape, dtype=np.uint8),
             affine=np.eye(4),
             bounding_box=((0, 32), (0, 32), (0, 32)),
         )
@@ -163,6 +168,7 @@ def test_execute_resume_skips_completed_subjects_after_failure(
         return SimpleNamespace(
             volume=np.ones((32, 32, 32)),
             mask=np.ones((32, 32, 32), dtype=np.uint8),
+            brain_mask=np.ones((32, 32, 32), dtype=np.uint8),
             affine=np.eye(4),
             bounding_box=((0, 32), (0, 32), (0, 32)),
         )
@@ -209,6 +215,7 @@ def test_execute_resume_accepts_changed_augmentation_factor(
         lambda preprocess_input: SimpleNamespace(
             volume=np.ones((32, 32, 32)),
             mask=np.ones((32, 32, 32), dtype=np.uint8),
+            brain_mask=np.ones((32, 32, 32), dtype=np.uint8),
             affine=np.eye(4),
             bounding_box=((0, 32), (0, 32), (0, 32)),
         ),
@@ -235,6 +242,7 @@ def test_execute_resume_rejects_changed_raw_manifest(
         lambda preprocess_input: SimpleNamespace(
             volume=np.ones((32, 32, 32)),
             mask=np.ones((32, 32, 32), dtype=np.uint8),
+            brain_mask=np.ones((32, 32, 32), dtype=np.uint8),
             affine=np.eye(4),
             bounding_box=((0, 32), (0, 32), (0, 32)),
         ),

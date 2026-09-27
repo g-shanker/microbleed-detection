@@ -23,6 +23,7 @@ def _write_preprocessed_manifest(
         PreprocessedSubject(
             subject_id=f"subject-{index}",
             original_volume_path=f"volume-{index}",
+            brain_mask_path=f"brain-mask-{index}",
             bounding_box=((0, 1), (0, 1), (0, 1)),
             variants=[
                 PreprocessedVariant(

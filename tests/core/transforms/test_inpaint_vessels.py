@@ -58,6 +58,7 @@ def test_get_slice_vessel_mask_selects_smaller_cluster_and_filters_regions(
     clusters: np.ndarray, linearity: np.ndarray, monkeypatch
 ) -> None:
     clusterer_arguments = {}
+    frangi_arguments = {}
 
     class FakeClusterer:
         def fit(self, features: np.ndarray) -> "FakeClusterer":
@@ -70,9 +71,11 @@ def test_get_slice_vessel_mask_selects_smaller_cluster_and_filters_regions(
         SimpleNamespace(label=2, eccentricity=0.5, solidity=0.9),
         SimpleNamespace(label=3, eccentricity=0.5, solidity=0.4),
     ]
-    monkeypatch.setattr(
-        inpaint_vessels, "frangi", lambda *args, **kwargs: np.ones((2, 2))
-    )
+    def fake_frangi(_image: np.ndarray, **kwargs) -> np.ndarray:
+        frangi_arguments.update(kwargs)
+        return np.ones((2, 2))
+
+    monkeypatch.setattr(inpaint_vessels, "frangi", fake_frangi)
     monkeypatch.setattr(
         inpaint_vessels, "get_linearity_measure", lambda _: linearity.copy()
     )
@@ -95,6 +98,12 @@ def test_get_slice_vessel_mask_selects_smaller_cluster_and_filters_regions(
     assert clusterer_arguments == {
         "n_clusters": inpaint_vessels.CLUSTERER_N_CLUSTERS,
         "random_state": inpaint_vessels.CLUSTERER_RANDOM_STATE,
+    }
+    assert frangi_arguments == {
+        "sigmas": (0.5, 0.7, 0.9, 1.1),
+        "beta": 0.9,
+        "gamma": 20,
+        "black_ridges": False,
     }
 
 

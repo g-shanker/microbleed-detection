@@ -163,6 +163,7 @@ def test_complete_preprocessed_manifest_rejects_incomplete_subject() -> None:
                 PreprocessedSubject(
                     subject_id="subject-1",
                     original_volume_path="volume",
+                    brain_mask_path="brain-mask",
                     bounding_box=((0, 1), (0, 1), (0, 1)),
                     variants=[],
                 )

@@ -41,9 +41,10 @@ class KnowledgeDistillationLoss(nn.Module):
         teacher_predictions = F.softmax(teacher_logits / self.temperature, dim=1)
         student_predictions = F.log_softmax(student_logits / self.temperature, dim=1)
 
-        return F.kl_div(
+        divergence = F.kl_div(
             student_predictions, teacher_predictions, reduction="batchmean"
-        )  # batchmean is for standard KL divergence
+        )
+        return divergence * self.temperature**2
 
 
 class DetectorLoss(nn.Module):

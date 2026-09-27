@@ -28,18 +28,20 @@ def preprocess(
     if mask is not None:
         mask = volume_ops.reorient_to_canonical(mask)
 
-    processed_volume = volume_ops.extract_brain(canonical_volume)
+    processed_volume, brain_mask_volume = volume_ops.extract_brain(canonical_volume)
     if modality in INVERTED_MODALITIES:
-        processed_volume = volume_ops.bias_field_correct_n4(processed_volume)
+        processed_volume = volume_ops.bias_field_correct_fast(processed_volume)
 
     volume_array = io.nifti_to_numpy(processed_volume)
+    brain_mask = io.nifti_to_numpy(brain_mask_volume).astype(np.uint8)
     volume_array = volume_ops.normalize_volume(volume_array)
 
     if modality in INVERTED_MODALITIES:
         volume_array = volume_ops.invert_volume(volume_array)
 
-    bounding_box = volume_ops.get_bounding_box(volume_array)
+    bounding_box = volume_ops.get_bounding_box(brain_mask)
     volume_array = volume_ops.apply_bounding_box(volume_array, bounding_box)
+    brain_mask = volume_ops.apply_bounding_box(brain_mask, bounding_box)
 
     mask_array: IntArray | None = None
     if mask is not None:
@@ -59,6 +61,7 @@ def preprocess(
     return PreprocessOutput(
         volume=volume_array,
         mask=mask_array,
+        brain_mask=brain_mask,
         affine=cropped_affine,
         bounding_box=bounding_box,
         original_volume=volume,
@@ -67,16 +70,15 @@ def preprocess(
 
 def postprocess(
     candidate_mask: np.ndarray,
-    volume: np.ndarray,
+    brain_mask: np.ndarray,
     voxel_sizes: VoxelSpacing,
     minimum_volume_mm3: float,
     maximum_ellipticity: float,
     minimum_brain_distance_mm: float,
 ) -> np.ndarray:
     """Apply volume, shape, and brain-boundary filters."""
-    brain_mask = volume > 0
     brain_distance = np.asarray(
-        distance_transform_edt(brain_mask, sampling=voxel_sizes)
+        distance_transform_edt(brain_mask.astype(bool), sampling=voxel_sizes)
     )
     labels = utils.label_components(candidate_mask, COMPONENT_CONNECTIVITY)
     output = np.zeros_like(candidate_mask, dtype=np.uint8)

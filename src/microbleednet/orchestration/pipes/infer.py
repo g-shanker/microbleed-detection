@@ -164,6 +164,7 @@ def infer_subject(
     """Produce and save a restored binary detection mask for one subject."""
     volume_image = core_io.load_volume(subject.variants[VARIANT_INDEX].volume_path)
     volume = core_io.nifti_to_numpy(volume_image)
+    brain_mask = core_io.nifti_to_numpy(core_io.load_volume(subject.brain_mask_path))
     frst_array = core_io.nifti_to_numpy(
         core_io.load_volume(subject.variants[VARIANT_INDEX].frst_path)
     )
@@ -187,7 +188,7 @@ def infer_subject(
     )
     final_mask_array = core_processor.postprocess(
         retained_labels,
-        volume,
+        brain_mask,
         voxel_sizes,
         MINIMUM_VOLUME_MM3,
         MAXIMUM_ELLIPTICITY,

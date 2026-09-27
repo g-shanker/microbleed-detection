@@ -244,6 +244,31 @@ def test_preprocess_config_resume_accepts_running_checkpoint(tmp_path: Path) -> 
     assert config.resume is True
 
 
+def test_preprocess_config_resume_allows_changed_seed(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "dataset"
+    raw_manifest = _write_raw_dataset_manifest(
+        tmp_path,
+        dataset_dir,
+        mask_path=str(tmp_path / "mask.nii.gz"),
+    )
+    PreprocessedDatasetManifest(
+        status=ManifestStatus.RUNNING,
+        subjects=[],
+        augmentation_factor=1,
+        seed=41,
+        raw_manifest_fingerprint=content_fingerprint(raw_manifest),
+    ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
+
+    config = PreprocessConfig(
+        dataset_dir=dataset_dir,
+        augmentation_factor=1,
+        seed=42,
+        resume=True,
+    )
+
+    assert config.seed == 42
+
+
 def test_preprocess_config_resume_rejects_complete_manifest(tmp_path: Path) -> None:
     dataset_dir = tmp_path / "dataset"
     raw_manifest = _write_raw_dataset_manifest(
@@ -271,6 +296,7 @@ def test_preprocessed_resume_rejects_unknown_subject() -> None:
         PreprocessedSubject(
             subject_id=f"stale-{index}",
             original_volume_path="volume.nii.gz",
+            brain_mask_path="brain-mask.nii.gz",
             bounding_box=((0, 1), (0, 1), (0, 1)),
             variants=[],
         )
@@ -289,6 +315,7 @@ def test_preprocessed_resume_rejects_incomplete_variants() -> None:
     subject = PreprocessedSubject(
         subject_id="subject",
         original_volume_path="volume.nii.gz",
+        brain_mask_path="brain-mask.nii.gz",
         bounding_box=((0, 1), (0, 1), (0, 1)),
         variants=[],
     )
@@ -302,9 +329,12 @@ def test_preprocessed_resume_rejects_incomplete_variants() -> None:
 
 
 def test_preprocessed_resume_rejects_missing_variant_file(tmp_path: Path) -> None:
+    brain_mask_path = tmp_path / "brain-mask.nii.gz"
+    brain_mask_path.touch()
     subject = PreprocessedSubject(
         subject_id="subject",
         original_volume_path=str(tmp_path / "volume.nii.gz"),
+        brain_mask_path=str(brain_mask_path),
         bounding_box=((0, 1), (0, 1), (0, 1)),
         variants=[
             PreprocessedVariant(
@@ -323,6 +353,27 @@ def test_preprocessed_resume_rejects_missing_variant_file(tmp_path: Path) -> Non
     assert "Set resume to false and rerun preprocessing" in message
 
 
+def test_preprocessed_resume_rejects_missing_brain_mask(tmp_path: Path) -> None:
+    volume_path = tmp_path / "volume.nii.gz"
+    volume_path.touch()
+    subject = PreprocessedSubject(
+        subject_id="subject",
+        original_volume_path=str(volume_path),
+        brain_mask_path=str(tmp_path / "missing-brain-mask.nii.gz"),
+        bounding_box=((0, 1), (0, 1), (0, 1)),
+        variants=[
+            PreprocessedVariant(
+                volume_path=str(volume_path),
+                frst_path=str(volume_path),
+                mask_path=None,
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="brain mask is missing"):
+        ensure_preprocessed_subjects_complete([subject], {"subject"}, 1)
+
+
 def test_preprocessed_resume_accepts_existing_variant_files(tmp_path: Path) -> None:
     volume_path = tmp_path / "volume.nii.gz"
     frst_path = tmp_path / "frst.nii.gz"
@@ -331,6 +382,7 @@ def test_preprocessed_resume_accepts_existing_variant_files(tmp_path: Path) -> N
     subject = PreprocessedSubject(
         subject_id="subject",
         original_volume_path=str(volume_path),
+        brain_mask_path=str(volume_path),
         bounding_box=((0, 1), (0, 1), (0, 1)),
         variants=[
             PreprocessedVariant(
@@ -358,6 +410,7 @@ def _training_dataset(tmp_path: Path) -> Path:
             PreprocessedSubject(
                 subject_id=f"subject-{index}",
                 original_volume_path=str(volume_path),
+                brain_mask_path=str(volume_path),
                 bounding_box=((0, 1), (0, 1), (0, 1)),
                 variants=[
                     PreprocessedVariant(
@@ -811,6 +864,7 @@ def test_split_config_rejects_subjects_with_missing_masks(tmp_path: Path) -> Non
     maskless_subject = PreprocessedSubject(
         subject_id="subject-maskless",
         original_volume_path=str(tmp_path / "maskless-volume.nii.gz"),
+        brain_mask_path=str(tmp_path / "maskless-brain-mask.nii.gz"),
         bounding_box=((0, 1), (0, 1), (0, 1)),
         variants=[
             PreprocessedVariant(
@@ -973,6 +1027,7 @@ def test_train_config_accepts_complete_manifest_without_training_policy(
         PreprocessedSubject(
             subject_id=f"subject-{index}",
             original_volume_path=str(tmp_path / f"missing-volume-{index}"),
+            brain_mask_path=str(tmp_path / f"missing-brain-mask-{index}"),
             bounding_box=((0, 1), (0, 1), (0, 1)),
             variants=[
                 PreprocessedVariant(
@@ -1199,6 +1254,58 @@ def test_evaluate_config_derives_paths_from_experiment(tmp_path: Path) -> None:
     assert config.student_checkpoint_path == student_checkpoint
 
 
+def test_evaluate_config_rejects_maskless_experiment_subject(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = _training_dataset(tmp_path)
+    subject_ids = [f"subject-{index}" for index in range(7)]
+    preprocessed_manifest_path = DatasetLayout(
+        dataset_dir=dataset_dir
+    ).preprocessed_manifest_path()
+    preprocessed_manifest = PreprocessedDatasetManifest.read(
+        preprocessed_manifest_path
+    )
+    preprocessed_manifest.model_copy(
+        update={
+            "subjects": [
+                subject.model_copy(
+                    update={
+                        "variants": [
+                            variant.model_copy(update={"mask_path": None})
+                            for variant in subject.variants
+                        ]
+                    }
+                )
+                if subject.subject_id == subject_ids[-1]
+                else subject
+                for subject in preprocessed_manifest.subjects
+            ]
+        }
+    ).write(preprocessed_manifest_path)
+    _complete_split(tmp_path, subject_ids[:-1])
+    experiment_dir = tmp_path / "experiment"
+    layout = ExperimentLayout(experiment_dir=experiment_dir)
+    split_manifest = SplitManifest.read(layout.split_manifest_path()).model_copy(
+        update={"test_subject_ids": [subject_ids[-1]]}
+    )
+    split_manifest.write(layout.split_manifest_path())
+    train_config = _train_config(dataset_dir, experiment_dir)
+    _train_manifest_for_config(
+        train_config, content_fingerprint(split_manifest)
+    ).model_copy(update={"status": ManifestStatus.COMPLETE}).write(
+        layout.train_manifest_path()
+    )
+
+    with pytest.raises(ValidationError, match="Required subject masks are missing"):
+        EvaluateConfig.model_validate(
+            {
+                "dataset_dir": dataset_dir,
+                "experiment_dir": experiment_dir,
+                "device": "cpu",
+            }
+        )
+
+
 def test_evaluate_config_rejects_non_complete_experiment_manifest(
     tmp_path: Path,
 ) -> None:
@@ -1357,6 +1464,7 @@ def test_target_centered_config_validates_threshold(tmp_path: Path) -> None:
             PreprocessedSubject(
                 subject_id="subject",
                 original_volume_path="volume.nii.gz",
+                brain_mask_path=str(volume_path),
                 bounding_box=((0, 1), (0, 1), (0, 1)),
                 variants=[
                     PreprocessedVariant(
@@ -1384,6 +1492,7 @@ def test_target_centered_config_rejects_invalid_detector(tmp_path: Path) -> None
             PreprocessedSubject(
                 subject_id="subject",
                 original_volume_path="volume.nii.gz",
+                brain_mask_path="brain-mask.nii.gz",
                 bounding_box=((0, 1), (0, 1), (0, 1)),
                 variants=[
                     PreprocessedVariant(

@@ -4,4 +4,6 @@ dataset_dir = "data/indexed"
 # Includes the original plus nine randomly augmented variants. This must be at
 # least as large as the augmentation factors requested by training.
 augmentation_factor = 10
+# Omit seed to generate different augmented variants on each run.
+seed = 42
 resume = false

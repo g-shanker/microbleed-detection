@@ -238,6 +238,7 @@ class PreprocessInput:
 class PreprocessOutput:
     volume: FloatArray
     mask: IntArray | None
+    brain_mask: IntArray
     affine: FloatArray
     bounding_box: BoundingBox
     original_volume: nib.Nifti1Image

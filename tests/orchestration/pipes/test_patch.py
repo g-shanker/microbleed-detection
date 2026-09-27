@@ -52,6 +52,7 @@ def _write_subject(
     return PreprocessedSubject(
         subject_id=subject_id,
         original_volume_path=str(volume_path),
+        brain_mask_path=str(volume_path),
         bounding_box=((0, 1), (0, 1), (0, 1)),
         variants=variants,
     )

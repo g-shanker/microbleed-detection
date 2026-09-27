@@ -35,6 +35,15 @@ def test_augment_preserves_shape_and_binary_mask() -> None:
     assert set(np.unique(transformed_mask)).issubset({0, 1})
 
 
+def test_augment_is_reproducible_with_matching_generators() -> None:
+    volume = np.arange(64, dtype=float).reshape((4, 4, 4))
+
+    first, _ = augmentations.augment(volume, None, np.random.default_rng(42))
+    second, _ = augmentations.augment(volume, None, np.random.default_rng(42))
+
+    np.testing.assert_array_equal(first, second)
+
+
 def test_translate_applies_same_random_offsets_to_volume_and_mask(monkeypatch) -> None:
     volume = np.zeros((32, 32, 1))
     mask = np.zeros_like(volume, dtype=np.uint8)

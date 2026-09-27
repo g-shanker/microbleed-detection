@@ -19,7 +19,7 @@ from ..manifests import (
     RawSubject,
     content_fingerprint,
 )
-from ..utils import resolve_path_string
+from ..utils import create_rng, resolve_path_string
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +55,12 @@ def execute(config: PreprocessConfig) -> None:
         status=ManifestStatus.RUNNING,
         subjects=preprocessed_subjects,
         augmentation_factor=config.augmentation_factor,
+        seed=config.seed,
         raw_manifest_fingerprint=raw_manifest_fingerprint,
     ).write(preprocessed_manifest_path)
 
-    for subject in progress.track(
-        raw_manifest.subjects, description="Preprocessing subjects"
+    for subject_index, subject in enumerate(
+        progress.track(raw_manifest.subjects, description="Preprocessing subjects")
     ):
         subject_id = subject.subject_id
         if any(
@@ -73,12 +74,15 @@ def execute(config: PreprocessConfig) -> None:
             source_modalities[subject.source_id],
             layout,
             config.augmentation_factor,
+            config.seed,
+            subject_index,
         )
         preprocessed_subjects.append(preprocessed_subject)
         PreprocessedDatasetManifest(
             status=ManifestStatus.RUNNING,
             subjects=preprocessed_subjects,
             augmentation_factor=config.augmentation_factor,
+            seed=config.seed,
             raw_manifest_fingerprint=raw_manifest_fingerprint,
         ).write(preprocessed_manifest_path)
 
@@ -86,6 +90,7 @@ def execute(config: PreprocessConfig) -> None:
         status=ManifestStatus.COMPLETE,
         subjects=preprocessed_subjects,
         augmentation_factor=config.augmentation_factor,
+        seed=config.seed,
         raw_manifest_fingerprint=raw_manifest_fingerprint,
     ).write(preprocessed_manifest_path)
     logger.info(
@@ -98,6 +103,8 @@ def preprocess_subject(
     modality: Modality,
     layout: DatasetLayout,
     augmentation_factor: int,
+    seed: int | None = None,
+    subject_index: int = 0,
 ) -> PreprocessedSubject:
     """Preprocess, augment, and persist all variants for one raw subject."""
     raw_volume = io.load_volume(subject.volume_path)
@@ -107,15 +114,20 @@ def preprocess_subject(
     )
     processed_volume = preprocess_output.volume
     processed_mask = preprocess_output.mask
+    brain_mask = preprocess_output.brain_mask
     processed_affine = preprocess_output.affine
+
+    brain_mask_path = layout.brain_mask_path(subject.subject_id)
+    io.save_volume(nib.Nifti1Image(brain_mask, processed_affine), brain_mask_path)
 
     variants: list[PreprocessedVariant] = []
     for variant_index in range(augmentation_factor):
         variant_input_volume = processed_volume
         variant_input_mask = processed_mask
         if variant_index > 0:
+            rng = create_rng(seed, subject_index, variant_index)
             variant_input_volume, variant_input_mask = augmentations.augment(
-                variant_input_volume, variant_input_mask
+                variant_input_volume, variant_input_mask, rng
             )
 
         variant_volume = nib.Nifti1Image(variant_input_volume, processed_affine)
@@ -146,6 +158,7 @@ def preprocess_subject(
     return PreprocessedSubject(
         subject_id=subject.subject_id,
         original_volume_path=subject.volume_path,
+        brain_mask_path=resolve_path_string(brain_mask_path),
         bounding_box=preprocess_output.bounding_box,
         variants=variants,
     )

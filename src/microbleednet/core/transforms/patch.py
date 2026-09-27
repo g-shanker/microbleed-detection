@@ -36,16 +36,12 @@ def get_nonoverlapping_patches(
     patch_size: int,
 ) -> list[np.ndarray]:
     """Extract non-overlapping cubic patches."""
-    padding = [(0, max(patch_size - size, 0)) for size in volume.shape]
+    padding = [(0, -size % patch_size) for size in volume.shape]
     padded = np.pad(volume, padding, mode="constant", constant_values=0)
     starts = [
         list(range(0, size - patch_size + 1, patch_size))
         for size in padded.shape
     ]
-    for axis, size in enumerate(padded.shape):
-        final_start = size - patch_size
-        if starts[axis][-1] != final_start:
-            starts[axis].append(final_start)
 
     patches = []
     for start_z in starts[2]:

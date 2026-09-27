@@ -33,14 +33,15 @@ def test_get_target_centers_returns_rounded_centers() -> None:
     assert centers == [(0, 0, 0), (2, 2, 2)]
 
 
-def test_nonoverlapping_patches_use_requested_size_and_align_final_window() -> None:
+def test_nonoverlapping_patches_pad_each_axis_to_patch_size_multiple() -> None:
     volume = np.arange(30 * 24 * 24).reshape(30, 24, 24)
 
     patches = patch.get_nonoverlapping_patches(volume, patch_size=24)
 
     assert [item.shape for item in patches] == [(24, 24, 24)] * 2
     np.testing.assert_array_equal(patches[0], volume[:24])
-    np.testing.assert_array_equal(patches[1], volume[-24:])
+    np.testing.assert_array_equal(patches[1][:6], volume[24:])
+    np.testing.assert_array_equal(patches[1][6:], 0)
 
 
 def test_nonoverlapping_patches_pad_volume_smaller_than_patch() -> None:

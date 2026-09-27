@@ -225,6 +225,17 @@ def ensure_preprocessed_subjects_complete(
                 ),
                 context={"subject_id": subject.subject_id},
             )
+        if not Path(subject.brain_mask_path).is_file():
+            raise ApplicationError(
+                category="Input data",
+                summary="Preprocessed brain mask is missing",
+                cause=(
+                    f"Subject '{subject.subject_id}' references a missing brain "
+                    f"mask: {subject.brain_mask_path}"
+                ),
+                fix="Set resume to false and rerun preprocessing from the raw manifest",
+                context={"path": subject.brain_mask_path},
+            )
         for variant_index, variant in enumerate(subject.variants):  # pragma: no branch
             paths = (variant.volume_path, variant.frst_path, variant.mask_path)
             missing_paths = [
@@ -335,6 +346,11 @@ class PreprocessConfig(FrozenModel):
         gt=0,
         description=("Total persisted variants per subject, including the original."),
     )
+    seed: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional seed for reproducible preprocessing augmentation.",
+    )
     resume: bool = Field(
         default=False,
         description="Resume from the last per-subject preprocessing checkpoint.",
@@ -351,7 +367,7 @@ class PreprocessConfig(FrozenModel):
 
         raw_manifest = RawDatasetManifest.read(manifest_path)
         ensure_manifest_complete(raw_manifest, manifest_path, "raw")
-        
+
         if not self.resume:
             return self
 
@@ -713,6 +729,14 @@ class EvaluateConfig(FrozenModel):
             ensure_fingerprint_matches(
                 train_manifest.split_manifest_fingerprint,
                 split_manifest,
+            )
+            test_subject_ids = set(split_manifest.test_subject_ids)
+            ensure_subjects_have_masks(
+                [
+                    subject
+                    for subject in preprocessed_manifest.subjects
+                    if subject.subject_id in test_subject_ids
+                ]
             )
             return self
 

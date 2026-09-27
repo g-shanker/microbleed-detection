@@ -1,6 +1,7 @@
 import pickle
 from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 import torch.nn as nn
@@ -11,6 +12,21 @@ from microbleednet.orchestration.manifests import (
     PreprocessedSubject,
     PreprocessedVariant,
 )
+
+
+def test_create_rng_is_stable_for_matching_seed_and_spawn_key() -> None:
+    first = utils.create_rng(42, 3, 2)
+    repeated = utils.create_rng(42, 3, 2)
+    other_variant = utils.create_rng(42, 3, 3)
+
+    np.testing.assert_array_equal(first.random(4), repeated.random(4))
+    assert not np.array_equal(
+        utils.create_rng(42, 3, 2).random(4), other_variant.random(4)
+    )
+
+
+def test_create_rng_accepts_no_seed() -> None:
+    assert isinstance(utils.create_rng(), np.random.Generator)
 
 
 def test_resolve_path_string_returns_absolute_string(tmp_path: Path) -> None:
@@ -116,6 +132,7 @@ def test_resolve_subjects_preserves_requested_id_order() -> None:
         PreprocessedSubject(
             subject_id=subject_id,
             original_volume_path="original-volume",
+            brain_mask_path="brain-mask",
             bounding_box=((0, 1), (0, 1), (0, 1)),
             variants=[
                 PreprocessedVariant(

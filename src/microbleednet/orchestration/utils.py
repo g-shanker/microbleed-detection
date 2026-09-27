@@ -2,6 +2,7 @@ import gc
 import pickle
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -9,6 +10,12 @@ from ..core import io as core_io
 from ..errors import ApplicationError
 from .layouts import StageName
 from .manifests import PreprocessedSubject
+
+
+def create_rng(seed: int | None = None, *spawn_key: int) -> np.random.Generator:
+    """Create a random generator, optionally derived from a seed and spawn key."""
+    seed_sequence = np.random.SeedSequence(seed, spawn_key=spawn_key)
+    return np.random.default_rng(seed_sequence)
 
 
 def resolve_path_string(path: Path) -> str:

@@ -32,7 +32,11 @@ def _stub_processing_steps(monkeypatch) -> tuple[Mock, Mock]:
     monkeypatch.setattr(
         processor.volume_ops, "reorient_to_canonical", lambda value: value
     )
-    monkeypatch.setattr(processor.volume_ops, "extract_brain", lambda value: value)
+    monkeypatch.setattr(
+        processor.volume_ops,
+        "extract_brain",
+        lambda value: (value, nib.Nifti1Image(np.ones(value.shape), value.affine)),
+    )
     monkeypatch.setattr(processor.volume_ops, "normalize_volume", lambda value: value)
     bounding_box = ((0, 2), (0, 2), (0, 2))
     monkeypatch.setattr(
@@ -44,7 +48,7 @@ def _stub_processing_steps(monkeypatch) -> tuple[Mock, Mock]:
     monkeypatch.setattr(processor.inpaint_vessels, "apply", lambda value: value)
     bias_correct = Mock(side_effect=lambda value: value)
     invert = Mock(side_effect=lambda value: value)
-    monkeypatch.setattr(processor.volume_ops, "bias_field_correct_n4", bias_correct)
+    monkeypatch.setattr(processor.volume_ops, "bias_field_correct_fast", bias_correct)
     monkeypatch.setattr(processor.volume_ops, "invert_volume", invert)
     return bias_correct, invert
 
@@ -56,11 +60,35 @@ def test_preprocess_qsm_skips_contrast_operations(monkeypatch) -> None:
     output = _preprocess(_volume(), mask, "QSM")
 
     assert output.mask is not None
+    np.testing.assert_array_equal(output.brain_mask, np.ones((2, 2, 2)))
     assert output.mask.dtype == np.uint8
     np.testing.assert_array_equal(output.volume, np.ones((2, 2, 2)))
     np.testing.assert_array_equal(output.affine, np.eye(4))
     bias_correct.assert_not_called()
     invert.assert_not_called()
+
+
+def test_preprocess_qsm_crops_from_bet_mask_with_negative_tissue(monkeypatch) -> None:
+    volume_data = np.zeros((4, 4, 4), dtype=float)
+    volume_data[1:4, 1:4, 1:4] = -1.0
+    volume_data[2, 2, 2] = 2.0
+    brain_mask = np.zeros_like(volume_data, dtype=np.uint8)
+    brain_mask[1:4, 1:4, 1:4] = 1
+    volume = nib.Nifti1Image(volume_data, np.eye(4))
+    mask_volume = nib.Nifti1Image(brain_mask, np.eye(4))
+    monkeypatch.setattr(
+        processor.volume_ops, "reorient_to_canonical", lambda value: value
+    )
+    monkeypatch.setattr(
+        processor.volume_ops, "extract_brain", lambda _: (volume, mask_volume)
+    )
+    monkeypatch.setattr(processor.inpaint_vessels, "apply", lambda value: value)
+
+    output = _preprocess(volume, None, "QSM")
+
+    assert output.bounding_box == ((1, 4), (1, 4), (1, 4))
+    assert output.volume.shape == (3, 3, 3)
+    np.testing.assert_array_equal(output.brain_mask, np.ones((3, 3, 3)))
 
 
 def test_preprocess_swi_processes_and_crops_mask(monkeypatch) -> None:
