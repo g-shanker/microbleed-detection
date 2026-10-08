@@ -169,6 +169,7 @@ def test_complete_preprocessed_manifest_rejects_incomplete_subject() -> None:
                 )
             ],
             augmentation_factor=1,
+            bias_field_correction="fast",
             raw_manifest_fingerprint="raw",
         )
 
@@ -182,6 +183,7 @@ def test_complete_patch_manifest_rejects_empty_subject_output() -> None:
             subject_ids=["subject-1"],
             patch_size=48,
             augmentation_factor=1,
+            use_amp=False,
             records=[],
         )
 
@@ -199,7 +201,13 @@ def test_complete_inference_manifest_rejects_missing_output() -> None:
             minimum_volume_mm3=2.5,
             maximum_ellipticity=0.2,
             minimum_brain_distance_mm=5.0,
-            subjects=[InferredSubject(subject_id="subject-1", output_path="")],
+            subjects=[
+                InferredSubject(
+                    subject_id="subject-1",
+                    detector_output_path="",
+                    discriminator_output_path="",
+                )
+            ],
         )
 
 
@@ -215,7 +223,13 @@ def test_running_inference_manifest_allows_missing_output() -> None:
         minimum_volume_mm3=2.5,
         maximum_ellipticity=0.2,
         minimum_brain_distance_mm=5.0,
-        subjects=[InferredSubject(subject_id="subject-1", output_path="")],
+        subjects=[
+            InferredSubject(
+                subject_id="subject-1",
+                detector_output_path="",
+                discriminator_output_path="",
+            )
+        ],
     )
 
     assert manifest.status is ManifestStatus.RUNNING
@@ -292,7 +306,12 @@ def test_inference_manifest_round_trips_recipe_and_results(tmp_path: Path) -> No
         subjects=[
             InferredSubject(
                 subject_id="subject-1",
-                output_path="C:/experiments/infer/subject-1/detections.nii.gz",
+                detector_output_path=(
+                    "C:/experiments/infer/subject-1/detector_output.nii.gz"
+                ),
+                discriminator_output_path=(
+                    "C:/experiments/infer/subject-1/discriminator_output.nii.gz"
+                ),
             )
         ],
     )
@@ -303,7 +322,12 @@ def test_inference_manifest_round_trips_recipe_and_results(tmp_path: Path) -> No
     loaded = InferManifest.read(path)
     assert loaded.manifest_type == "inference"
     assert loaded.subjects[0].subject_id == "subject-1"
-    assert loaded.subjects[0].output_path.endswith("detections.nii.gz")
+    assert loaded.subjects[0].detector_output_path.endswith(
+        "detector_output.nii.gz"
+    )
+    assert loaded.subjects[0].discriminator_output_path.endswith(
+        "discriminator_output.nii.gz"
+    )
     assert loaded.discriminator_patch_size == 24
 
 

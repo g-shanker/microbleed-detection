@@ -33,10 +33,14 @@ from ..utils import (
     load_stage_checkpoint,
     release_gpu_memory,
     resolve_path_string,
+    subject_failure_context,
 )
 from .preprocess import preprocess_subject
 
 logger = logging.getLogger(__name__)
+OUTPUT_DIRECTORY_FIX = (
+    "Check the inference output directory and filesystem permissions"
+)
 
 
 def execute(config: InferConfig) -> None:
@@ -66,14 +70,16 @@ def execute(config: InferConfig) -> None:
         for subject in progress.track(
             manifest.subjects, description="Preprocessing inference subjects"
         ):
-            subjects.append(
-                preprocess_subject(
-                    subject,
-                    modalities[subject.source_id],
-                    preprocessing_layout,
-                    PREPROCESSING_AUGMENTATION_FACTOR,
+            with subject_failure_context(subject.subject_id, "inference preprocessing"):
+                subjects.append(
+                    preprocess_subject(
+                        subject,
+                        modalities[subject.source_id],
+                        preprocessing_layout,
+                        PREPROCESSING_AUGMENTATION_FACTOR,
+                        bias_field_correction=config.bias_field_correction,
+                    )
                 )
-            )
         infer_subjects(
             config.device,
             layout,
@@ -82,6 +88,7 @@ def execute(config: InferConfig) -> None:
             subjects,
             detector,
             student,
+            config.use_amp,
         )
     finally:
         del detector
@@ -119,12 +126,15 @@ def infer_subjects(
     subjects: list[PreprocessedSubject],
     detector: CandidateDetector,
     student: CandidateDiscriminatorStudent,
+    use_amp: bool,
 ) -> None:
     """Infer all preprocessed subjects and persist their output manifest."""
-    results = [
-        infer_subject(subject, detector, student, output_layout)
-        for subject in progress.track(subjects, description="Inferring subjects")
-    ]
+    results = []
+    for subject in progress.track(subjects, description="Inferring subjects"):
+        with subject_failure_context(subject.subject_id, "inference"):
+            results.append(
+                infer_subject(subject, detector, student, output_layout, use_amp)
+            )
 
     manifest = InferManifest(
         status=ManifestStatus.COMPLETE,
@@ -146,7 +156,7 @@ def infer_subjects(
             category="Output",
             summary="Could not write the inference manifest",
             cause=str(error),
-            fix="Check the inference output directory and filesystem permissions",
+            fix=OUTPUT_DIRECTORY_FIX,
             context={"path": str(output_layout.inference_manifest_path())},
         ) from error
     logger.info(
@@ -160,8 +170,9 @@ def infer_subject(
     detector: CandidateDetector,
     student: CandidateDiscriminatorStudent,
     output_layout: ExperimentLayout,
+    use_amp: bool,
 ) -> InferredSubject:
-    """Produce and save a restored binary detection mask for one subject."""
+    """Save restored detector probabilities and discriminator detections."""
     volume_image = core_io.load_volume(subject.variants[VARIANT_INDEX].volume_path)
     volume = core_io.nifti_to_numpy(volume_image)
     brain_mask = core_io.nifti_to_numpy(core_io.load_volume(subject.brain_mask_path))
@@ -169,7 +180,9 @@ def infer_subject(
         core_io.load_volume(subject.variants[VARIANT_INDEX].frst_path)
     )
 
-    detector_probability = core_inference.infer_detector(detector, volume, frst_array)
+    detector_probability = core_inference.infer_detector(
+        detector, volume, frst_array, use_amp
+    )
     retained_labels = core_inference.infer_discriminator(
         student,
         volume,
@@ -178,6 +191,7 @@ def infer_subject(
         DETECTOR_THRESHOLD,
         DISCRIMINATOR_PATCH_SIZE,
         STUDENT_THRESHOLD,
+        use_amp,
     )
 
     zooms = list(volume_image.header.get_zooms())
@@ -195,26 +209,54 @@ def infer_subject(
         MINIMUM_BRAIN_DISTANCE_MM,
     )
 
+    original_volume = core_io.load_volume(subject.original_volume_path)
+    detector_output_image = core_processor.volume_ops.restore_cropped_volume(
+        detector_probability,
+        subject.bounding_box,
+        original_volume,
+    )
     output_image = core_processor.volume_ops.restore_cropped_volume(
         final_mask_array,
         subject.bounding_box,
-        core_io.load_volume(subject.original_volume_path),
+        original_volume,
     )
-    output_path = output_layout.inference_output_path(subject.subject_id)
+    detector_output_path = output_layout.inference_detector_output_path(
+        subject.subject_id
+    )
+    discriminator_output_path = output_layout.inference_discriminator_output_path(
+        subject.subject_id
+    )
     try:
-        core_io.save_volume(output_image, output_path)
+        core_io.save_volume(detector_output_image, detector_output_path)
     except OSError as error:
         raise ApplicationError(
             category="Output",
-            summary="Could not write the inference output",
+            summary="Could not write the detector output",
             cause=str(error),
-            fix="Check the inference output directory and filesystem permissions",
-            context={"path": str(output_path), "subject_id": subject.subject_id},
+            fix=OUTPUT_DIRECTORY_FIX,
+            context={
+                "path": str(detector_output_path),
+                "subject_id": subject.subject_id,
+            },
+        ) from error
+    try:
+        core_io.save_volume(output_image, discriminator_output_path)
+    except OSError as error:
+        raise ApplicationError(
+            category="Output",
+            summary="Could not write the discriminator output",
+            cause=str(error),
+            fix=OUTPUT_DIRECTORY_FIX,
+            context={
+                "path": str(discriminator_output_path),
+                "subject_id": subject.subject_id,
+            },
         ) from error
 
     return InferredSubject(
         subject_id=subject.subject_id,
-        output_path=resolve_path_string(output_path),
+        detector_output_path=resolve_path_string(detector_output_path),
+        discriminator_output_path=resolve_path_string(discriminator_output_path),
     )
 
 

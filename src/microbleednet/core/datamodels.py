@@ -16,6 +16,7 @@ VolumeArray = FloatArray
 MaskArray = IntArray
 VoxelSpacing = tuple[float, float, float]
 Modality = Literal["T2*-GRE", "SWI", "QSM"]
+BiasFieldCorrection = Literal["n4", "fast"]
 TorchStateDict = dict[str, Any]
 
 
@@ -126,6 +127,7 @@ class PreprocessInput:
     volume: nib.Nifti1Image
     mask: nib.Nifti1Image | None
     modality: Modality
+    bias_field_correction: BiasFieldCorrection = "fast"
 
     def __post_init__(self) -> None:
         """Validate input geometry, spatial metadata, and voxel values."""

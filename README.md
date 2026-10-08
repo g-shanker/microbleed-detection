@@ -41,7 +41,7 @@ classifier and is trained offline using response-based knowledge distillation.
 Install these tools before setting up the project:
 
 * [uv](https://docs.astral.sh/uv/)
-* [FSL](https://fsl.fmrib.ox.ac.uk/fsl/docs/) with BET installed
+* [FSL](https://fsl.fmrib.ox.ac.uk/fsl/docs/) with BET and FAST installed
 
 CUDA is optional. The supplied configurations use CPU execution. To use CUDA,
 install a compatible PyTorch environment and change `device` and `use_amp` in
@@ -78,14 +78,15 @@ starting preprocessing, inference, or evaluation.
    uv run microbleednet --help
    ```
 
-5. Verify FSL before running a command that preprocesses images:
+5. Verify BET and FAST before running a command that preprocesses images:
 
    ```powershell
    Test-Path (Join-Path $env:FSLDIR "bin/bet")
+   Test-Path (Join-Path $env:FSLDIR "bin/fast")
    ```
 
-   The command should return `True`. On Linux or WSL, use the corresponding
-   shell command to verify `$FSLDIR/bin/bet`.
+   Both commands should return `True`. On Linux or WSL, use the corresponding
+   shell commands to verify `$FSLDIR/bin/bet` and `$FSLDIR/bin/fast`.
 
 ## Prepare data and configuration
 
@@ -142,6 +143,13 @@ uv run microbleednet preprocess --config configs/preprocess.toml
 The preprocessing augmentation factor must be at least as large as the factors
 requested by training. Set `resume = true` only when continuing an incomplete
 preprocessing run with the same inputs and settings.
+
+Bias-field correction defaults to FSL FAST, as used in the original
+MicrobleedNet paper. Set `bias_field_correction = "n4"` in
+[`configs/preprocess.toml`](configs/preprocess.toml) to use SimpleITK N4
+instead. For inference, set the same value in
+[`configs/infer.toml`](configs/infer.toml) that was used to preprocess the
+training data.
 
 ### Split subjects
 
