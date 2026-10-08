@@ -9,9 +9,9 @@ from sklearn.cluster import KMeans
 from ...constants import (
     CLUSTERER_N_CLUSTERS,
     CLUSTERER_RANDOM_STATE,
+    FRANGI_ALPHA,
     FRANGI_BETA,
     FRANGI_BLACK_RIDGES,
-    FRANGI_GAMMA,
     FRANGI_SIGMAS,
     MAXIMUM_VESSEL_SOLIDITY,
     MINIMUM_VESSEL_ECCENTRICITY,
@@ -61,7 +61,7 @@ def get_slice_vessel_mask(image_slice: np.ndarray) -> np.ndarray:
         image_slice,
         sigmas=FRANGI_SIGMAS,  # pyright: ignore[reportArgumentType]
         beta=FRANGI_BETA,
-        gamma=FRANGI_GAMMA,
+        alpha=FRANGI_ALPHA,
         black_ridges=FRANGI_BLACK_RIDGES,
     )
     frangi_slice = frangi_slice * brain_mask

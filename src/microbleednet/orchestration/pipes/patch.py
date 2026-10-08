@@ -19,7 +19,7 @@ from ..configs import (
     TargetCenteredPatchConfig,
 )
 from ..manifests import ManifestStatus, PatchManifest
-from ..utils import resolve_path_string
+from ..utils import release_gpu_memory, resolve_path_string, subject_failure_context
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,9 @@ def manifest_matches_config(
         config.probability_threshold
         if isinstance(config, TargetCenteredPatchConfig)
         else None
+    )
+    use_amp = (
+        config.use_amp if isinstance(config, TargetCenteredPatchConfig) else False
     )
     record_paths = {
         path
@@ -47,6 +50,7 @@ def manifest_matches_config(
         and manifest.patch_size == config.patch_size
         and manifest.augmentation_factor == config.augmentation_factor
         and manifest.probability_threshold == probability_threshold
+        and manifest.use_amp == use_amp
         and all(Path(path).is_file() for path in record_paths)
     )
 
@@ -62,6 +66,7 @@ def execute(
             detector=config.detector,
             threshold=config.probability_threshold,
             patch_size=config.patch_size,
+            use_amp=config.use_amp,
         )
     else:
         raise TypeError(
@@ -88,36 +93,41 @@ def execute(
         description=f"Extracting {config.stage} {config.split} patches",
     ):
         subject_id = subject.subject_id
-        volume = io.nifti_to_numpy(io.load_volume(variant.volume_path))
-        mask = io.nifti_to_numpy(io.load_volume(cast(str, variant.mask_path)))
-        frst = io.nifti_to_numpy(io.load_volume(variant.frst_path))
-        extracted = extract(volume, mask, frst)
-        if extracted.volumes.size == 0:
-            continue
+        stage = (
+            f"{config.stage}/{config.split} patch extraction "
+            f"variant={variant_index}"
+        )
+        with subject_failure_context(subject_id, stage):
+            volume = io.nifti_to_numpy(io.load_volume(variant.volume_path))
+            mask = io.nifti_to_numpy(io.load_volume(cast(str, variant.mask_path)))
+            frst = io.nifti_to_numpy(io.load_volume(variant.frst_path))
+            extracted = extract(volume, mask, frst)
+            if extracted.volumes.size == 0:
+                continue
 
-        volume_path = config.experiment_layout.patch_volume_path(
-            config.stage, config.split, subject_id, variant_index
-        )
-        mask_path = config.experiment_layout.patch_mask_path(
-            config.stage, config.split, subject_id, variant_index
-        )
-        frst_path = config.experiment_layout.patch_frst_path(
-            config.stage, config.split, subject_id, variant_index
-        )
-        save_array(extracted.volumes, volume_path)
-        save_array(extracted.masks, mask_path)
-        save_array(extracted.frst, frst_path)
-
-        records.extend(
-            PatchRecord(
-                volume_path=resolve_path_string(volume_path),
-                mask_path=resolve_path_string(mask_path),
-                frst_path=resolve_path_string(frst_path),
-                patch_index=index,
-                has_microbleed=bool(np.any(mask_array > 0)),
+            volume_path = config.experiment_layout.patch_volume_path(
+                config.stage, config.split, subject_id, variant_index
             )
-            for index, mask_array in enumerate(extracted.masks)
-        )
+            mask_path = config.experiment_layout.patch_mask_path(
+                config.stage, config.split, subject_id, variant_index
+            )
+            frst_path = config.experiment_layout.patch_frst_path(
+                config.stage, config.split, subject_id, variant_index
+            )
+            save_array(extracted.volumes.astype(np.float32), volume_path)
+            save_array(extracted.masks.astype(np.float32), mask_path)
+            save_array(extracted.frst.astype(np.float32), frst_path)
+
+            records.extend(
+                PatchRecord(
+                    volume_path=resolve_path_string(volume_path),
+                    mask_path=resolve_path_string(mask_path),
+                    frst_path=resolve_path_string(frst_path),
+                    patch_index=index,
+                    has_microbleed=bool(np.any(mask_array > 0)),
+                )
+                for index, mask_array in enumerate(extracted.masks)
+            )
 
     if config.subjects and not records:
         raise ApplicationError(
@@ -147,6 +157,11 @@ def execute(
             config.probability_threshold
             if isinstance(config, TargetCenteredPatchConfig)
             else None
+        ),
+        use_amp=(
+            config.use_amp
+            if isinstance(config, TargetCenteredPatchConfig)
+            else False
         ),
         records=records,
     ).write(manifest_path)
@@ -195,11 +210,13 @@ class TargetCenteredExtractor:
         detector: CandidateDetector,
         threshold: float,
         patch_size: int,
+        use_amp: bool,
     ):
         """Store the detector and candidate-centered extraction settings."""
         self.detector = detector
         self.threshold = threshold
         self.patch_size = patch_size
+        self.use_amp = use_amp
 
     def __call__(
         self,
@@ -209,8 +226,9 @@ class TargetCenteredExtractor:
     ) -> ExtractedPatches:
         """Extract aligned patches centered on thresholded detector candidates."""
         probability_map = core_inference.infer_detector(
-            self.detector, volume, frst
+            self.detector, volume, frst, self.use_amp
         )
+        release_gpu_memory()
         candidate_labels = utils.label_components(
             probability_map > self.threshold, COMPONENT_CONNECTIVITY
         )

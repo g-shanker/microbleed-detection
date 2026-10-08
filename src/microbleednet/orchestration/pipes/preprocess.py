@@ -4,7 +4,7 @@ import nibabel as nib
 import numpy as np
 
 from ...core import io
-from ...core.datamodels import Modality, PreprocessInput
+from ...core.datamodels import BiasFieldCorrection, Modality, PreprocessInput
 from ...core.engines import processor
 from ...core.transforms import augmentations, frst
 from ...progress import progress
@@ -19,7 +19,7 @@ from ..manifests import (
     RawSubject,
     content_fingerprint,
 )
-from ..utils import create_rng, resolve_path_string
+from ..utils import create_rng, resolve_path_string, subject_failure_context
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,7 @@ def execute(config: PreprocessConfig) -> None:
         subjects=preprocessed_subjects,
         augmentation_factor=config.augmentation_factor,
         seed=config.seed,
+        bias_field_correction=config.bias_field_correction,
         raw_manifest_fingerprint=raw_manifest_fingerprint,
     ).write(preprocessed_manifest_path)
 
@@ -69,20 +70,23 @@ def execute(config: PreprocessConfig) -> None:
         ):
             continue
 
-        preprocessed_subject = preprocess_subject(
-            subject,
-            source_modalities[subject.source_id],
-            layout,
-            config.augmentation_factor,
-            config.seed,
-            subject_index,
-        )
+        with subject_failure_context(subject_id, "preprocessing"):
+            preprocessed_subject = preprocess_subject(
+                subject,
+                source_modalities[subject.source_id],
+                layout,
+                config.augmentation_factor,
+                config.seed,
+                subject_index,
+                config.bias_field_correction,
+            )
         preprocessed_subjects.append(preprocessed_subject)
         PreprocessedDatasetManifest(
             status=ManifestStatus.RUNNING,
             subjects=preprocessed_subjects,
             augmentation_factor=config.augmentation_factor,
             seed=config.seed,
+            bias_field_correction=config.bias_field_correction,
             raw_manifest_fingerprint=raw_manifest_fingerprint,
         ).write(preprocessed_manifest_path)
 
@@ -91,6 +95,7 @@ def execute(config: PreprocessConfig) -> None:
         subjects=preprocessed_subjects,
         augmentation_factor=config.augmentation_factor,
         seed=config.seed,
+        bias_field_correction=config.bias_field_correction,
         raw_manifest_fingerprint=raw_manifest_fingerprint,
     ).write(preprocessed_manifest_path)
     logger.info(
@@ -105,12 +110,13 @@ def preprocess_subject(
     augmentation_factor: int,
     seed: int | None = None,
     subject_index: int = 0,
+    bias_field_correction: BiasFieldCorrection = "fast",
 ) -> PreprocessedSubject:
     """Preprocess, augment, and persist all variants for one raw subject."""
     raw_volume = io.load_volume(subject.volume_path)
     raw_mask = io.load_volume(subject.mask_path) if subject.mask_path else None
     preprocess_output = processor.preprocess(
-        PreprocessInput(raw_volume, raw_mask, modality)
+        PreprocessInput(raw_volume, raw_mask, modality, bias_field_correction)
     )
     processed_volume = preprocess_output.volume
     processed_mask = preprocess_output.mask
@@ -130,9 +136,12 @@ def preprocess_subject(
                 variant_input_volume, variant_input_mask, rng
             )
 
-        variant_volume = nib.Nifti1Image(variant_input_volume, processed_affine)
+        variant_volume = nib.Nifti1Image(
+            np.asarray(variant_input_volume, dtype=np.float32), processed_affine
+        )
         variant_frst = nib.Nifti1Image(
-            frst.apply(np.asarray(variant_input_volume)), processed_affine
+            np.asarray(frst.apply(np.asarray(variant_input_volume)), dtype=np.float32),
+            processed_affine,
         )
         volume_path = layout.variant_volume_path(subject.subject_id, variant_index)
         frst_path = layout.variant_frst_path(subject.subject_id, variant_index)

@@ -10,7 +10,11 @@ import torch.nn as nn
 from skimage.measure._regionprops import RegionProperties
 
 from microbleednet.core import utils
-from microbleednet.core.datamodels import Modality, PreprocessInput
+from microbleednet.core.datamodels import (
+    BiasFieldCorrection,
+    Modality,
+    PreprocessInput,
+)
 from microbleednet.core.engines import inference, processor
 
 
@@ -22,13 +26,19 @@ def _preprocess(
     volume: nib.Nifti1Image,
     mask: nib.Nifti1Image | None,
     modality: str,
+    bias_field_correction: BiasFieldCorrection = "fast",
 ):
     return processor.preprocess(
-        PreprocessInput(volume, mask, cast(Modality, modality))
+        PreprocessInput(
+            volume,
+            mask,
+            cast(Modality, modality),
+            bias_field_correction,
+        )
     )
 
 
-def _stub_processing_steps(monkeypatch) -> tuple[Mock, Mock]:
+def _stub_processing_steps(monkeypatch) -> tuple[Mock, Mock, Mock]:
     monkeypatch.setattr(
         processor.volume_ops, "reorient_to_canonical", lambda value: value
     )
@@ -47,14 +57,16 @@ def _stub_processing_steps(monkeypatch) -> tuple[Mock, Mock]:
     )
     monkeypatch.setattr(processor.inpaint_vessels, "apply", lambda value: value)
     bias_correct = Mock(side_effect=lambda value: value)
+    bias_correct_n4 = Mock(side_effect=lambda value, brain_mask: value)
     invert = Mock(side_effect=lambda value: value)
     monkeypatch.setattr(processor.volume_ops, "bias_field_correct_fast", bias_correct)
+    monkeypatch.setattr(processor.volume_ops, "bias_field_correct_n4", bias_correct_n4)
     monkeypatch.setattr(processor.volume_ops, "invert_volume", invert)
-    return bias_correct, invert
+    return bias_correct, bias_correct_n4, invert
 
 
 def test_preprocess_qsm_skips_contrast_operations(monkeypatch) -> None:
-    bias_correct, invert = _stub_processing_steps(monkeypatch)
+    bias_correct, bias_correct_n4, invert = _stub_processing_steps(monkeypatch)
     mask = nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.uint8), np.eye(4))
 
     output = _preprocess(_volume(), mask, "QSM")
@@ -65,6 +77,7 @@ def test_preprocess_qsm_skips_contrast_operations(monkeypatch) -> None:
     np.testing.assert_array_equal(output.volume, np.ones((2, 2, 2)))
     np.testing.assert_array_equal(output.affine, np.eye(4))
     bias_correct.assert_not_called()
+    bias_correct_n4.assert_not_called()
     invert.assert_not_called()
 
 
@@ -92,7 +105,7 @@ def test_preprocess_qsm_crops_from_bet_mask_with_negative_tissue(monkeypatch) ->
 
 
 def test_preprocess_swi_processes_and_crops_mask(monkeypatch) -> None:
-    bias_correct, invert = _stub_processing_steps(monkeypatch)
+    bias_correct, bias_correct_n4, invert = _stub_processing_steps(monkeypatch)
     mask = nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.uint8), np.eye(4))
 
     output = _preprocess(_volume(), mask, "SWI")
@@ -101,6 +114,22 @@ def test_preprocess_swi_processes_and_crops_mask(monkeypatch) -> None:
     np.testing.assert_array_equal(output.mask, np.ones((2, 2, 2), dtype=int))
     assert output.mask.dtype == np.uint8
     bias_correct.assert_called_once()
+    bias_correct_n4.assert_not_called()
+    invert.assert_called_once()
+
+
+def test_preprocess_swi_uses_n4_when_selected(monkeypatch) -> None:
+    bias_correct_fast, bias_correct_n4, invert = _stub_processing_steps(monkeypatch)
+    volume = _volume()
+    bet_mask = nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.uint8), np.eye(4))
+    monkeypatch.setattr(
+        processor.volume_ops, "extract_brain", lambda _: (volume, bet_mask)
+    )
+
+    _preprocess(volume, None, "SWI", bias_field_correction="n4")
+
+    bias_correct_fast.assert_not_called()
+    bias_correct_n4.assert_called_once_with(volume, bet_mask)
     invert.assert_called_once()
 
 
@@ -176,7 +205,7 @@ def test_predict_logits_builds_batched_volume_on_model_device() -> None:
     model = nn.Conv3d(2, 2, kernel_size=1)
 
     volume = np.stack((np.ones((2, 2, 2)), np.zeros((2, 2, 2))))
-    result = utils.predict_logits(model, volume)
+    result = utils.predict_logits(model, volume, use_amp=False)
 
     assert result.shape == (2, 2, 2, 2)
     assert not model.training
@@ -186,24 +215,83 @@ def test_predict_logits_uses_persisted_frst_channel() -> None:
     model = nn.Conv3d(2, 2, kernel_size=1)
 
     volume = np.stack((np.ones((2, 2, 2)), np.zeros((2, 2, 2))))
-    result = utils.predict_logits(model, volume)
+    result = utils.predict_logits(model, volume, use_amp=False)
 
     assert result.shape == (2, 2, 2, 2)
+
+
+def test_predict_logits_enables_cuda_autocast_when_requested(monkeypatch) -> None:
+    from contextlib import nullcontext
+
+    autocast_calls = []
+    monkeypatch.setattr(
+        utils,
+        "get_model_device",
+        lambda _: torch.device("cuda"),
+    )
+    monkeypatch.setattr(torch.Tensor, "to", lambda self, *args, **kwargs: self)
+    monkeypatch.setattr(
+        utils.torch,
+        "autocast",
+        lambda **kwargs: autocast_calls.append(kwargs) or nullcontext(),
+    )
+
+    result = utils.predict_logits(
+        nn.Identity(),
+        np.ones((2, 2, 2, 2), dtype=np.float32),
+        use_amp=True,
+    )
+
+    assert result.shape == (2, 2, 2, 2)
+    assert result.dtype == torch.float32
+    assert autocast_calls == [
+        {"device_type": "cuda", "dtype": torch.float16, "enabled": True}
+    ]
 
 
 def test_detector_probability_uses_volume_and_frst_channels(monkeypatch) -> None:
     logits = torch.zeros((2, 2, 2, 2))
     logits[1, 0, 0, 0] = 10
-    monkeypatch.setattr(utils, "predict_logits", lambda model, volume: logits)
+    monkeypatch.setattr(
+        utils, "predict_logits", lambda model, volume, use_amp: logits
+    )
 
     probability_map = inference.infer_detector(
         nn.Conv3d(2, 2, kernel_size=1),
         np.ones((2, 2, 2)),
         np.zeros((2, 2, 2)),
+        use_amp=False,
     )
 
     assert probability_map.shape == (2, 2, 2)
     assert probability_map[0, 0, 0] > 0.5
+
+
+def test_detector_probability_tiles_large_volumes(monkeypatch) -> None:
+    tile_shapes = []
+    monkeypatch.setattr(inference, "DETECTOR_INFERENCE_TILE_SIZE", 4)
+    monkeypatch.setattr(inference, "DETECTOR_INFERENCE_TILE_OVERLAP", 2)
+
+    def predict_logits(_model, model_input, _use_amp):
+        tile_shapes.append(model_input.shape)
+        logits = torch.zeros((2, *model_input.shape[1:]))
+        logits[1] = 10
+        return logits
+
+    monkeypatch.setattr(utils, "predict_logits", predict_logits)
+
+    probability_map = inference.infer_detector(
+        nn.Identity(),
+        np.ones((3, 6, 5)),
+        np.zeros((3, 6, 5)),
+        use_amp=True,
+    )
+
+    assert probability_map.shape == (3, 6, 5)
+    assert np.all(probability_map > 0.5)
+    assert len(tile_shapes) == 4
+    assert all(shape[0] == 2 for shape in tile_shapes)
+    assert all(max(shape[1:]) <= 4 for shape in tile_shapes)
 
 
 def test_infer_discriminator_returns_retained_candidate_volume() -> None:
@@ -234,6 +322,7 @@ def test_infer_discriminator_returns_retained_candidate_volume() -> None:
         detector_threshold=0.5,
         patch_size=2,
         discriminator_threshold=0.5,
+        use_amp=False,
     )
 
     assert output[0, 0, 0] == 1
@@ -252,6 +341,7 @@ def test_infer_discriminator_returns_empty_volume_without_candidates() -> None:
         detector_threshold=0.5,
         patch_size=2,
         discriminator_threshold=0.5,
+        use_amp=False,
     )
 
     np.testing.assert_array_equal(output, np.zeros_like(probability, dtype=np.uint8))

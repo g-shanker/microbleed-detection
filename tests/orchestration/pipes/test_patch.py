@@ -82,6 +82,15 @@ def test_execute_materializes_supplied_subjects_and_writes_manifest(
     assert all(record.patch_index == 0 for record in records)
     assert all(record.has_microbleed for record in records)
     assert np.load(records[0].volume_path).shape == (1, 48, 48, 48)
+    arrays = [
+        np.load(path, mmap_mode="r")
+        for path in (
+            records[0].volume_path,
+            records[0].mask_path,
+            records[0].frst_path,
+        )
+    ]
+    assert all(array.dtype == np.dtype(np.float32) for array in arrays)
     assert not (patch_dir / "volumes_not-selected.npy").exists()
 
 
@@ -188,7 +197,7 @@ def test_target_centered_reuses_extractor_for_all_subjects(
 
     class FakeExtractor:
         def __init__(self, **kwargs):
-            instances.append(self)
+            instances.append(kwargs)
 
         def __call__(self, volume, mask, frst):
             return ExtractedPatches(
@@ -208,6 +217,7 @@ def test_target_centered_reuses_extractor_for_all_subjects(
         augmentation_factor=1,
         probability_threshold=0.5,
         detector=detector,
+        use_amp=True,
     )
 
     assert patch.execute(config) is None
@@ -216,12 +226,18 @@ def test_target_centered_reuses_extractor_for_all_subjects(
     ).records
 
     assert len(instances) == 1
+    assert instances[0]["use_amp"] is True
     assert len(records) == 2
     manifest = PatchManifest.read(
         experiment_layout.patch_manifest_path("student", "train")
     )
     assert manifest.subject_ids == ["first", "second"]
     assert manifest.probability_threshold == 0.5
+    assert manifest.use_amp is True
+    assert patch.manifest_matches_config(manifest, config)
+    assert not patch.manifest_matches_config(
+        manifest, config.model_copy(update={"use_amp": False})
+    )
 
 
 def test_target_centered_extractor_uses_supplied_detector(
@@ -232,7 +248,7 @@ def test_target_centered_extractor_uses_supplied_detector(
     monkeypatch.setattr(
         utils,
         "predict_logits",
-        lambda model, volume: torch.zeros((2, 2, 2, 2)),
+        lambda model, volume, use_amp: torch.zeros((2, 2, 2, 2)),
     )
     monkeypatch.setattr(
         patch.patch_transforms,
@@ -243,6 +259,7 @@ def test_target_centered_extractor_uses_supplied_detector(
         detector=detector,
         threshold=0.9,
         patch_size=24,
+        use_amp=False,
     )
     volume = np.ones((2, 2, 2), dtype=np.float32)
     mask = np.zeros((2, 2, 2), dtype=np.uint8)
@@ -264,11 +281,14 @@ def test_target_centered_extracts_candidate(monkeypatch) -> None:
         detector=CandidateDetector(),
         threshold=0.5,
         patch_size=2,
+        use_amp=False,
     )
     logits = torch.zeros((2, 2, 2, 2))
     logits[1, 0, 0, 0] = 10
     monkeypatch.setattr(
-        utils, "predict_logits", lambda model, volume: logits
+        utils,
+        "predict_logits",
+        lambda model, volume, use_amp: logits,
     )
 
     extracted = extractor(

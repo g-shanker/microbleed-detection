@@ -201,12 +201,34 @@ def test_preprocess_config_ignores_existing_checkpoint_without_resume(
         updated_at=timestamp(),
         subjects=[],
         augmentation_factor=99,
+        bias_field_correction="fast",
         raw_manifest_fingerprint=content_fingerprint(raw_manifest),
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
 
     config = PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1)
 
     assert config.resume is False
+    assert config.bias_field_correction == "fast"
+
+
+def test_preprocess_config_rejects_unknown_bias_field_correction(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = tmp_path / "dataset"
+    _write_raw_dataset_manifest(
+        tmp_path,
+        dataset_dir,
+        mask_path=str(tmp_path / "mask.nii.gz"),
+    )
+
+    with pytest.raises(ValidationError, match="bias_field_correction"):
+        PreprocessConfig.model_validate(
+            {
+                "dataset_dir": dataset_dir,
+                "augmentation_factor": 1,
+                "bias_field_correction": "other",
+            }
+        )
 
 
 def test_preprocess_config_resume_requires_existing_checkpoint(tmp_path: Path) -> None:
@@ -234,6 +256,7 @@ def test_preprocess_config_resume_accepts_running_checkpoint(tmp_path: Path) -> 
         updated_at=timestamp(),
         subjects=[],
         augmentation_factor=1,
+        bias_field_correction="fast",
         raw_manifest_fingerprint=content_fingerprint(raw_manifest),
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
 
@@ -256,6 +279,7 @@ def test_preprocess_config_resume_allows_changed_seed(tmp_path: Path) -> None:
         subjects=[],
         augmentation_factor=1,
         seed=41,
+        bias_field_correction="fast",
         raw_manifest_fingerprint=content_fingerprint(raw_manifest),
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
 
@@ -282,6 +306,7 @@ def test_preprocess_config_resume_rejects_complete_manifest(tmp_path: Path) -> N
         updated_at=timestamp(),
         subjects=[],
         augmentation_factor=3,
+        bias_field_correction="fast",
         raw_manifest_fingerprint=content_fingerprint(raw_manifest),
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
 
@@ -426,6 +451,7 @@ def _training_dataset(tmp_path: Path) -> Path:
         created_at=now,
         updated_at=now,
         subjects=subjects,
+        bias_field_correction="fast",
         raw_manifest_fingerprint="test-raw-manifest",
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
     return dataset_dir
@@ -1018,6 +1044,7 @@ def test_train_config_accepts_complete_manifest_without_training_policy(
         created_at=now,
         updated_at=now,
         subjects=[],
+        bias_field_correction="fast",
         raw_manifest_fingerprint="test-raw-manifest",
     ).write(manifest_path)
     _complete_split(tmp_path, [])
@@ -1044,6 +1071,7 @@ def test_train_config_accepts_complete_manifest_without_training_policy(
         created_at=now,
         updated_at=now,
         subjects=missing_subjects,
+        bias_field_correction="fast",
         raw_manifest_fingerprint="test-raw-manifest",
     ).write(manifest_path)
     with pytest.raises(
@@ -1085,6 +1113,7 @@ def test_infer_config_accepts_raw_dataset_explicit_input(tmp_path: Path) -> None
         dataset_dir=dataset_dir,
         detector_checkpoint_path=detector_checkpoint,
         student_checkpoint_path=student_checkpoint,
+        use_amp=False,
         device="cpu",
     )
 
@@ -1112,6 +1141,7 @@ def test_infer_config_rejects_running_raw_manifest(tmp_path: Path) -> None:
             dataset_dir=dataset_dir,
             detector_checkpoint_path=detector_checkpoint,
             student_checkpoint_path=student_checkpoint,
+            use_amp=False,
             device="cpu",
         )
 
@@ -1139,6 +1169,7 @@ def test_infer_config_rejects_missing_explicit_detector_checkpoint(
             dataset_dir=dataset_dir,
             detector_checkpoint_path=tmp_path / "missing-detector.pth",
             student_checkpoint_path=student_checkpoint,
+            use_amp=False,
             device="cpu",
         )
 
@@ -1185,6 +1216,7 @@ def test_evaluate_config_accepts_explicit_checkpoints(tmp_path: Path) -> None:
         output_dir=tmp_path / "evaluation",
         detector_checkpoint_path=detector_checkpoint,
         student_checkpoint_path=student_checkpoint,
+        use_amp=False,
         device="cpu",
     )
 
@@ -1213,6 +1245,7 @@ def test_evaluate_config_rejects_running_raw_manifest(tmp_path: Path) -> None:
             output_dir=tmp_path / "evaluation",
             detector_checkpoint_path=detector_checkpoint,
             student_checkpoint_path=student_checkpoint,
+            use_amp=False,
             device="cpu",
         )
 
@@ -1245,6 +1278,7 @@ def test_evaluate_config_derives_paths_from_experiment(tmp_path: Path) -> None:
         {
             "dataset_dir": dataset_dir,
             "experiment_dir": experiment_dir,
+            "use_amp": False,
             "device": "cpu",
         }
     )
@@ -1301,6 +1335,7 @@ def test_evaluate_config_rejects_maskless_experiment_subject(
             {
                 "dataset_dir": dataset_dir,
                 "experiment_dir": experiment_dir,
+                "use_amp": False,
                 "device": "cpu",
             }
         )
@@ -1323,6 +1358,7 @@ def test_evaluate_config_rejects_non_complete_experiment_manifest(
             {
                 "dataset_dir": dataset_dir,
                 "experiment_dir": tmp_path / "experiment",
+                "use_amp": False,
                 "device": "cpu",
             }
         )
@@ -1351,6 +1387,7 @@ def test_evaluate_config_rejects_mismatched_preprocessed_manifest(
             {
                 "dataset_dir": dataset_dir,
                 "experiment_dir": tmp_path / "experiment",
+                "use_amp": False,
                 "device": "cpu",
             }
         )
@@ -1374,6 +1411,7 @@ def test_evaluate_config_rejects_mismatched_train_manifest_split(
             {
                 "dataset_dir": dataset_dir,
                 "experiment_dir": tmp_path / "experiment",
+                "use_amp": False,
                 "device": "cpu",
             }
         )
@@ -1415,6 +1453,7 @@ def test_evaluate_config_rejects_missing_explicit_detector_checkpoint(
             output_dir=tmp_path / "evaluation",
             detector_checkpoint_path=tmp_path / "missing-detector.pth",
             student_checkpoint_path=student_checkpoint,
+            use_amp=False,
             device="cpu",
         )
 
@@ -1437,6 +1476,7 @@ def test_evaluate_config_rejects_maskless_raw_subjects(tmp_path: Path) -> None:
             output_dir=tmp_path / "evaluation",
             detector_checkpoint_path=detector_checkpoint,
             student_checkpoint_path=student_checkpoint,
+            use_amp=False,
             device="cpu",
         )
 
@@ -1478,6 +1518,7 @@ def test_target_centered_config_validates_threshold(tmp_path: Path) -> None:
         "patch_size": 24,
         "augmentation_factor": 1,
         "probability_threshold": 0.5,
+        "use_amp": False,
         "detector": CandidateDetector(),
     }
     assert TargetCenteredPatchConfig.model_validate(values).probability_threshold == 0.5
@@ -1506,6 +1547,7 @@ def test_target_centered_config_rejects_invalid_detector(tmp_path: Path) -> None
         "patch_size": 24,
         "augmentation_factor": 5,
         "probability_threshold": 0.5,
+        "use_amp": False,
         "detector": object(),
     }
 

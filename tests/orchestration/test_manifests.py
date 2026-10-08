@@ -169,6 +169,7 @@ def test_complete_preprocessed_manifest_rejects_incomplete_subject() -> None:
                 )
             ],
             augmentation_factor=1,
+            bias_field_correction="fast",
             raw_manifest_fingerprint="raw",
         )
 
@@ -182,6 +183,7 @@ def test_complete_patch_manifest_rejects_empty_subject_output() -> None:
             subject_ids=["subject-1"],
             patch_size=48,
             augmentation_factor=1,
+            use_amp=False,
             records=[],
         )
 

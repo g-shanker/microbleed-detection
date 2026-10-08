@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from skimage.measure import label
 
+from ..constants import AMP_DTYPE_NAME
 from ..errors import ApplicationError
 from .common.models import CandidateDetector, CandidateDiscriminatorTeacher
 
@@ -87,13 +88,26 @@ def get_model_device(model: nn.Module) -> torch.device:
     return next(model.parameters()).device
 
 
-def predict_logits(model: nn.Module, model_input: np.ndarray) -> torch.Tensor:
+def predict_logits(
+    model: nn.Module,
+    model_input: np.ndarray,
+    use_amp: bool,
+) -> torch.Tensor:
     """Run single-sample inference and return unbatched logits."""
     model.eval()
     model_device = get_model_device(model)
     tensor_input = torch.from_numpy(model_input).float().unsqueeze(0)
-    with torch.no_grad():
-        return model(tensor_input.to(model_device))[0]
+    amp_enabled = use_amp and model_device.type == "cuda"
+    with (
+        torch.no_grad(),
+        torch.autocast(
+            device_type=model_device.type,
+            dtype=getattr(torch, AMP_DTYPE_NAME),
+            enabled=amp_enabled,
+        ),
+    ):
+        output = model(tensor_input.to(model_device))[0]
+    return output.float()
 
 
 def microbleed_probability(logits: torch.Tensor) -> np.ndarray:

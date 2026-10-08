@@ -1,8 +1,8 @@
 # Paths to the preprocessed dataset and training artifacts.
-dataset_dir = "data/indexed"
-experiment_dir = "experiments/default"
-device = "cpu"
-resume = false
+dataset_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/datasets/non_mIP"
+experiment_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/experiments/fullset"
+device = "cuda"
+resume = true
 
 # Detector candidate selection and persisted-variant sampling.
 detector_candidate_threshold = 0.5
@@ -10,8 +10,8 @@ detector_augmentation_factor = 10
 discriminator_augmentation_factor = 5
 
 # DataLoader settings. pin_memory is mainly useful for CUDA transfers.
-num_workers = 0
-pin_memory = false
+num_workers = 8
+pin_memory = true
 
 # Detector optimizer and training-loop settings.
 [detector_hyperparameters]
@@ -25,7 +25,7 @@ learning_rate_period = 2
 minimum_learning_rate = 0.000001
 weight_decay = 0.0
 minimum_improvement = 0.0
-use_amp = false
+use_amp = true
 
 # Teacher optimizer and training-loop settings.
 [teacher_hyperparameters]
@@ -39,7 +39,7 @@ learning_rate_period = 2
 minimum_learning_rate = 0.000001
 weight_decay = 0.0
 minimum_improvement = 0.0
-use_amp = false
+use_amp = true
 
 # Student optimizer and training-loop settings.
 [student_hyperparameters]
@@ -53,4 +53,4 @@ learning_rate_period = 2
 minimum_learning_rate = 0.000001
 weight_decay = 0.0
 minimum_improvement = 0.0
-use_amp = false
+use_amp = true

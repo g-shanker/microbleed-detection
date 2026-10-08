@@ -166,6 +166,7 @@ def test_execute_loads_checkpoints_before_preprocessing(
         dataset_dir=dataset_dir,
         detector_checkpoint_path=detector_checkpoint,
         student_checkpoint_path=student_checkpoint,
+        use_amp=False,
         device="cpu",
     )
 
@@ -250,6 +251,7 @@ def test_execute_writes_inference_manifest(tmp_path: Path, monkeypatch) -> None:
         [subject],
         cast(Any, FakeModel()),
         cast(Any, FakeModel()),
+        False,
     )
 
     manifest = InferManifest.read(layout.inference_manifest_path())
@@ -384,6 +386,7 @@ def test_infer_subjects_wraps_manifest_write_failure(
             [],
             cast(Any, FakeModel()),
             cast(Any, FakeModel()),
+            False,
         )
 
 
@@ -438,6 +441,7 @@ def test_infer_subject_wraps_output_write_failure(tmp_path: Path, monkeypatch) -
             cast(Any, object()),
             cast(Any, object()),
             ExperimentLayout(experiment_dir=tmp_path),
+            False,
         )
 
 
@@ -484,7 +488,13 @@ def test_execute_preprocesses_raw_subjects(tmp_path: Path, monkeypatch) -> None:
         subjects=[raw_subject],
     ).write(DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path())
 
-    monkeypatch.setattr(infer, "preprocess_subject", lambda *args: preprocessed_subject)
+    preprocessing_calls = []
+
+    def fake_preprocess_subject(*args, **kwargs):
+        preprocessing_calls.append((args, kwargs))
+        return preprocessed_subject
+
+    monkeypatch.setattr(infer, "preprocess_subject", fake_preprocess_subject)
     detector = cast(Any, object())
     student = cast(Any, object())
     monkeypatch.setattr(
@@ -499,11 +509,13 @@ def test_execute_preprocesses_raw_subjects(tmp_path: Path, monkeypatch) -> None:
         output_dir=output_dir,
         detector_checkpoint_path=detector_checkpoint,
         student_checkpoint_path=student_checkpoint,
+        use_amp=True,
         device="cpu",
     )
 
     infer.execute(config)
 
+    assert preprocessing_calls[0][1] == {"bias_field_correction": "fast"}
     assert calls == [
         (
             "cpu",
@@ -513,6 +525,7 @@ def test_execute_preprocesses_raw_subjects(tmp_path: Path, monkeypatch) -> None:
             [preprocessed_subject],
             detector,
             student,
+            True,
         )
     ]
 

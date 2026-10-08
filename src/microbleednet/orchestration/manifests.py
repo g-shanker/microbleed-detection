@@ -9,6 +9,7 @@ from pydantic import Field, ValidationError, model_validator
 
 from ..core import io as core_io
 from ..core.datamodels import (
+    BiasFieldCorrection,
     BoundingBox,
     EpochLoss,
     EvaluationAggregate,
@@ -221,6 +222,9 @@ class PreprocessedDatasetManifest(Manifest):
         default=None,
         ge=0,
         description="Seed used for reproducible preprocessing augmentation.",
+    )
+    bias_field_correction: BiasFieldCorrection = Field(
+        description="Bias-field correction applied to inverted modalities.",
     )
     raw_manifest_fingerprint: str = Field(
         description="Fingerprint of the raw manifest used to create this dataset.",
@@ -455,6 +459,9 @@ class PatchManifest(Manifest):
         ge=0,
         le=1,
         description="Detector probability threshold used for target-centered patches.",
+    )
+    use_amp: bool = Field(
+        description="Whether target-centered patches used CUDA float16 autocast.",
     )
     records: list[PatchRecord] = Field(
         description="Materialized patch records produced by extraction."

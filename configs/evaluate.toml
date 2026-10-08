@@ -2,4 +2,6 @@
 # Checkpoint and output paths are derived from experiment_dir.
 dataset_dir = "data/indexed"
 experiment_dir = "experiments/default"
+# Use float16 autocast for CUDA inference.
+use_amp = false
 device = "cpu"

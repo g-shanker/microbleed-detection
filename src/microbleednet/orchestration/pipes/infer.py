@@ -33,6 +33,7 @@ from ..utils import (
     load_stage_checkpoint,
     release_gpu_memory,
     resolve_path_string,
+    subject_failure_context,
 )
 from .preprocess import preprocess_subject
 
@@ -66,14 +67,16 @@ def execute(config: InferConfig) -> None:
         for subject in progress.track(
             manifest.subjects, description="Preprocessing inference subjects"
         ):
-            subjects.append(
-                preprocess_subject(
-                    subject,
-                    modalities[subject.source_id],
-                    preprocessing_layout,
-                    PREPROCESSING_AUGMENTATION_FACTOR,
+            with subject_failure_context(subject.subject_id, "inference preprocessing"):
+                subjects.append(
+                    preprocess_subject(
+                        subject,
+                        modalities[subject.source_id],
+                        preprocessing_layout,
+                        PREPROCESSING_AUGMENTATION_FACTOR,
+                        bias_field_correction=config.bias_field_correction,
+                    )
                 )
-            )
         infer_subjects(
             config.device,
             layout,
@@ -82,6 +85,7 @@ def execute(config: InferConfig) -> None:
             subjects,
             detector,
             student,
+            config.use_amp,
         )
     finally:
         del detector
@@ -119,12 +123,15 @@ def infer_subjects(
     subjects: list[PreprocessedSubject],
     detector: CandidateDetector,
     student: CandidateDiscriminatorStudent,
+    use_amp: bool,
 ) -> None:
     """Infer all preprocessed subjects and persist their output manifest."""
-    results = [
-        infer_subject(subject, detector, student, output_layout)
-        for subject in progress.track(subjects, description="Inferring subjects")
-    ]
+    results = []
+    for subject in progress.track(subjects, description="Inferring subjects"):
+        with subject_failure_context(subject.subject_id, "inference"):
+            results.append(
+                infer_subject(subject, detector, student, output_layout, use_amp)
+            )
 
     manifest = InferManifest(
         status=ManifestStatus.COMPLETE,
@@ -160,6 +167,7 @@ def infer_subject(
     detector: CandidateDetector,
     student: CandidateDiscriminatorStudent,
     output_layout: ExperimentLayout,
+    use_amp: bool,
 ) -> InferredSubject:
     """Produce and save a restored binary detection mask for one subject."""
     volume_image = core_io.load_volume(subject.variants[VARIANT_INDEX].volume_path)
@@ -169,7 +177,9 @@ def infer_subject(
         core_io.load_volume(subject.variants[VARIANT_INDEX].frst_path)
     )
 
-    detector_probability = core_inference.infer_detector(detector, volume, frst_array)
+    detector_probability = core_inference.infer_detector(
+        detector, volume, frst_array, use_amp
+    )
     retained_labels = core_inference.infer_discriminator(
         student,
         volume,
@@ -178,6 +188,7 @@ def infer_subject(
         DETECTOR_THRESHOLD,
         DISCRIMINATOR_PATCH_SIZE,
         STUDENT_THRESHOLD,
+        use_amp,
     )
 
     zooms = list(volume_image.header.get_zooms())

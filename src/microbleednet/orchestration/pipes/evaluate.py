@@ -16,7 +16,12 @@ from ..manifests import (
     RawDatasetManifest,
     SplitManifest,
 )
-from ..utils import release_gpu_memory, resolve_path_string, resolve_subjects
+from ..utils import (
+    release_gpu_memory,
+    resolve_path_string,
+    resolve_subjects,
+    subject_failure_context,
+)
 from . import infer
 
 logger = logging.getLogger(__name__)
@@ -59,6 +64,7 @@ def execute(config: EvaluateConfig) -> None:
                 inference_subjects,
                 detector,
                 student,
+                config.use_amp,
             )
         finally:
             del detector
@@ -78,6 +84,7 @@ def execute(config: EvaluateConfig) -> None:
                 dataset_dir=config.dataset_dir,
                 detector_checkpoint_path=config.detector_checkpoint_path,
                 student_checkpoint_path=config.student_checkpoint_path,
+                use_amp=config.use_amp,
                 device=config.device,
             )
         )
@@ -123,38 +130,39 @@ def evaluate_subjects(
     for subject_id, mask_path in progress.track(
         subjects, description="Evaluating subjects"
     ):
-        if mask_path is None:
-            raise ApplicationError(
-                category="Input data",
-                summary="Evaluation requires a reference mask",
-                cause=f"Subject '{subject_id}' has no reference mask",
-                fix="Provide reference masks for every evaluation subject",
-                context={"subject_id": subject_id},
+        with subject_failure_context(subject_id, "evaluation"):
+            if mask_path is None:
+                raise ApplicationError(
+                    category="Input data",
+                    summary="Evaluation requires a reference mask",
+                    cause=f"Subject '{subject_id}' has no reference mask",
+                    fix="Provide reference masks for every evaluation subject",
+                    context={"subject_id": subject_id},
+                )
+            output_path = inference_output_paths.get(subject_id)
+            if not output_path:
+                raise ApplicationError(
+                    category="Manifest",
+                    summary="Inference output is missing for an evaluation subject",
+                    cause=(
+                        f"Inference manifest has no output for subject '{subject_id}'"
+                    ),
+                    fix="Rerun the evaluate command with the same configuration",
+                    context={
+                        "path": str(inference_manifest_path),
+                        "subject_id": subject_id,
+                    },
+                )
+            prediction = core_io.nifti_to_numpy(
+                core_io.load_volume(output_path)
             )
-        output_path = inference_output_paths.get(subject_id)
-        if not output_path:
-            raise ApplicationError(
-                category="Manifest",
-                summary="Inference output is missing for an evaluation subject",
-                cause=(
-                    f"Inference manifest has no output for subject '{subject_id}'"
-                ),
-                fix="Rerun the evaluate command with the same configuration",
-                context={
-                    "path": str(inference_manifest_path),
-                    "subject_id": subject_id,
-                },
+            reference = core_io.nifti_to_numpy(core_io.load_volume(mask_path))
+            per_subject.append(
+                EvaluatedSubject(
+                    subject_id=subject_id,
+                    metrics=score_masks(prediction, reference),
+                )
             )
-        prediction = core_io.nifti_to_numpy(
-            core_io.load_volume(output_path)
-        )
-        reference = core_io.nifti_to_numpy(core_io.load_volume(mask_path))
-        per_subject.append(
-            EvaluatedSubject(
-                subject_id=subject_id,
-                metrics=score_masks(prediction, reference),
-            )
-        )
 
     aggregate = aggregate_metrics(subject.metrics for subject in per_subject)
     evaluation_manifest_path = experiment_layout.evaluation_manifest_path()

@@ -214,11 +214,13 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
             subjects=[SimpleNamespace(subject_id="subject-1", output_path="prediction")]
         ),
     )
-    monkeypatch.setattr(
-        evaluate.infer,
-        "infer_subjects",
-        lambda *args: experiment_layout.inference_manifest_path().touch(),
-    )
+    inference_amp_settings = []
+
+    def fake_infer_subjects(*args):
+        inference_amp_settings.append(args[-1])
+        experiment_layout.inference_manifest_path().touch()
+
+    monkeypatch.setattr(evaluate.infer, "infer_subjects", fake_infer_subjects)
     monkeypatch.setattr(
         evaluate.infer,
         "load_inference_models",
@@ -243,10 +245,12 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
                 "experiment_dir": experiment_dir,
                 "dataset_dir": dataset_dir,
                 "device": "cpu",
+                "use_amp": True,
             }
         )
     )
 
+    assert inference_amp_settings == [True]
     manifest = EvaluateManifest.read(
         ExperimentLayout(experiment_dir=experiment_dir).evaluation_manifest_path()
     )
@@ -334,6 +338,7 @@ def test_execute_explicit_checkpoints_evaluates_all_subjects(
             output_dir=output_dir,
             detector_checkpoint_path=detector_checkpoint,
             student_checkpoint_path=student_checkpoint,
+            use_amp=False,
             device="cpu",
         )
     )

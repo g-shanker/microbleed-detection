@@ -23,6 +23,7 @@ def preprocess(
     volume = preprocess_input.volume
     mask = preprocess_input.mask
     modality = preprocess_input.modality
+    bias_field_correction = preprocess_input.bias_field_correction
     canonical_volume = volume_ops.reorient_to_canonical(volume)
 
     if mask is not None:
@@ -30,7 +31,12 @@ def preprocess(
 
     processed_volume, brain_mask_volume = volume_ops.extract_brain(canonical_volume)
     if modality in INVERTED_MODALITIES:
-        processed_volume = volume_ops.bias_field_correct_fast(processed_volume)
+        if bias_field_correction == "n4":
+            processed_volume = volume_ops.bias_field_correct_n4(
+                processed_volume, brain_mask_volume
+            )
+        else:
+            processed_volume = volume_ops.bias_field_correct_fast(processed_volume)
 
     volume_array = io.nifti_to_numpy(processed_volume)
     brain_mask = io.nifti_to_numpy(brain_mask_volume).astype(np.uint8)

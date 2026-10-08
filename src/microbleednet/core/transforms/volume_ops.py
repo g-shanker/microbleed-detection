@@ -92,6 +92,16 @@ def apply_bounding_box(volume: np.ndarray, bounding_box: BoundingBox) -> np.ndar
     return cropped_volume
 
 
+def add_to_bounding_box(
+    volume: np.ndarray,
+    values: np.ndarray | int | float,
+    bounding_box: BoundingBox,
+) -> None:
+    """Add values to a bounded region of a volume."""
+    bounded_region = apply_bounding_box(volume, bounding_box)
+    bounded_region[:] = bounded_region + values
+
+
 def reorient_to_canonical(volume: nib.Nifti1Image) -> nib.Nifti1Image:
     """Reorient a NIfTI image to the closest canonical voxel orientation."""
     return nib.as_closest_canonical(volume)
@@ -178,3 +188,27 @@ def bias_field_correct_fast(volume: nib.Nifti1Image) -> nib.Nifti1Image:
         corrected_volume = io.load_volume(restored_path)
         corrected_data = io.nifti_to_numpy(corrected_volume)
         return io.numpy_to_nifti(corrected_data, corrected_volume)
+
+
+def bias_field_correct_n4(
+    volume: nib.Nifti1Image,
+    brain_mask: nib.Nifti1Image,
+) -> nib.Nifti1Image:
+    """Correct foreground intensity bias with SimpleITK's N4 filter."""
+    import SimpleITK as sitk
+
+    volume_data = io.nifti_to_numpy(volume)
+    sitk_volume = sitk.GetImageFromArray(volume_data.T)
+
+    mask_data = io.nifti_to_numpy(brain_mask).T.astype(np.uint8)
+    sitk_mask = sitk.GetImageFromArray(mask_data)
+
+    spacing = [float(s) for s in volume.header.get_zooms()[:3]]
+    sitk_volume.SetSpacing(spacing)
+    sitk_mask.SetSpacing(spacing)
+
+    corrector = sitk.N4BiasFieldCorrectionImageFilter()
+    corrected_sitk = corrector.Execute(sitk_volume, sitk_mask)
+
+    corrected_data = sitk.GetArrayFromImage(corrected_sitk).T
+    return io.numpy_to_nifti(corrected_data, volume)

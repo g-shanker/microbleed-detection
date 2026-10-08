@@ -92,6 +92,7 @@ def configure_cli(
             TimeRemainingColumn(),
             TransferSpeedColumn(),
             console=console,
+            speed_estimate_period=3600,
         ) as rich_progress:
             yield from rich_progress.track(items, description=description)
 

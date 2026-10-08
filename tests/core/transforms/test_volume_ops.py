@@ -1,6 +1,8 @@
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import nibabel as nib
 import numpy as np
@@ -116,6 +118,18 @@ def test_get_bounding_box_returns_positive_extent() -> None:
 def test_get_bounding_box_rejects_empty_volume() -> None:
     with pytest.raises(ValueError, match="bounding box"):
         volume_ops.get_bounding_box(np.zeros((2, 2, 2)))
+
+
+def test_add_to_bounding_box_updates_only_bounded_region() -> None:
+    volume = np.zeros((3, 3, 3))
+    bounding_box = ((1, 3), (0, 2), (1, 3))
+
+    volume_ops.add_to_bounding_box(volume, np.ones((2, 2, 2)), bounding_box)
+    volume_ops.add_to_bounding_box(volume, 1, bounding_box)
+
+    expected = np.zeros_like(volume)
+    expected[1:3, 0:2, 1:3] = 2
+    np.testing.assert_array_equal(volume, expected)
 
 
 def test_extract_brain_requires_fsldir(monkeypatch) -> None:
@@ -243,4 +257,58 @@ def test_bias_field_correct_fast_runs_fast_and_preserves_geometry(
     assert Path(command[4]).name == "pre_fast.nii.gz"
     assert check is True
     np.testing.assert_array_equal(corrected.get_fdata(), np.full((2, 2, 2), 2.0))
+    np.testing.assert_array_equal(corrected.affine, affine)
+
+
+def test_bias_field_correct_n4_uses_bet_mask_and_preserves_geometry(
+    monkeypatch,
+) -> None:
+    sitk_images = []
+    executions = []
+
+    class FakeSimpleITKImage:
+        def __init__(self, array):
+            self.array = array
+            self.spacing = None
+
+        def SetSpacing(self, spacing):
+            self.spacing = tuple(spacing)
+
+    def get_image_from_array(array):
+        image = FakeSimpleITKImage(array)
+        sitk_images.append(image)
+        return image
+
+    class FakeN4Filter:
+        def Execute(self, image, mask):
+            executions.append((image, mask))
+            return image
+
+    monkeypatch.setitem(
+        sys.modules,
+        "SimpleITK",
+        SimpleNamespace(
+            GetImageFromArray=get_image_from_array,
+            N4BiasFieldCorrectionImageFilter=FakeN4Filter,
+            GetArrayFromImage=lambda image: image.array + 2,
+        ),
+    )
+    volume_data = np.arange(24, dtype=np.float32).reshape((2, 3, 4))
+    affine = np.diag([1.25, 2.5, 3.75, 1.0])
+    volume = nib.Nifti1Image(volume_data, affine)
+    bet_mask_data = np.zeros((2, 3, 4), dtype=np.uint8)
+    bet_mask_data[0, 0, 0] = 1
+    bet_mask_data[1, 2, 3] = 1
+    bet_mask = nib.Nifti1Image(bet_mask_data, affine)
+
+    corrected = volume_ops.bias_field_correct_n4(volume, bet_mask)
+
+    np.testing.assert_array_equal(sitk_images[0].array, volume_data.T)
+    np.testing.assert_array_equal(sitk_images[1].array, bet_mask_data.T)
+    expected_spacing = tuple(float(value) for value in volume.header.get_zooms()[:3])
+    assert sitk_images[0].spacing == expected_spacing
+    assert sitk_images[1].spacing == expected_spacing
+    assert executions[0][0] is sitk_images[0]
+    assert executions[0][1] is sitk_images[1]
+    np.testing.assert_array_equal(corrected.get_fdata(), volume_data + 2)
     np.testing.assert_array_equal(corrected.affine, affine)

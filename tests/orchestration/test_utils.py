@@ -1,3 +1,4 @@
+import logging
 import pickle
 from pathlib import Path
 
@@ -27,6 +28,50 @@ def test_create_rng_is_stable_for_matching_seed_and_spawn_key() -> None:
 
 def test_create_rng_accepts_no_seed() -> None:
     assert isinstance(utils.create_rng(), np.random.Generator)
+
+
+def test_subject_failure_context_enriches_application_error(caplog) -> None:
+    expected = ApplicationError(
+        category="Input data",
+        summary="Bad input",
+        context={"path": "volume.nii.gz"},
+    )
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(ApplicationError) as raised:
+            with utils.subject_failure_context("subject-17", "preprocessing"):
+                raise expected
+
+    assert raised.value is expected
+    assert expected.context == {
+        "path": "volume.nii.gz",
+        "subject_id": "subject-17",
+        "stage": "preprocessing",
+    }
+    assert "subject_id=subject-17" in caplog.text
+    assert "stage=preprocessing" in caplog.text
+
+
+def test_subject_failure_context_logs_unexpected_error(caplog) -> None:
+    expected = RuntimeError("unexpected failure")
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError) as raised:
+            with utils.subject_failure_context("subject-23", "inference"):
+                raise expected
+
+    assert raised.value is expected
+    assert "subject_id=subject-23" in caplog.text
+    assert "stage=inference" in caplog.text
+    assert "unexpected failure" in caplog.text
+
+
+def test_subject_failure_context_leaves_success_unlogged(caplog) -> None:
+    with caplog.at_level(logging.ERROR):
+        with utils.subject_failure_context("subject-42", "evaluation"):
+            pass
+
+    assert not caplog.records
 
 
 def test_resolve_path_string_returns_absolute_string(tmp_path: Path) -> None:

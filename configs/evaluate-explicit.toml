@@ -3,4 +3,6 @@ dataset_dir = "data/indexed"
 output_dir = "experiments/evaluation"
 detector_checkpoint_path = "checkpoints/detector.pth"
 student_checkpoint_path = "checkpoints/student.pth"
+# Use float16 autocast for CUDA inference.
+use_amp = false
 device = "cpu"

@@ -174,6 +174,7 @@ def train_stage(
         ),
         num_workers=num_workers,
         pin_memory=pin_memory,
+        persistent_workers=num_workers > 0,
     )
     validation_loader = DataLoader(
         validation_dataset,
@@ -184,6 +185,7 @@ def train_stage(
         ),
         num_workers=num_workers,
         pin_memory=pin_memory,
+        persistent_workers=num_workers > 0,
     )
     trainer = Trainer(
         model,
@@ -421,6 +423,7 @@ def train_student(
                 augmentation_factor=config.discriminator_augmentation_factor,
                 probability_threshold=config.detector_candidate_threshold,
                 detector=detector,
+                use_amp=config.detector_hyperparameters.use_amp,
             ),
             resume=config.resume,
         )
@@ -434,6 +437,7 @@ def train_student(
                 augmentation_factor=VALIDATION_AUGMENTATION_FACTOR,
                 probability_threshold=config.detector_candidate_threshold,
                 detector=detector,
+                use_amp=config.detector_hyperparameters.use_amp,
             ),
             resume=config.resume,
         )

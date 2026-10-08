@@ -1,9 +1,11 @@
+from collections import OrderedDict
 from typing import NamedTuple
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from ...constants import MAX_OPEN_PATCH_FILES
 from ..datamodels import LoadedPatch, PatchRecord
 from ..io import load_array_mmap
 from ..utils import stack_volume_and_frst
@@ -32,18 +34,25 @@ class BasePatchDataset(Dataset):
     ):
         """Initialize patch records and an empty memory-map cache."""
         self.patches = patches
-        self.mmaps: dict[str, np.ndarray] = {}
+        self.mmaps: OrderedDict[str, np.ndarray] = OrderedDict()
 
     def __len__(self):
         """Return the number of available patch records."""
         return len(self.patches)
 
     def mmap(self, path: str) -> np.ndarray:
-        """Return a cached read-only memory map for an array path."""
-        array = self.mmaps.get(path)
-        if array is None:
-            array = load_array_mmap(path)
-            self.mmaps[path] = array
+        """Return a cached read-only memory map using an LRU policy."""
+        if path in self.mmaps:
+            # Move to the end to mark as recently used
+            self.mmaps.move_to_end(path)
+            return self.mmaps[path]
+
+        if len(self.mmaps) >= MAX_OPEN_PATCH_FILES:
+            _, oldest_mmap = self.mmaps.popitem(last=False)
+            del oldest_mmap
+
+        array = load_array_mmap(path)
+        self.mmaps[path] = array
         return array
 
     def load_patch(self, idx: int) -> LoadedPatch:

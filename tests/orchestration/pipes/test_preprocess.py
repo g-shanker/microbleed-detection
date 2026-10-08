@@ -5,6 +5,7 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+from microbleednet.errors import ApplicationError
 from microbleednet.orchestration.configs import PreprocessConfig
 from microbleednet.orchestration.layouts import DatasetLayout
 from microbleednet.orchestration.manifests import (
@@ -84,6 +85,7 @@ def test_execute_writes_volumes_masks_and_complete_manifest(
 
     def fake_preprocess(preprocess_input):
         assert preprocess_input.modality == "QSM"
+        assert preprocess_input.bias_field_correction == "n4"
         fixture_shape = (32, 32, 32)
         output_mask = np.ones(fixture_shape, dtype=np.uint8)
         return SimpleNamespace(
@@ -97,7 +99,12 @@ def test_execute_writes_volumes_masks_and_complete_manifest(
     monkeypatch.setattr(preprocess.processor, "preprocess", fake_preprocess)
 
     preprocess.execute(
-        PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=2, seed=42)
+        PreprocessConfig(
+            dataset_dir=dataset_dir,
+            augmentation_factor=2,
+            bias_field_correction="n4",
+            seed=42,
+        )
     )
 
     layout = DatasetLayout(dataset_dir=dataset_dir)
@@ -107,6 +114,7 @@ def test_execute_writes_volumes_masks_and_complete_manifest(
     subject = manifest.subjects[0]
     assert manifest.augmentation_factor == 2
     assert manifest.seed == 42
+    assert manifest.bias_field_correction == "n4"
     assert len(subject.variants) == 2
     assert Path(subject.brain_mask_path).is_file()
     variant = subject.variants[0]
@@ -116,6 +124,43 @@ def test_execute_writes_volumes_masks_and_complete_manifest(
     assert Path(variant.mask_path).is_file()
     assert variant.frst_path is not None
     assert Path(variant.frst_path).is_file()
+    assert preprocess.io.load_volume(variant.volume_path).get_data_dtype() == np.dtype(
+        np.float32
+    )
+    assert preprocess.io.load_volume(variant.frst_path).get_data_dtype() == np.dtype(
+        np.float32
+    )
+    assert preprocess.io.load_volume(variant.mask_path).get_data_dtype() == np.dtype(
+        np.uint8
+    )
+
+
+def test_execute_adds_subject_context_to_preprocessing_error(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    dataset_dir = tmp_path / "dataset"
+    _write_raw_dataset(dataset_dir)
+    failure = ApplicationError(
+        category="Input data",
+        summary="Volume and mask affines do not match",
+    )
+    monkeypatch.setattr(
+        preprocess.processor,
+        "preprocess",
+        lambda _: (_ for _ in ()).throw(failure),
+    )
+
+    with pytest.raises(ApplicationError) as raised:
+        preprocess.execute(
+            PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1)
+        )
+
+    assert raised.value is failure
+    assert failure.context == {
+        "subject_id": "source_masked",
+        "stage": "preprocessing",
+    }
+    assert "subject_id=source_masked" in caplog.text
 
 
 def test_execute_writes_maskless_subject_without_mask_output(

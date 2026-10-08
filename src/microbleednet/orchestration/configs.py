@@ -17,7 +17,12 @@ from ..constants import (
     TEACHER_STAGE,
     TRAIN_MANIFEST_LABEL,
 )
-from ..core.datamodels import FrozenModel, Hyperparameters, Modality
+from ..core.datamodels import (
+    BiasFieldCorrection,
+    FrozenModel,
+    Hyperparameters,
+    Modality,
+)
 from ..errors import ApplicationError
 from .layouts import (
     DatasetLayout,
@@ -346,6 +351,14 @@ class PreprocessConfig(FrozenModel):
         gt=0,
         description=("Total persisted variants per subject, including the original."),
     )
+    bias_field_correction: BiasFieldCorrection = Field(
+        default="fast",
+        description=(
+            "Bias-field correction method for inverted modalities. The original "
+            "MicrobleedNet paper uses FSL FAST; choose 'n4' to use SimpleITK N4 "
+            "instead."
+        ),
+    )
     seed: int | None = Field(
         default=None,
         ge=0,
@@ -623,6 +636,17 @@ class InferConfig(FrozenModel):
     student_checkpoint_path: Path = Field(
         description="Explicit student checkpoint path.",
     )
+    bias_field_correction: BiasFieldCorrection = Field(
+        default="fast",
+        description=(
+            "Bias-field correction method for inverted modalities. The original "
+            "MicrobleedNet paper uses FSL FAST; choose 'n4' to use SimpleITK N4 "
+            "instead. Match the method used to preprocess the training data."
+        ),
+    )
+    use_amp: bool = Field(
+        description="Use float16 autocast for CUDA model inference.",
+    )
     device: str = Field(
         description=DEVICE_FIELD_DESCRIPTION,
     )
@@ -662,6 +686,9 @@ class EvaluateConfig(FrozenModel):
     )
     student_checkpoint_path: Path = Field(
         description="Student checkpoint for explicit evaluation.",
+    )
+    use_amp: bool = Field(
+        description="Use float16 autocast for CUDA inference during evaluation.",
     )
     device: str = Field(
         description=DEVICE_FIELD_DESCRIPTION,
@@ -850,6 +877,9 @@ class TargetCenteredPatchConfig(BasePatchConfig):
         ge=0,
         le=1,
         description="Minimum detector probability retained as a candidate.",
+    )
+    use_amp: bool = Field(
+        description="Use float16 autocast for detector inference on CUDA.",
     )
     detector: Any = Field(
         description="Loaded detector used to locate candidate centers.",
