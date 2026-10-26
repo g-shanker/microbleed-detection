@@ -204,6 +204,12 @@ class Trainer:
             else:
                 loss = self.task.training_step(self.model, batch)
 
+            if not torch.isfinite(loss).all().item():
+                raise ApplicationError(
+                    category="Training",
+                    summary="There was a non-finite loss"
+                )
+
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()

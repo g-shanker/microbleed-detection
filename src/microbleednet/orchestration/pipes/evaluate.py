@@ -84,6 +84,7 @@ def execute(config: EvaluateConfig) -> None:
                 dataset_dir=config.dataset_dir,
                 detector_checkpoint_path=config.detector_checkpoint_path,
                 student_checkpoint_path=config.student_checkpoint_path,
+                bias_field_correction=config.bias_field_correction,
                 use_amp=config.use_amp,
                 device=config.device,
             )

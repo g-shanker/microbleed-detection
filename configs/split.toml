@@ -1,6 +1,6 @@
 # Create the subject split consumed by training and held-out evaluation.
-dataset_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/datasets/non_mIP"
-experiment_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/experiments/fullset"
+dataset_dir = "/path/to/indexed/and/preprocessed/dataset"
+experiment_dir = "/desired/path/to/store/split/information/and/later/training/artifacts"
 
 # These proportions must sum to 1.0.
 train_size = 0.7

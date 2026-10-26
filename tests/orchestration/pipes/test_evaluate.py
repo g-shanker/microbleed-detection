@@ -448,8 +448,9 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
     assert "reference" not in loaded_paths
 
 
+@pytest.mark.parametrize("bias_field_correction", [None, "fast", "n4"])
 def test_execute_explicit_checkpoints_evaluates_all_subjects(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, bias_field_correction: str | None
 ) -> None:
     dataset_dir = tmp_path / "dataset"
     subjects = [
@@ -515,21 +516,23 @@ def test_execute_explicit_checkpoints_evaluates_all_subjects(
         ),
     )
 
-    evaluate.execute(
-        EvaluateConfig(
-            dataset_dir=dataset_dir,
-            output_dir=output_dir,
-            detector_checkpoint_path=detector_checkpoint,
-            student_checkpoint_path=student_checkpoint,
-            use_amp=False,
-            device="cpu",
-        )
-    )
+    config_values = {
+        "dataset_dir": dataset_dir,
+        "output_dir": output_dir,
+        "detector_checkpoint_path": detector_checkpoint,
+        "student_checkpoint_path": student_checkpoint,
+        "use_amp": False,
+        "device": "cpu",
+    }
+    if bias_field_correction is not None:
+        config_values["bias_field_correction"] = bias_field_correction
+    evaluate.execute(EvaluateConfig.model_validate(config_values))
 
     infer_config = captured["config"]
     assert infer_config.dataset_dir == dataset_dir
     assert infer_config.detector_checkpoint_path == detector_checkpoint
     assert infer_config.student_checkpoint_path == student_checkpoint
+    assert infer_config.bias_field_correction == (bias_field_correction or "fast")
     manifest = EvaluateManifest.read(
         ExperimentLayout(experiment_dir=output_dir).evaluation_manifest_path()
     )

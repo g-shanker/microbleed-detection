@@ -1,11 +1,12 @@
 # Paths to the preprocessed dataset and training artifacts.
-dataset_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/datasets/non_mIP"
-experiment_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/experiments/fullset"
+dataset_dir = "/path/to/indexed/and/preprocessed/dataset"
+experiment_dir = "/desired/path/to/store/checkpoints/and/intermediates"
 device = "cuda"
 resume = true
+seed = 42
 
 # Detector candidate selection and persisted-variant sampling.
-detector_candidate_threshold = 0.5
+detector_candidate_threshold = 0.2
 detector_augmentation_factor = 10
 discriminator_augmentation_factor = 5
 

@@ -28,9 +28,6 @@ dev = [
 
 [project.scripts]
 microbleednet = "microbleednet.cli.entrypoint:main"
-microbleednet-check-intensities = "microbleednet.intensity_report:main"
-microbleednet-check-preprocessed = "microbleednet.preprocessed_check:main"
-microbleednet-check-patches = "microbleednet.patch_check:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
