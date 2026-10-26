@@ -1221,6 +1221,24 @@ def test_evaluate_config_accepts_explicit_checkpoints(tmp_path: Path) -> None:
     )
 
     assert config.output_dir == tmp_path / "evaluation"
+    assert config.bias_field_correction == "fast"
+
+
+def test_evaluate_config_rejects_unknown_bias_field_correction(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValidationError, match="bias_field_correction"):
+        EvaluateConfig.model_validate(
+            {
+                "dataset_dir": tmp_path,
+                "output_dir": tmp_path / "output",
+                "detector_checkpoint_path": tmp_path / "detector.pth",
+                "student_checkpoint_path": tmp_path / "student.pth",
+                "bias_field_correction": "other",
+                "use_amp": False,
+                "device": "cpu",
+            }
+        )
 
 
 def test_evaluate_config_rejects_running_raw_manifest(tmp_path: Path) -> None:

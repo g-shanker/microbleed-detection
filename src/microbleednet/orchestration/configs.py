@@ -687,6 +687,12 @@ class EvaluateConfig(FrozenModel):
     student_checkpoint_path: Path = Field(
         description="Student checkpoint for explicit evaluation.",
     )
+    bias_field_correction: BiasFieldCorrection = Field(
+        description=(
+            "Bias-field correction for explicit-checkpoint evaluation: 'fast' "
+            "or 'n4'. Match the preprocessing used for training."
+        ),
+    )
     use_amp: bool = Field(
         description="Use float16 autocast for CUDA inference during evaluation.",
     )
