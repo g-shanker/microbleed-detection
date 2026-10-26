@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import nibabel as nib
 import numpy as np
 import pytest
 
@@ -41,11 +42,13 @@ def test_score_masks_matches_overlapping_components() -> None:
     metrics = score_masks(prediction, reference)
 
     assert metrics.model_dump(mode="json") == {
-        "true_positive": 1,
+        "detected_reference_clusters": 1,
+        "overlapping_prediction_clusters": 1,
         "false_positive": 1,
         "false_negative": 1,
         "cluster_tpr": 0.5,
         "cluster_precision": 0.5,
+        "dice_score": 0.5,
     }
 
 
@@ -54,9 +57,50 @@ def test_score_masks_handles_empty_components() -> None:
 
     metrics = score_masks(mask, mask)
 
-    assert metrics.true_positive == 0
+    assert metrics.detected_reference_clusters == 0
+    assert metrics.overlapping_prediction_clusters == 0
     assert metrics.false_positive == 0
     assert metrics.false_negative == 0
+    assert metrics.cluster_tpr == 0.0
+    assert metrics.cluster_precision == 0.0
+    assert metrics.dice_score == 1.0
+
+
+@pytest.mark.parametrize(
+    ("prediction_values", "reference_values", "expected"),
+    [
+        ([1, 1, 0], [1, 1, 0], 1.0),
+        ([1, 1, 0], [0, 1, 0], 2 / 3),
+        ([1, 0, 0], [0, 0, 1], 0.0),
+        ([0, 0, 0], [1, 0, 0], 0.0),
+        ([1, 0, 0], [0, 0, 0], 0.0),
+        ([255, 255, 0], [1, 1, 0], 1.0),
+    ],
+)
+def test_score_masks_foreground_dice(
+    prediction_values, reference_values, expected
+) -> None:
+    prediction = np.array(prediction_values, dtype=np.uint8).reshape(3, 1, 1)
+    reference = np.array(reference_values, dtype=np.uint8).reshape(3, 1, 1)
+
+    assert score_masks(prediction, reference).dice_score == pytest.approx(expected)
+
+
+def test_aggregate_metrics_averages_subject_dice() -> None:
+    perfect = score_masks(np.ones((3, 3, 3)), np.ones((3, 3, 3)))
+    missed = score_masks(np.zeros((1, 1, 1)), np.ones((1, 1, 1)))
+
+    assert aggregate_metrics([perfect, missed]).dice_score == 0.5
+    assert aggregate_metrics([]).model_dump(mode="json") == {
+        "detected_reference_clusters": 0,
+        "overlapping_prediction_clusters": 0,
+        "false_positive": 0,
+        "false_negative": 0,
+        "cluster_tpr": 0.0,
+        "cluster_precision": 0.0,
+        "dice_score": 0.0,
+        "false_positives_per_subject": 0.0,
+    }
 
 
 def test_score_masks_ignores_background_and_unmatched_pairs() -> None:
@@ -67,7 +111,7 @@ def test_score_masks_ignores_background_and_unmatched_pairs() -> None:
 
     metrics = score_masks(prediction, reference)
 
-    assert metrics.true_positive == 0
+    assert metrics.detected_reference_clusters == 0
     assert metrics.false_positive == 1
     assert metrics.false_negative == 1
 
@@ -81,6 +125,145 @@ def test_aggregate_metrics_counts_subjects() -> None:
     aggregate = aggregate_metrics([metrics])
 
     assert aggregate.false_positives_per_subject == 1.0
+
+
+@pytest.mark.parametrize("merged_prediction", [False, True])
+def test_score_masks_counts_all_overlapping_clusters(merged_prediction: bool) -> None:
+    connected = np.zeros((7, 7, 7), dtype=np.uint8)
+    connected[1:6, 3, 3] = 1
+    separated = np.zeros_like(connected)
+    separated[1, 3, 3] = 1
+    separated[5, 3, 3] = 1
+    prediction, reference = (
+        (connected, separated) if merged_prediction else (separated, connected)
+    )
+
+    metrics = score_masks(prediction, reference)
+
+    assert metrics.detected_reference_clusters == (2 if merged_prediction else 1)
+    assert metrics.overlapping_prediction_clusters == (1 if merged_prediction else 2)
+    assert metrics.false_positive == 0
+    assert metrics.false_negative == 0
+    assert metrics.cluster_tpr == 1.0
+    assert metrics.cluster_precision == 1.0
+
+
+def test_score_masks_does_not_trade_lesion_hits_for_overlap_volume() -> None:
+    prediction = np.zeros((14, 8, 3), dtype=np.uint8)
+    reference = np.zeros_like(prediction)
+    prediction[1:12, 1, 1] = 1
+    prediction[1, 5, 1] = 1
+    reference[1:10, 1, 1] = 1
+    reference[1, 1:6, 1] = 1
+    reference[11, 1, 1] = 1
+
+    metrics = score_masks(prediction, reference)
+
+    assert metrics.detected_reference_clusters == 2
+    assert metrics.overlapping_prediction_clusters == 2
+    assert metrics.false_positive == 0
+    assert metrics.false_negative == 0
+
+
+def test_score_masks_binarizes_labels_and_uses_26_connectivity() -> None:
+    reference = np.zeros((4, 4, 4))
+    reference[1, 1, 1] = 1
+    reference[2, 2, 2] = 255
+    prediction = (reference > 0).astype(np.uint8)
+
+    metrics = score_masks(prediction, reference)
+
+    assert metrics.detected_reference_clusters == 1
+    assert metrics.overlapping_prediction_clusters == 1
+    assert metrics.false_negative == 0
+    assert metrics.dice_score == 1.0
+    assert score_masks(reference, prediction) == metrics
+
+
+def test_score_masks_accepts_one_voxel_overlap_without_dice_threshold() -> None:
+    prediction = np.zeros((20, 20, 20))
+    reference = np.zeros_like(prediction)
+    prediction[1:15, 1:15, 1:15] = 1
+    reference[14:18, 14:18, 14:18] = 1
+
+    metrics = score_masks(prediction, reference)
+
+    assert metrics.detected_reference_clusters == 1
+    assert metrics.false_positive == 0
+    assert metrics.false_negative == 0
+    assert metrics.dice_score < 0.001
+
+
+def test_aggregate_metrics_pools_reference_and_prediction_hits_separately() -> None:
+    connected = np.zeros((7, 7, 7))
+    connected[1:6, 3, 3] = 1
+    separated = np.zeros_like(connected)
+    separated[1, 3, 3] = 1
+    separated[5, 3, 3] = 1
+    split = score_masks(separated, connected)
+    missed = score_masks(np.zeros((3, 3, 3)), np.ones((3, 3, 3)))
+    spurious = score_masks(np.ones((3, 3, 3)), np.zeros((3, 3, 3)))
+
+    metrics = aggregate_metrics([split, missed, spurious])
+
+    assert metrics.detected_reference_clusters == 1
+    assert metrics.overlapping_prediction_clusters == 2
+    assert metrics.false_positive == 1
+    assert metrics.false_negative == 1
+    assert metrics.cluster_tpr == 0.5
+    assert metrics.cluster_precision == pytest.approx(2 / 3)
+    assert metrics.false_positives_per_subject == pytest.approx(1 / 3)
+
+
+def test_evaluate_subjects_writes_overlap_metrics_from_nifti(
+    tmp_path: Path, monkeypatch
+) -> None:
+    prediction = np.zeros((7, 7, 7), dtype=np.uint8)
+    prediction[1, 3, 3] = 1
+    prediction[5, 3, 3] = 1
+    reference = np.zeros_like(prediction)
+    reference[1:6, 3, 3] = 255
+    affine = np.eye(4)
+    affine[0, 3] = 100
+    prediction_image = nib.Nifti1Image(prediction, affine)
+    reference_image = nib.Nifti1Image(reference, affine)
+    prediction_image.header.set_xyzt_units("mm")
+    reference_image.header.set_xyzt_units("mm")
+    prediction_path = tmp_path / "prediction.nii.gz"
+    reference_path = tmp_path / "reference.nii.gz"
+    evaluate.core_io.save_volume(prediction_image, prediction_path)
+    evaluate.core_io.save_volume(reference_image, reference_path)
+    monkeypatch.setattr(
+        evaluate.InferManifest,
+        "read",
+        lambda _: SimpleNamespace(
+            status=ManifestStatus.COMPLETE,
+            subjects=[
+                SimpleNamespace(
+                    subject_id="subject-1",
+                    discriminator_output_path=str(prediction_path),
+                )
+            ],
+        ),
+    )
+    layout = ExperimentLayout(experiment_dir=tmp_path)
+
+    evaluate.evaluate_subjects(
+        EvaluateConfig.model_construct(device="cpu"),
+        tmp_path,
+        layout,
+        [("subject-1", str(reference_path))],
+    )
+
+    manifest = EvaluateManifest.read(layout.evaluation_manifest_path())
+    assert manifest.subjects[0].metrics.detected_reference_clusters == 1
+    assert manifest.subjects[0].metrics.overlapping_prediction_clusters == 2
+    assert manifest.aggregate.detected_reference_clusters == 1
+    assert manifest.aggregate.overlapping_prediction_clusters == 2
+    assert manifest.aggregate.cluster_tpr == 1.0
+    assert manifest.aggregate.cluster_precision == 1.0
+    assert manifest.aggregate.false_positive == 0
+    assert manifest.aggregate.false_negative == 0
 
 
 def test_evaluate_subjects_requires_reference_mask(tmp_path: Path, monkeypatch) -> None:
@@ -235,14 +418,10 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
 
     def load_volume(path):
         loaded_paths.append(path)
-        return path
+        array = prediction if path == "prediction" else reference
+        return nib.Nifti1Image(array, np.eye(4))
 
     monkeypatch.setattr(evaluate.core_io, "load_volume", load_volume)
-    monkeypatch.setattr(
-        evaluate.core_io,
-        "nifti_to_numpy",
-        lambda volume: prediction if volume == "prediction" else reference,
-    )
 
     evaluate.execute(
         EvaluateConfig.model_validate(
@@ -260,8 +439,11 @@ def test_execute_writes_held_out_evaluation_manifest(tmp_path, monkeypatch) -> N
         ExperimentLayout(experiment_dir=experiment_dir).evaluation_manifest_path()
     )
     assert [item.subject_id for item in manifest.subjects] == ["subject-1"]
-    assert manifest.subjects[0].metrics.true_positive == 1
-    assert manifest.aggregate.true_positive == 1
+    assert manifest.subjects[0].metrics.detected_reference_clusters == 1
+    assert manifest.aggregate.detected_reference_clusters == 1
+    assert manifest.aggregate.overlapping_prediction_clusters == 1
+    assert manifest.subjects[0].metrics.dice_score == 1.0
+    assert manifest.aggregate.dice_score == 1.0
     assert "raw-reference" in loaded_paths
     assert "reference" not in loaded_paths
 
@@ -327,13 +509,9 @@ def test_execute_explicit_checkpoints_evaluates_all_subjects(
     monkeypatch.setattr(
         evaluate.core_io,
         "load_volume",
-        lambda path: path,
-    )
-    monkeypatch.setattr(
-        evaluate.core_io,
-        "nifti_to_numpy",
-        lambda volume: (
-            prediction if str(volume).startswith("prediction") else reference
+        lambda path: nib.Nifti1Image(
+            prediction if str(path).startswith("prediction") else reference,
+            np.eye(4),
         ),
     )
 

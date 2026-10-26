@@ -334,18 +334,22 @@ def test_inference_manifest_round_trips_recipe_and_results(tmp_path: Path) -> No
 def test_evaluation_manifest_round_trips_metrics(tmp_path: Path) -> None:
     now = timestamp()
     metrics = EvaluationMetrics(
-        true_positive=2,
+        detected_reference_clusters=2,
+        overlapping_prediction_clusters=4,
         false_positive=1,
         false_negative=3,
         cluster_tpr=0.4,
-        cluster_precision=2 / 3,
+        cluster_precision=4 / 5,
+        dice_score=0.75,
     )
     aggregate = EvaluationAggregate(
-        true_positive=2,
+        detected_reference_clusters=2,
+        overlapping_prediction_clusters=4,
         false_positive=1,
         false_negative=3,
         cluster_tpr=0.4,
-        cluster_precision=2 / 3,
+        cluster_precision=4 / 5,
+        dice_score=0.75,
         false_positives_per_subject=1.0,
     )
     manifest = EvaluateManifest(
@@ -368,3 +372,11 @@ def test_evaluation_manifest_round_trips_metrics(tmp_path: Path) -> None:
         EvaluatedSubject(subject_id="subject-1", metrics=metrics)
     ]
     assert loaded.aggregate == aggregate
+
+    payload = core_io.read_json(path)
+    del payload["subjects"][0]["metrics"]["overlapping_prediction_clusters"]
+    del payload["aggregate"]["overlapping_prediction_clusters"]
+    core_io.write_json(path, payload)
+
+    with pytest.raises(ValueError, match="overlapping_prediction_clusters"):
+        EvaluateManifest.read(path)

@@ -91,13 +91,16 @@ class Hyperparameters(FrozenModel):
 
 
 class EvaluationMetrics(FrozenModel):
-    """Lesion-level metrics for one prediction/reference mask pair."""
+    """Lesion-level metrics and voxel Dice for a prediction/reference mask pair."""
 
-    true_positive: int = Field(
-        ge=0, description="Reference components matched by predicted components."
+    detected_reference_clusters: int = Field(
+        ge=0, description="Reference components overlapping any predicted foreground."
+    )
+    overlapping_prediction_clusters: int = Field(
+        ge=0, description="Predicted components overlapping any reference foreground."
     )
     false_positive: int = Field(
-        ge=0, description="Predicted components that did not match a reference."
+        ge=0, description="Predicted components with no reference foreground overlap."
     )
     false_negative: int = Field(
         ge=0, description="Reference components missed by the prediction."
@@ -105,20 +108,25 @@ class EvaluationMetrics(FrozenModel):
     cluster_tpr: float = Field(
         ge=0,
         le=1,
-        description="Matched reference components divided by all reference components.",
+        description="Detected reference components divided by all references.",
     )
     cluster_precision: float = Field(
         ge=0,
         le=1,
-        description="Matched predicted components divided by all predicted components.",
+        description="Overlapping predicted components divided by all predictions.",
+    )
+    dice_score: float = Field(
+        ge=0,
+        le=1,
+        description="Foreground voxel Dice; two empty masks score one.",
     )
 
 class EvaluationAggregate(EvaluationMetrics):
-    """Aggregated lesion-level metrics for an evaluated cohort."""
+    """Pooled lesion metrics and mean subject Dice for an evaluated cohort."""
 
     false_positives_per_subject: float = Field(
         ge=0,
-        description="Average number of unmatched predicted components per subject.",
+        description="Average predicted components without reference overlap per scan.",
     )
 
 
@@ -270,4 +278,3 @@ class PatchRecord(FrozenModel):
     has_microbleed: bool = Field(
         description="Whether the patch mask contains a microbleed."
     )
-
