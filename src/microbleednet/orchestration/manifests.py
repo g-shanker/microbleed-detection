@@ -9,6 +9,7 @@ from pydantic import Field, ValidationError, model_validator
 
 from ..core import io as core_io
 from ..core.datamodels import (
+    BiasFieldCorrection,
     BoundingBox,
     EpochLoss,
     EvaluationAggregate,
@@ -222,6 +223,9 @@ class PreprocessedDatasetManifest(Manifest):
         ge=0,
         description="Seed used for reproducible preprocessing augmentation.",
     )
+    bias_field_correction: BiasFieldCorrection = Field(
+        description="Bias-field correction applied to inverted modalities.",
+    )
     raw_manifest_fingerprint: str = Field(
         description="Fingerprint of the raw manifest used to create this dataset.",
     )
@@ -346,7 +350,12 @@ class InferredSubject(FrozenModel):
     """Published result metadata for one inferred preprocessed subject."""
 
     subject_id: str = Field(description="Subject identifier.")
-    output_path: str = Field(description="Absolute path to the final detection mask.")
+    detector_output_path: str = Field(
+        description="Absolute path to the detector probability map."
+    )
+    discriminator_output_path: str = Field(
+        description="Absolute path to the discriminator-filtered detection mask."
+    )
 
 
 class InferManifest(Manifest):
@@ -396,7 +405,10 @@ class InferManifest(Manifest):
             missing_outputs = [
                 subject.subject_id
                 for subject in self.subjects
-                if not subject.output_path
+                if (
+                    not subject.detector_output_path
+                    or not subject.discriminator_output_path
+                )
             ]
             if missing_outputs:
                 raise ValueError(
@@ -455,6 +467,9 @@ class PatchManifest(Manifest):
         ge=0,
         le=1,
         description="Detector probability threshold used for target-centered patches.",
+    )
+    use_amp: bool = Field(
+        description="Whether target-centered patches used CUDA float16 autocast.",
     )
     records: list[PatchRecord] = Field(
         description="Materialized patch records produced by extraction."

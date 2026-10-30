@@ -1,71 +1,84 @@
 from typing import Iterable
 
 import numpy as np
-from scipy.optimize import linear_sum_assignment
 
 from ...constants import COMPONENT_CONNECTIVITY
 from ..datamodels import EvaluationAggregate, EvaluationMetrics
 from ..utils import label_components
 
 
+def dice_score(prediction: np.ndarray, reference: np.ndarray) -> float:
+    """Return foreground voxel Dice, scoring two empty masks as one."""
+    prediction_foreground = prediction > 0
+    reference_foreground = reference > 0
+    foreground_count = int(
+        np.count_nonzero(prediction_foreground)
+        + np.count_nonzero(reference_foreground)
+    )
+    intersection = int(
+        np.count_nonzero(prediction_foreground & reference_foreground)
+    )
+    return 2 * intersection / foreground_count if foreground_count else 1.0
+
+
 def score_masks(
     prediction: np.ndarray, reference: np.ndarray
 ) -> EvaluationMetrics:
-    """Score connected components with one-to-one overlap matching."""
-    prediction_labels = label_components(prediction, COMPONENT_CONNECTIVITY)
-    reference_labels = label_components(reference, COMPONENT_CONNECTIVITY)
-    prediction_ids = np.unique(prediction_labels[prediction_labels > 0])
-    reference_ids = np.unique(reference_labels[reference_labels > 0])
-    overlap = np.zeros((len(prediction_ids), len(reference_ids)), dtype=np.int64)
-    for prediction_index, prediction_id in enumerate(prediction_ids):
-        prediction_region = prediction_labels == prediction_id
-        reference_values, counts = np.unique(
-            reference_labels[prediction_region], return_counts=True
-        )
-        for reference_id, count in zip(reference_values, counts):
-            if reference_id:
-                overlap[prediction_index, reference_ids == reference_id] = count
-    if overlap.size:
-        rows, columns = linear_sum_assignment(-overlap)
-        matched = overlap[rows, columns] > 0
-        true_positive = int(np.count_nonzero(matched))
-    else:
-        true_positive = 0
-    false_positive = len(prediction_ids) - true_positive
-    false_negative = len(reference_ids) - true_positive
-    reference_count = len(reference_ids)
-    prediction_count = len(prediction_ids)
+    """Count any-overlap clusters in prevalidated masks on the same voxel grid."""
+    prediction_labels = label_components(prediction > 0, COMPONENT_CONNECTIVITY)
+    reference_labels = label_components(reference > 0, COMPONENT_CONNECTIVITY)
+    overlap = (prediction_labels > 0) & (reference_labels > 0)
+    detected_reference_clusters = int(np.unique(reference_labels[overlap]).size)
+    overlapping_prediction_clusters = int(np.unique(prediction_labels[overlap]).size)
+    reference_count = int(reference_labels.max())
+    prediction_count = int(prediction_labels.max())
     return EvaluationMetrics(
-        true_positive=true_positive,
-        false_positive=false_positive,
-        false_negative=false_negative,
+        detected_reference_clusters=detected_reference_clusters,
+        overlapping_prediction_clusters=overlapping_prediction_clusters,
+        false_positive=prediction_count - overlapping_prediction_clusters,
+        false_negative=reference_count - detected_reference_clusters,
         cluster_tpr=(
-            true_positive / reference_count if reference_count else 0.0
+            detected_reference_clusters / reference_count if reference_count else 0.0
         ),
         cluster_precision=(
-            true_positive / prediction_count if prediction_count else 0.0
+            overlapping_prediction_clusters / prediction_count
+            if prediction_count else 0.0
         ),
+        dice_score=dice_score(prediction_labels, reference_labels),
     )
 
 
 def aggregate_metrics(metrics: Iterable[EvaluationMetrics]) -> EvaluationAggregate:
-    """Aggregate lesion counts and ratios across evaluated subjects."""
+    """Pool lesion counts and ratios and average subject voxel Dice."""
     subject_metrics = list(metrics)
-    true_positive = sum(metric.true_positive for metric in subject_metrics)
+    detected_reference_clusters = sum(
+        metric.detected_reference_clusters for metric in subject_metrics
+    )
+    overlapping_prediction_clusters = sum(
+        metric.overlapping_prediction_clusters for metric in subject_metrics
+    )
     false_positive = sum(metric.false_positive for metric in subject_metrics)
     false_negative = sum(metric.false_negative for metric in subject_metrics)
-    reference_count = true_positive + false_negative
-    prediction_count = true_positive + false_positive
+    reference_count = detected_reference_clusters + false_negative
+    prediction_count = overlapping_prediction_clusters + false_positive
     subject_count = len(subject_metrics)
     return EvaluationAggregate(
-        true_positive=true_positive,
+        detected_reference_clusters=detected_reference_clusters,
+        overlapping_prediction_clusters=overlapping_prediction_clusters,
         false_positive=false_positive,
         false_negative=false_negative,
-        cluster_tpr=(true_positive / reference_count if reference_count else 0.0),
+        cluster_tpr=(
+            detected_reference_clusters / reference_count if reference_count else 0.0
+        ),
         cluster_precision=(
-            true_positive / prediction_count if prediction_count else 0.0
+            overlapping_prediction_clusters / prediction_count
+            if prediction_count else 0.0
         ),
         false_positives_per_subject=(
             false_positive / subject_count if subject_count else 0.0
+        ),
+        dice_score=(
+            sum(metric.dice_score for metric in subject_metrics) / subject_count
+            if subject_count else 0.0
         ),
     )

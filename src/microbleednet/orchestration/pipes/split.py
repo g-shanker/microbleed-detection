@@ -1,12 +1,16 @@
 import logging
+from typing import cast
 
 from sklearn.model_selection import train_test_split
 
+from ...core import io
+from ...progress import progress
 from ..configs import SplitConfig
 from ..layouts import DatasetLayout, ExperimentLayout
 from ..manifests import (
     ManifestStatus,
     PreprocessedDatasetManifest,
+    PreprocessedSubject,
     SplitManifest,
     content_fingerprint,
 )
@@ -14,22 +18,45 @@ from ..utils import resolve_path_string
 
 logger = logging.getLogger(__name__)
 
+
+def subject_has_microbleed(subject: PreprocessedSubject) -> bool:
+    """Return whether a subject's original preprocessed mask contains a lesion."""
+    mask_path = cast(str, subject.variants[0].mask_path)
+    mask = io.nifti_to_numpy(io.load_volume(mask_path))
+    return bool(mask.any())
+
+
 def execute(config: SplitConfig) -> None:
     """Partition preprocessed subjects and persist the reproducible split."""
     manifest_path = DatasetLayout(
         dataset_dir=config.dataset_dir
     ).preprocessed_manifest_path()
     preprocessed_manifest = PreprocessedDatasetManifest.read(manifest_path)
-    train_subjects, held_out_subjects = train_test_split(
+    has_microbleeds = [
+        subject_has_microbleed(subject)
+        for subject in progress.track(
+            preprocessed_manifest.subjects,
+            description="Classifying subjects",
+        )
+    ]
+    (
+        train_subjects,
+        held_out_subjects,
+        _,
+        held_out_has_microbleeds,
+    ) = train_test_split(
         preprocessed_manifest.subjects,
+        has_microbleeds,
         train_size=config.train_size,
         random_state=config.seed,
+        stratify=has_microbleeds,
     )
     validation_subjects, test_subjects = train_test_split(
         held_out_subjects,
         train_size=config.validation_size
         / (config.validation_size + config.test_size),
         random_state=config.seed,
+        stratify=held_out_has_microbleeds,
     )
 
     split_manifest_path = ExperimentLayout(

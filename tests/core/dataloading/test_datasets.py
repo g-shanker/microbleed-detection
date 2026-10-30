@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import torch
 
+from microbleednet.core.dataloading import datasets
 from microbleednet.core.dataloading.datasets import (
     BasePatchDataset,
     ClassificationPatchDataset,
@@ -54,6 +55,23 @@ def test_dataset_reuses_mmap_and_loads_persisted_frst(tmp_path: Path) -> None:
     assert SegmentationClassificationPatchDataset([record])[0].label.item() == 1
     assert ClassificationPatchDataset([record])[0].label.item() == 1
     assert torch.all(dataset[0].volume[1] == 2)
+
+
+def test_dataset_evicts_least_recently_used_mmap(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(datasets, "MAX_OPEN_PATCH_FILES", 2)
+    paths = [tmp_path / f"array-{index}.npy" for index in range(3)]
+    for index, path in enumerate(paths):
+        np.save(path, np.array([index]))
+
+    dataset = BasePatchDataset([])
+    dataset.mmap(str(paths[0]))
+    dataset.mmap(str(paths[1]))
+    dataset.mmap(str(paths[0]))
+    dataset.mmap(str(paths[2]))
+
+    assert list(dataset.mmaps) == [str(paths[0]), str(paths[2])]
 
 
 def test_base_dataset_requires_getitem() -> None:

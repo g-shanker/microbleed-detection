@@ -1,5 +1,8 @@
 import gc
+import logging
 import pickle
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +13,37 @@ from ..core import io as core_io
 from ..errors import ApplicationError
 from .layouts import StageName
 from .manifests import PreprocessedSubject
+
+logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def subject_failure_context(
+    subject_id: str, stage: str
+) -> Generator[None, None, None]:
+    """Add subject context to expected errors and log unexpected failures."""
+    try:
+        yield
+    except ApplicationError as error:
+        error.context = {
+            **error.context,
+            "subject_id": subject_id,
+            "stage": stage,
+        }
+        logger.error(
+            "Subject processing failed: stage=%s subject_id=%s: %s",
+            stage,
+            subject_id,
+            error,
+        )
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected subject processing failure: stage=%s subject_id=%s",
+            stage,
+            subject_id,
+        )
+        raise
 
 
 def create_rng(seed: int | None = None, *spawn_key: int) -> np.random.Generator:

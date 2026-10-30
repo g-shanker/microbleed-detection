@@ -11,6 +11,7 @@ dependencies = [
     "rich>=14.3.3",
     "scikit-image>=0.25.2",
     "scikit-learn>=1.7.2",
+    "SimpleITK>=2.5.0",
     "scipy>=1.15.3",
     "torch>=2.11.0",
     "torchvision>=0.26.0",

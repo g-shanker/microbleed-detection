@@ -1,6 +1,10 @@
 # Evaluate every masked subject using explicitly supplied compatible checkpoints.
-dataset_dir = "data/indexed"
-output_dir = "experiments/evaluation"
-detector_checkpoint_path = "checkpoints/detector.pth"
-student_checkpoint_path = "checkpoints/student.pth"
-device = "cpu"
+dataset_dir = "/path/to/indexed/dataset"
+output_dir = "/desired/path/to/store/inference/and/evalutation/artifacts"
+detector_checkpoint_path = "/path/to/detector/checkpoint/to/use/for/evaluation"
+student_checkpoint_path = "/path/to/student/checkpoint/to/use/for/evaluation"
+# Match the method used to preprocess the training data: "fast" or "n4".
+bias_field_correction = "n4"
+# Use float16 autocast for CUDA inference.
+use_amp = true
+device = "cuda"

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import nibabel as nib
+import numpy as np
 import pytest
 from pydantic import ValidationError
 
@@ -19,8 +21,15 @@ from microbleednet.orchestration.pipes import split
 def _write_preprocessed_manifest(
     dataset_dir: Path, count: int = 10, maskless_subject_id: str | None = None
 ) -> None:
-    subjects = [
-        PreprocessedSubject(
+    subjects = []
+    for index in range(count):
+        subject_id = f"subject-{index}"
+        mask_path = dataset_dir / f"mask-{index}.nii.gz"
+        mask = np.zeros((1, 1, 1), dtype=np.uint8)
+        if index % 2 == 0:
+            mask[0, 0, 0] = 1
+        nib.save(nib.Nifti1Image(mask, np.eye(4)), mask_path)
+        subjects.append(PreprocessedSubject(
             subject_id=f"subject-{index}",
             original_volume_path=f"volume-{index}",
             brain_mask_path=f"brain-mask-{index}",
@@ -30,21 +39,20 @@ def _write_preprocessed_manifest(
                     volume_path=f"volume-{index}",
                     mask_path=(
                         None
-                        if f"subject-{index}" == maskless_subject_id
-                        else f"mask-{index}"
+                        if subject_id == maskless_subject_id
+                        else str(mask_path)
                     ),
                     frst_path=f"frst-{index}",
                 )
             ],
-        )
-        for index in range(count)
-    ]
+        ))
     now = timestamp()
     PreprocessedDatasetManifest(
         status=ManifestStatus.COMPLETE,
         created_at=now,
         updated_at=now,
         subjects=subjects,
+        bias_field_correction="fast",
         raw_manifest_fingerprint="test-raw-manifest",
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
 
@@ -83,6 +91,16 @@ def test_split_execute_writes_seeded_manifest_and_overwrites_it(
         + second.validation_subject_ids
         + second.test_subject_ids
     ) == [f"subject-{index}" for index in range(10)]
+    for subject_ids in (
+        second.train_subject_ids,
+        second.validation_subject_ids,
+        second.test_subject_ids,
+    ):
+        positive_count = sum(
+            int(subject_id.removeprefix("subject-")) % 2 == 0
+            for subject_id in subject_ids
+        )
+        assert positive_count / len(subject_ids) == 0.5
 
 
 def test_split_rejects_subjects_without_masks(tmp_path: Path) -> None:

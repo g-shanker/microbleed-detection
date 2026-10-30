@@ -100,9 +100,9 @@ def test_get_slice_vessel_mask_selects_smaller_cluster_and_filters_regions(
         "random_state": inpaint_vessels.CLUSTERER_RANDOM_STATE,
     }
     assert frangi_arguments == {
-        "sigmas": (0.5, 0.7, 0.9, 1.1),
+            "sigmas": (0.5, 1.2, 0.2),
         "beta": 0.9,
-        "gamma": 20,
+            "alpha": 20,
         "black_ridges": False,
     }
 

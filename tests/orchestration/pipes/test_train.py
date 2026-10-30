@@ -91,6 +91,7 @@ def test_execute_runs_stages_with_configured_training_values(
         updated_at=now,
         subjects=subjects,
         augmentation_factor=10,
+        bias_field_correction="fast",
         raw_manifest_fingerprint="test-raw-manifest",
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
     calls: list[tuple[str, list[str], list[str], tuple[object, ...]]] = []
@@ -305,6 +306,7 @@ def test_stage_functions_apply_fixed_training_recipe(
         updated_at=now,
         subjects=[],
         augmentation_factor=8,
+        bias_field_correction="fast",
         raw_manifest_fingerprint="test-raw-manifest",
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
     preprocessed_manifest = PreprocessedDatasetManifest.read(
@@ -352,6 +354,7 @@ def test_stage_functions_apply_fixed_training_recipe(
     assert [call.patch_size for call in patch_calls] == [48, 48, 24, 24, 24, 24]
     assert [call.augmentation_factor for call in patch_calls] == [8, 1, 4, 1, 4, 1]
     assert patch_calls[4].probability_threshold == config.detector_candidate_threshold
+    assert patch_calls[4].use_amp is config.detector_hyperparameters.use_amp
     assert patch_calls[4].detector is patch_calls[5].detector
     assert len(trainer_calls) == 6
     assert [call[2] for call in trainer_calls[1::2]] == [
@@ -361,6 +364,7 @@ def test_stage_functions_apply_fixed_training_recipe(
     ]
     assert all(call["num_workers"] == 2 for call in loader_calls)
     assert all(call["pin_memory"] is True for call in loader_calls)
+    assert all(call["persistent_workers"] is True for call in loader_calls)
     assert len(initialized) == 1
     assert [path for _, path, _ in loaded] == [
         layout.best_checkpoint_path("detector"),
@@ -374,11 +378,13 @@ def test_stage_functions_apply_fixed_training_recipe(
     ]
 
 
+@pytest.mark.parametrize("num_workers", [0, 2])
 def test_train_stage_resumes_from_latest_checkpoint(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, num_workers: int
 ) -> None:
     resumed = []
     fit_calls = []
+    loader_calls = []
 
     class FakeDataset:
         def __init__(self, patches) -> None:
@@ -402,7 +408,11 @@ def test_train_stage_resumes_from_latest_checkpoint(
             fit_calls.append(description)
             return []
 
-    monkeypatch.setattr(train, "DataLoader", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        train,
+        "DataLoader",
+        lambda *args, **kwargs: loader_calls.append(kwargs) or object(),
+    )
     monkeypatch.setattr(train, "EqualBatchSampler", lambda *args, **kwargs: object())
     monkeypatch.setattr(train, "SequentialSampler", lambda dataset: object())
     monkeypatch.setattr(train, "BatchSampler", lambda *args, **kwargs: object())
@@ -416,14 +426,17 @@ def test_train_stage_resumes_from_latest_checkpoint(
         FakeDataset([object()]),  # pyright: ignore[reportArgumentType]
         experiment_layout,
         DETECTOR_STAGE,
-            _hyperparameters(2, 1),
-        num_workers=0,
+        _hyperparameters(2, 1),
+        num_workers=num_workers,
         pin_memory=False,
         resume=True,
     )
 
     assert resumed == [True]
     assert fit_calls == ["detector"]
+    assert all(
+        call["persistent_workers"] is (num_workers > 0) for call in loader_calls
+    )
 
 
 def test_completed_stage_respects_resume_and_manifest_status(
@@ -508,6 +521,7 @@ def test_extract_patch_records_reuses_compatible_manifest_on_resume(
         subject_ids=[subject.subject_id],
         patch_size=config.patch_size,
         augmentation_factor=config.augmentation_factor,
+        use_amp=False,
         records=[record],
     ).write(layout.patch_manifest_path(config.stage, config.split))
     monkeypatch.setattr(
@@ -547,6 +561,7 @@ def test_extract_patch_records_regenerates_missing_cached_arrays(
         subject_ids=[subject.subject_id],
         patch_size=config.patch_size,
         augmentation_factor=config.augmentation_factor,
+        use_amp=False,
         records=[stale_record],
     ).write(manifest_path)
     regenerated_paths = [
@@ -577,6 +592,7 @@ def test_extract_patch_records_regenerates_missing_cached_arrays(
             subject_ids=[subject.subject_id],
             patch_size=patch_config.patch_size,
             augmentation_factor=patch_config.augmentation_factor,
+            use_amp=False,
             records=[regenerated_record],
         ).write(manifest_path)
 
@@ -608,6 +624,7 @@ def test_stage_functions_return_early_when_stage_already_complete(
         created_at=now,
         updated_at=now,
         subjects=[],
+        bias_field_correction="fast",
         raw_manifest_fingerprint="test-raw-manifest",
     ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
     monkeypatch.setattr(train, "is_stage_completed", lambda *args, **kwargs: True)

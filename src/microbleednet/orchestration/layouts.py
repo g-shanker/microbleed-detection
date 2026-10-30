@@ -7,8 +7,9 @@ from ..constants import (
     BEST_CHECKPOINT_TEMPLATE,
     DEFAULT_NIFTI_SUFFIX,
     EVALUATION_MANIFEST_PATH,
+    INFERENCE_DETECTOR_OUTPUT_TEMPLATE,
+    INFERENCE_DISCRIMINATOR_OUTPUT_TEMPLATE,
     INFERENCE_MANIFEST_PATH,
-    INFERENCE_OUTPUT_TEMPLATE,
     LATEST_CHECKPOINT_TEMPLATE,
     PATCH_DIR_TEMPLATE,
     PATCH_MANIFEST_TEMPLATE,
@@ -151,9 +152,13 @@ class ExperimentLayout(FrozenModel):
         default=EVALUATION_MANIFEST_PATH,
         description="Evaluation manifest written after scoring subjects.",
     )
-    inference_output_template: Path = Field(
-        default=INFERENCE_OUTPUT_TEMPLATE,
-        description="Template for a subject's final detection mask.",
+    inference_discriminator_output_template: Path = Field(
+        default=INFERENCE_DISCRIMINATOR_OUTPUT_TEMPLATE,
+        description="Template for a subject's discriminator output mask.",
+    )
+    inference_detector_output_template: Path = Field(
+        default=INFERENCE_DETECTOR_OUTPUT_TEMPLATE,
+        description="Template for a subject's detector probability map.",
     )
 
     def resolve(self, template: Path, **values: str) -> Path:
@@ -196,9 +201,17 @@ class ExperimentLayout(FrozenModel):
         """Return the evaluation result manifest path."""
         return self.experiment_dir / self.evaluation_manifest
 
-    def inference_output_path(self, subject_id: str) -> Path:
-        """Return a subject's final inference mask path."""
-        return self.resolve(self.inference_output_template, subject_id=subject_id)
+    def inference_discriminator_output_path(self, subject_id: str) -> Path:
+        """Return a subject's discriminator output mask path."""
+        return self.resolve(
+            self.inference_discriminator_output_template, subject_id=subject_id
+        )
+
+    def inference_detector_output_path(self, subject_id: str) -> Path:
+        """Return a subject's detector probability map path."""
+        return self.resolve(
+            self.inference_detector_output_template, subject_id=subject_id
+        )
 
     def patch_volume_path(
         self, stage: StageName, split: SplitName, subject_id: str, variant: int

@@ -1,6 +1,6 @@
 # Create the subject split consumed by training and held-out evaluation.
-dataset_dir = "data/indexed"
-experiment_dir = "experiments/default"
+dataset_dir = "/path/to/indexed/and/preprocessed/dataset"
+experiment_dir = "/desired/path/to/store/split/information/and/later/training/artifacts"
 
 # These proportions must sum to 1.0.
 train_size = 0.7

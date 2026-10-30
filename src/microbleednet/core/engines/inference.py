@@ -2,20 +2,51 @@ import numpy as np
 import torch.nn as nn
 from skimage.measure import regionprops
 
-from ...constants import COMPONENT_CONNECTIVITY
+from ...constants import (
+    COMPONENT_CONNECTIVITY,
+    DETECTOR_INFERENCE_TILE_OVERLAP,
+    DETECTOR_INFERENCE_TILE_SIZE,
+)
 from .. import utils
 from ..transforms import patch as patch_transforms
+from ..transforms import volume_ops
 
 
 def infer_detector(
     detector: nn.Module,
     volume: np.ndarray,
     frst: np.ndarray,
+    use_amp: bool,
 ) -> np.ndarray:
-    """Return the detector's full-volume microbleed probability map."""
-    model_input = utils.stack_volume_and_frst(volume, frst)
-    logits = utils.predict_logits(detector, model_input)
-    return utils.microbleed_probability(logits)
+    """Return a detector probability map using bounded-memory tiled inference."""
+    spatial_shape = volume.shape
+
+    if all(size <= DETECTOR_INFERENCE_TILE_SIZE for size in spatial_shape):
+        model_input = utils.stack_volume_and_frst(volume, frst)
+        logits = utils.predict_logits(detector, model_input, use_amp)
+
+        return utils.microbleed_probability(logits)
+
+    probability_sum = np.zeros(spatial_shape, dtype=np.float32)
+    prediction_count = np.zeros(spatial_shape, dtype=np.uint8)
+    bounding_boxes = patch_transforms.get_overlapping_patch_bounding_boxes(
+        spatial_shape,
+        DETECTOR_INFERENCE_TILE_SIZE,
+        DETECTOR_INFERENCE_TILE_OVERLAP,
+    )
+    for bounding_box in bounding_boxes:
+        model_input = utils.stack_volume_and_frst(
+            volume_ops.apply_bounding_box(volume, bounding_box),
+            volume_ops.apply_bounding_box(frst, bounding_box),
+        )
+        logits = utils.predict_logits(detector, model_input, use_amp)
+        probability = utils.microbleed_probability(logits)
+        volume_ops.add_to_bounding_box(
+            probability_sum, probability, bounding_box
+        )
+        volume_ops.add_to_bounding_box(prediction_count, 1, bounding_box)
+
+    return probability_sum / prediction_count
 
 
 def infer_discriminator(
@@ -26,6 +57,7 @@ def infer_discriminator(
     detector_threshold: float,
     patch_size: int,
     discriminator_threshold: float,
+    use_amp: bool,
 ) -> np.ndarray:
     """Threshold detector candidates, classify patches, and return retained labels."""
     candidate_labels = utils.label_components(
@@ -46,7 +78,7 @@ def infer_discriminator(
         volume_patches, frst_patches, strict=True
     ):
         patch = utils.stack_volume_and_frst(volume_patch, frst_patch)
-        logits = utils.predict_logits(student, patch)
+        logits = utils.predict_logits(student, patch, use_amp)
         probability = utils.microbleed_probability(logits)
         retained.append(
             bool(probability >= discriminator_threshold)

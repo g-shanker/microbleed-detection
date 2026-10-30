@@ -52,6 +52,21 @@ def test_nonoverlapping_patches_pad_volume_smaller_than_patch() -> None:
     np.testing.assert_array_equal(patches[0][:2, :3, :4], 1)
 
 
+def test_overlapping_patch_bounds_cover_each_axis_and_trailing_edge() -> None:
+    bounding_boxes = patch.get_overlapping_patch_bounding_boxes(
+        shape=(3, 6, 5),
+        patch_size=4,
+        overlap=2,
+    )
+
+    assert bounding_boxes == [
+        ((0, 3), (0, 4), (0, 4)),
+        ((0, 3), (2, 6), (0, 4)),
+        ((0, 3), (0, 4), (1, 5)),
+        ((0, 3), (2, 6), (1, 5)),
+    ]
+
+
 def test_centered_patches_use_requested_size_at_volume_boundary() -> None:
     volume = np.ones((4, 4, 4))
 

@@ -166,6 +166,7 @@ def test_execute_loads_checkpoints_before_preprocessing(
         dataset_dir=dataset_dir,
         detector_checkpoint_path=detector_checkpoint,
         student_checkpoint_path=student_checkpoint,
+        use_amp=False,
         device="cpu",
     )
 
@@ -211,10 +212,11 @@ def test_execute_writes_inference_manifest(tmp_path: Path, monkeypatch) -> None:
         "nifti_to_numpy",
         lambda _: np.ones((3, 3, 3), dtype=np.float32),
     )
+    detector_probabilities = np.full((3, 3, 3), 0.25, dtype=np.float32)
     monkeypatch.setattr(
         infer.core_inference,
         "infer_detector",
-        lambda *args: np.ones((3, 3, 3), dtype=np.float32),
+        lambda *args: detector_probabilities,
     )
     monkeypatch.setattr(
         infer.core_inference,
@@ -250,12 +252,20 @@ def test_execute_writes_inference_manifest(tmp_path: Path, monkeypatch) -> None:
         [subject],
         cast(Any, FakeModel()),
         cast(Any, FakeModel()),
+        False,
     )
 
     manifest = InferManifest.read(layout.inference_manifest_path())
     assert [item.subject_id for item in manifest.subjects] == ["subject-1"]
-    assert len(saved) == 1
+    assert manifest.subjects[0].detector_output_path == str(
+        layout.inference_detector_output_path("subject-1").resolve()
+    )
+    assert manifest.subjects[0].discriminator_output_path == str(
+        layout.inference_discriminator_output_path("subject-1").resolve()
+    )
+    assert len(saved) == 2
     assert restore_calls[0][1] == ((0, 3), (0, 3), (0, 3))
+    np.testing.assert_array_equal(restore_calls[0][0], detector_probabilities)
 
 
 def test_load_inference_models_wraps_checkpoint_load_failure(
@@ -384,10 +394,14 @@ def test_infer_subjects_wraps_manifest_write_failure(
             [],
             cast(Any, FakeModel()),
             cast(Any, FakeModel()),
+            False,
         )
 
 
-def test_infer_subject_wraps_output_write_failure(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("failed_output", ["detector", "final"])
+def test_infer_subject_wraps_output_write_failure(
+    tmp_path: Path, monkeypatch, failed_output: str
+) -> None:
     subject = PreprocessedSubject(
         subject_id="subject-1",
         original_volume_path="original-volume",
@@ -426,18 +440,31 @@ def test_infer_subject_wraps_output_write_failure(tmp_path: Path, monkeypatch) -
         "restore_cropped_volume",
         lambda *args: volume_image,
     )
-    monkeypatch.setattr(
-        infer.core_io,
-        "save_volume",
-        lambda *_args: (_ for _ in ()).throw(OSError("read-only")),
+    layout = ExperimentLayout(experiment_dir=tmp_path)
+    failed_path = (
+        layout.inference_detector_output_path(subject.subject_id)
+        if failed_output == "detector"
+        else layout.inference_discriminator_output_path(subject.subject_id)
     )
 
-    with pytest.raises(ValueError, match="Could not write the inference output"):
+    def save_volume(image, path):
+        if path == failed_path:
+            raise OSError("read-only")
+
+    monkeypatch.setattr(infer.core_io, "save_volume", save_volume)
+
+    expected_summary = (
+        "Could not write the detector output"
+        if failed_output == "detector"
+        else "Could not write the discriminator output"
+    )
+    with pytest.raises(ValueError, match=expected_summary):
         infer.infer_subject(
             subject,
             cast(Any, object()),
             cast(Any, object()),
-            ExperimentLayout(experiment_dir=tmp_path),
+            layout,
+            False,
         )
 
 
@@ -484,7 +511,13 @@ def test_execute_preprocesses_raw_subjects(tmp_path: Path, monkeypatch) -> None:
         subjects=[raw_subject],
     ).write(DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path())
 
-    monkeypatch.setattr(infer, "preprocess_subject", lambda *args: preprocessed_subject)
+    preprocessing_calls = []
+
+    def fake_preprocess_subject(*args, **kwargs):
+        preprocessing_calls.append((args, kwargs))
+        return preprocessed_subject
+
+    monkeypatch.setattr(infer, "preprocess_subject", fake_preprocess_subject)
     detector = cast(Any, object())
     student = cast(Any, object())
     monkeypatch.setattr(
@@ -499,11 +532,13 @@ def test_execute_preprocesses_raw_subjects(tmp_path: Path, monkeypatch) -> None:
         output_dir=output_dir,
         detector_checkpoint_path=detector_checkpoint,
         student_checkpoint_path=student_checkpoint,
+        use_amp=True,
         device="cpu",
     )
 
     infer.execute(config)
 
+    assert preprocessing_calls[0][1] == {"bias_field_correction": "fast"}
     assert calls == [
         (
             "cpu",
@@ -513,6 +548,7 @@ def test_execute_preprocesses_raw_subjects(tmp_path: Path, monkeypatch) -> None:
             [preprocessed_subject],
             detector,
             student,
+            True,
         )
     ]
 

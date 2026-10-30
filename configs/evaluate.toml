@@ -1,5 +1,7 @@
 # Evaluate the held-out test split from a completed training experiment.
 # Checkpoint and output paths are derived from experiment_dir.
-dataset_dir = "data/indexed"
-experiment_dir = "experiments/default"
-device = "cpu"
+dataset_dir = "/path/to/indexed/and/preprocessed/dataset"
+experiment_dir = "/path/to/commpleted/experiment/containing/training/artifacts"
+# Use float16 autocast for CUDA inference.
+use_amp = true
+device = "cuda"

@@ -159,8 +159,8 @@ class Classifier(nn.Module):
         x = self.down_1(x)
         x = self.down_2(x)
         x = torch.flatten(x, 1)
-        x = self.fc_1(x)
         x = self.dropout(x)
+        x = self.fc_1(x)
         x = self.fc_2(x)
         logits = self.fc_3(x)
         return logits
