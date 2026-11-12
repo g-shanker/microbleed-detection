@@ -151,6 +151,12 @@ instead. For inference, set the same value in
 [`configs/infer.toml`](configs/infer.toml) that was used to preprocess the
 training data.
 
+If your masks mark each microbleed with a single point instead of the full
+lesion, set `point_annotation_radius_mm` to dilate each point into a ball of
+that physical radius. A radius of 2.5 mm keeps the dilated targets round enough
+to pass the inference shape filter across common voxel spacings. Omit the
+setting for full lesion masks.
+
 ### Split subjects
 
 Create the train, validation, and held-out test assignments:

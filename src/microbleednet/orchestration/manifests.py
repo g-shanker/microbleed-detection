@@ -232,7 +232,7 @@ class PreprocessedDatasetManifest(Manifest):
     point_annotation_radius_mm: float | None = Field(
         default=None,
         gt=0,
-        description="Radius used to dilated point-annotated masks, if any."
+        description="Radius used to dilate point-annotated masks, if any.",
     )
 
     @model_validator(mode="after")

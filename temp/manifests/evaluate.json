@@ -1,0 +1,261 @@
+{
+  "aggregate": {
+    "cluster_precision": 0.6761006289308176,
+    "cluster_tpr": 0.84,
+    "detected_reference_clusters": 252,
+    "dice_score": 0.05698632775341591,
+    "false_negative": 48,
+    "false_positive": 103,
+    "false_positives_per_subject": 5.15,
+    "overlapping_prediction_clusters": 215
+  },
+  "created_at": "2026-11-12T16:37:44.409608+00:00",
+  "dataset_dir": "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/datasets/mIP-no-noise",
+  "device": "cuda",
+  "inference_manifest_path": "/home/gouri/workspace/microbleed-detection/temp/manifests/infer.json",
+  "manifest_type": "evaluation",
+  "status": "complete",
+  "subjects": [
+    {
+      "metrics": {
+        "cluster_precision": 1.0,
+        "cluster_tpr": 0.6666666666666666,
+        "detected_reference_clusters": 2,
+        "dice_score": 0.06428571428571428,
+        "false_negative": 1,
+        "false_positive": 0,
+        "overlapping_prediction_clusters": 2
+      },
+      "subject_id": "mIP_Data_swan_COG0432"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 1.0,
+        "cluster_tpr": 0.7142857142857143,
+        "detected_reference_clusters": 5,
+        "dice_score": 0.03162650602409638,
+        "false_negative": 2,
+        "false_positive": 0,
+        "overlapping_prediction_clusters": 3
+      },
+      "subject_id": "mIP_Data_swan_COG0894"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.6551724137931034,
+        "cluster_tpr": 0.8461538461538461,
+        "detected_reference_clusters": 22,
+        "dice_score": 0.06646842749693896,
+        "false_negative": 4,
+        "false_positive": 10,
+        "overlapping_prediction_clusters": 19
+      },
+      "subject_id": "mIP_Data_swan_COG1150"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.8571428571428571,
+        "cluster_tpr": 0.8793103448275862,
+        "detected_reference_clusters": 51,
+        "dice_score": 0.0706185970125909,
+        "false_negative": 7,
+        "false_positive": 8,
+        "overlapping_prediction_clusters": 48
+      },
+      "subject_id": "mIP_Data_swan_COG1268"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.75,
+        "cluster_tpr": 1.0,
+        "detected_reference_clusters": 4,
+        "dice_score": 0.054857142857142854,
+        "false_negative": 0,
+        "false_positive": 1,
+        "overlapping_prediction_clusters": 3
+      },
+      "subject_id": "mIP_Data_swan_COG1374"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.4583333333333333,
+        "cluster_tpr": 0.9285714285714286,
+        "detected_reference_clusters": 26,
+        "dice_score": 0.05552776388194097,
+        "false_negative": 2,
+        "false_positive": 26,
+        "overlapping_prediction_clusters": 22
+      },
+      "subject_id": "mIP_Data_swan_COG1611"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.7272727272727273,
+        "cluster_tpr": 0.6153846153846154,
+        "detected_reference_clusters": 8,
+        "dice_score": 0.05991262741834824,
+        "false_negative": 5,
+        "false_positive": 3,
+        "overlapping_prediction_clusters": 8
+      },
+      "subject_id": "mIP_Data_swan_COG1666"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 1.0,
+        "cluster_tpr": 0.5,
+        "detected_reference_clusters": 1,
+        "dice_score": 0.047872340425531915,
+        "false_negative": 1,
+        "false_positive": 0,
+        "overlapping_prediction_clusters": 1
+      },
+      "subject_id": "mIP_Data_swan_COG1877"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.5,
+        "cluster_tpr": 1.0,
+        "detected_reference_clusters": 1,
+        "dice_score": 0.04945054945054945,
+        "false_negative": 0,
+        "false_positive": 1,
+        "overlapping_prediction_clusters": 1
+      },
+      "subject_id": "mIP_Data_swan_COG1900"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.7142857142857143,
+        "cluster_tpr": 1.0,
+        "detected_reference_clusters": 10,
+        "dice_score": 0.06133924007497018,
+        "false_negative": 0,
+        "false_positive": 4,
+        "overlapping_prediction_clusters": 10
+      },
+      "subject_id": "mIP_Data_swan_M028"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 1.0,
+        "cluster_tpr": 0.6666666666666666,
+        "detected_reference_clusters": 2,
+        "dice_score": 0.07659574468085106,
+        "false_negative": 1,
+        "false_positive": 0,
+        "overlapping_prediction_clusters": 2
+      },
+      "subject_id": "mIP_Data_swan_M085"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.8,
+        "cluster_tpr": 0.96875,
+        "detected_reference_clusters": 31,
+        "dice_score": 0.07539709591655873,
+        "false_negative": 1,
+        "false_positive": 5,
+        "overlapping_prediction_clusters": 20
+      },
+      "subject_id": "mIP_Data_swan_M089"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.4,
+        "cluster_tpr": 1.0,
+        "detected_reference_clusters": 2,
+        "dice_score": 0.03696098562628337,
+        "false_negative": 0,
+        "false_positive": 3,
+        "overlapping_prediction_clusters": 2
+      },
+      "subject_id": "mIP_Data_swan_UWD_007_T0"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.7142857142857143,
+        "cluster_tpr": 0.9090909090909091,
+        "detected_reference_clusters": 30,
+        "dice_score": 0.07385173809856206,
+        "false_negative": 3,
+        "false_positive": 8,
+        "overlapping_prediction_clusters": 20
+      },
+      "subject_id": "mIP_Data_swan_UWD_015_T0"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.6666666666666666,
+        "cluster_tpr": 0.4473684210526316,
+        "detected_reference_clusters": 17,
+        "dice_score": 0.05890636000938747,
+        "false_negative": 21,
+        "false_positive": 8,
+        "overlapping_prediction_clusters": 16
+      },
+      "subject_id": "mIP_Data_swan_UWD_017_T0"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.5454545454545454,
+        "cluster_tpr": 1.0,
+        "detected_reference_clusters": 6,
+        "dice_score": 0.050396640223985066,
+        "false_negative": 0,
+        "false_positive": 5,
+        "overlapping_prediction_clusters": 6
+      },
+      "subject_id": "mIP_Data_swan_UWD_021_T0"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.7,
+        "cluster_tpr": 1.0,
+        "detected_reference_clusters": 15,
+        "dice_score": 0.05804111245465538,
+        "false_negative": 0,
+        "false_positive": 6,
+        "overlapping_prediction_clusters": 14
+      },
+      "subject_id": "mIP_Data_swan_UWD_031_T0"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.3333333333333333,
+        "cluster_tpr": 1.0,
+        "detected_reference_clusters": 1,
+        "dice_score": 0.028279654359780047,
+        "false_negative": 0,
+        "false_positive": 2,
+        "overlapping_prediction_clusters": 1
+      },
+      "subject_id": "mIP_Data_swan_UWD_044_T0"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.5384615384615384,
+        "cluster_tpr": 1.0,
+        "detected_reference_clusters": 7,
+        "dice_score": 0.056910569105691054,
+        "false_negative": 0,
+        "false_positive": 6,
+        "overlapping_prediction_clusters": 7
+      },
+      "subject_id": "mIP_Data_swan_UWD_097_T0"
+    },
+    {
+      "metrics": {
+        "cluster_precision": 0.5882352941176471,
+        "cluster_tpr": 1.0,
+        "detected_reference_clusters": 11,
+        "dice_score": 0.06242774566473988,
+        "false_negative": 0,
+        "false_positive": 7,
+        "overlapping_prediction_clusters": 10
+      },
+      "subject_id": "mIP_Data_swan_UWD_100_T0"
+    }
+  ],
+  "updated_at": "2026-11-12T16:37:44.409867+00:00"
+}

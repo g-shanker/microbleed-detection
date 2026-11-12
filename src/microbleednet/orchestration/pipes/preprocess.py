@@ -134,7 +134,7 @@ def preprocess_subject(
         processed_mask = point_annotations.dilate_point_annotations(
             processed_mask,
             (float(sizes[0]), float(sizes[1]), float(sizes[2])),
-            point_annotation_radius_mm
+            point_annotation_radius_mm,
         )
 
     brain_mask_path = layout.brain_mask_path(subject.subject_id)
@@ -144,17 +144,23 @@ def preprocess_subject(
     for variant_index in range(augmentation_factor):
         variant_input_volume = processed_volume
         variant_input_mask = processed_mask
+        variant_brain_mask = brain_mask
         if variant_index > 0:
             rng = create_rng(seed, subject_index, variant_index)
-            variant_input_volume, variant_input_mask = augmentations.augment(
-                variant_input_volume, variant_input_mask, rng
+            variant_input_volume, variant_input_mask, variant_brain_mask = (
+                augmentations.augment(
+                    variant_input_volume, variant_input_mask, brain_mask, rng
+                )
             )
 
         variant_volume = nib.Nifti1Image(
             np.asarray(variant_input_volume, dtype=np.float32), processed_affine
         )
         variant_frst = nib.Nifti1Image(
-            np.asarray(frst.apply(np.asarray(variant_input_volume)), dtype=np.float32),
+            np.asarray(
+                frst.apply(np.asarray(variant_input_volume), variant_brain_mask),
+                dtype=np.float32,
+            ),
             processed_affine,
         )
         volume_path = layout.variant_volume_path(subject.subject_id, variant_index)

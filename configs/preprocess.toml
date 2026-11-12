@@ -6,6 +6,9 @@ dataset_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/d
 augmentation_factor = 10
 # Bias-field correction method for inverted modalities: "fast" or "n4".
 bias_field_correction = "n4"
+# Masks mark each microbleed with a single point; dilate each into a ball of
+# this radius in mm. Omit for datasets with full lesion masks.
+point_annotation_radius_mm = 2.5
 # Omit seed to generate different augmented variants on each run.
 seed = 42
 resume = false
