@@ -3,15 +3,22 @@ import math
 import numpy as np
 import torch
 import torchvision.transforms.functional as F
+from scipy.ndimage import binary_erosion
 
-from ...constants import FRST_ALPHA, FRST_FACTOR_STD, FRST_RADII
+from ...constants import (
+    FRST_ALPHA,
+    FRST_EDGE_MARGIN,
+    FRST_FACTOR_STD,
+    FRST_RADII,
+)
 
 
 def apply(
     volume: np.ndarray,
+    brain_mask: np.ndarray,
 ) -> np.ndarray:
     """
-    Apply 3D FRST to one volume.
+    Apply 3D FRST to one volume using gradients from the brain interior.
 
     Input and output have shape ``(H, W, D)``.
     """
@@ -20,10 +27,18 @@ def apply(
     slices = volume_tensor.permute(2, 0, 1)
     slice_count = slices.shape[0]
 
+    # The zeroed background makes the brain boundary the strongest edge, so
+    # voxels within FRST_EDGE_MARGIN of it in-plane may not vote.
+    interior = binary_erosion(
+        brain_mask > 0,
+        structure=np.ones((3, 3, 1), dtype=bool),
+        iterations=FRST_EDGE_MARGIN,
+    )
+
     grad_y, grad_x = torch.gradient(slices, dim=(1, 2))
     g_norm = torch.sqrt(grad_x**2 + grad_y**2)
 
-    significant = g_norm > 0
+    significant = (g_norm > 0) & torch.from_numpy(interior).permute(2, 0, 1)
     grad_x_significant = grad_x[significant]
     grad_y_significant = grad_y[significant]
     g_norm_significant = g_norm[significant]
@@ -61,10 +76,10 @@ def apply(
         magnitude.view(-1).scatter_add_(0, idx_bright, g_norm_significant)
 
         orientation = torch.abs(orientation)
-        orientation = normalize_tensor_slicewise(orientation)
+        orientation = normalize_tensor_volume(orientation)
 
         magnitude = torch.abs(magnitude)
-        magnitude = normalize_tensor_slicewise(magnitude)
+        magnitude = normalize_tensor_volume(magnitude)
 
         response = (orientation**FRST_ALPHA) * magnitude
 
@@ -86,16 +101,11 @@ def apply(
     return result
 
 
-def normalize_tensor_slicewise(tensor: torch.Tensor) -> torch.Tensor:
-    """Scale each 2D tensor slice independently to the zero-to-one range."""
-    # Assumes tensor shape is (N, H, W)
-    t_min = tensor.amin(dim=(1, 2), keepdim=True)
-    t_max = tensor.amax(dim=(1, 2), keepdim=True)
-
-    tensor = tensor - t_min
-    t_range = t_max - t_min
-
-    # Divide only where the range is > 0 to avoid division by zero
-    tensor = torch.where(t_range > 0, tensor / t_range, tensor)
-
-    return tensor
+def normalize_tensor_volume(tensor: torch.Tensor) -> torch.Tensor:
+    """Scale a whole volume to the zero-to-one range by its maximum."""
+    # One scale for the whole volume keeps a lesion's response independent of
+    # whatever else shares its slice.
+    maximum = tensor.max()
+    if maximum <= 0:
+        return tensor
+    return tensor / maximum

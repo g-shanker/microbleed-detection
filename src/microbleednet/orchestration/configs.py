@@ -368,6 +368,14 @@ class PreprocessConfig(FrozenModel):
         default=False,
         description="Resume from the last per-subject preprocessing checkpoint.",
     )
+    point_annotation_radius_mm: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Dilate masks that mark each lesion with a single point into balls "
+            "of this physical radius. Omit for full lesion masks."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_config(self) -> "PreprocessConfig":
@@ -405,6 +413,20 @@ class PreprocessConfig(FrozenModel):
             {subject.subject_id for subject in raw_manifest.subjects},
             self.augmentation_factor,
         )
+        if (
+            existing_manifest.point_annotation_radius_mm
+            != self.point_annotation_radius_mm
+        ):
+            raise ApplicationError(
+                category="Configuration",
+                summary="Cannot resume with a different point annotation radius",
+                cause=(
+                    "Existing subjects used "
+                    f"{existing_manifest.point_annotation_radius_mm}, config "
+                    f"requests {self.point_annotation_radius_mm}"
+                ),
+                fix="Restore the original radius or rerun with resume = false",
+            )
 
         return self
 

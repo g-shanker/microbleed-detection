@@ -34,6 +34,8 @@ AVAILABLE_TRANSFORMATIONS = ("translate", "noise", "blur")
 FRST_RADII = (2, 3, 4, 6)
 FRST_ALPHA = 2
 FRST_FACTOR_STD = 0.1
+# In-plane voxels next to the brain boundary whose gradients FRST ignores.
+FRST_EDGE_MARGIN = 2
 FRANGI_SIGMAS = (0.5, 1.2, 0.2)
 FRANGI_BETA = 0.9
 FRANGI_ALPHA = 20

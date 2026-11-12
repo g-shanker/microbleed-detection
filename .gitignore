@@ -16,3 +16,4 @@ htmlcov/
 
 # Virtual environments
 .venv
+*.nii.gz

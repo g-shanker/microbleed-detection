@@ -1,0 +1,15 @@
+lesions=300 detected=252 missed=48
+median                      detected      missed
+annotation_voxels             18.000      18.000
+nearest_detection_mm           0.000      10.046
+probability_at_point           1.000       0.000
+max_probability_nearby         1.000       0.000
+brain_edge_distance_mm         8.666       7.700
+raw_contrast                   9.472       7.788
+preprocessed_contrast          9.078       6.888
+frst_contrast                728.621     266.412
+frst_slice_fraction            0.569       0.260
+slice_peak_edge_distance_mm       6.232       2.782
+slice_strong_frst_near_edge       0.417       0.742
+detected outside brain mask: 1/252
+missed outside brain mask: 2/48

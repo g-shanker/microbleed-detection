@@ -314,3 +314,84 @@ def test_execute_resume_rejects_changed_raw_manifest(
 
     with pytest.raises(ValueError, match="Manifest fingerprint does not match"):
         PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1, resume=True)
+
+def _fake_point_preprocess(preprocess_input):
+    mask = np.zeros((32, 32, 32), dtype=np.uint8)
+    mask[16, 16, 16] = 1
+    return SimpleNamespace(
+        volume=np.ones((32, 32, 32)),
+        mask=mask,
+        brain_mask=np.ones((32, 32, 32), dtype=np.uint8),
+        affine=np.diag([1.0, 1.0, 2.0, 1.0]),
+        bounding_box=((0, 32), (0, 32), (0, 32)),
+    )
+
+
+def test_execute_dilates_point_annotations_when_configured(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dataset_dir = tmp_path / "dataset"
+    _write_raw_dataset(dataset_dir)
+    monkeypatch.setattr(preprocess.processor, "preprocess", _fake_point_preprocess)
+
+    preprocess.execute(
+        PreprocessConfig(
+            dataset_dir=dataset_dir,
+            augmentation_factor=1,
+            point_annotation_radius_mm=2.0,
+        )
+    )
+
+    layout = DatasetLayout(dataset_dir=dataset_dir)
+    manifest = PreprocessedDatasetManifest.read(layout.preprocessed_manifest_path())
+    assert manifest.point_annotation_radius_mm == 2.0
+    mask_path = manifest.subjects[0].variants[0].mask_path
+    assert mask_path is not None
+    mask = np.asarray(preprocess.io.load_volume(mask_path).dataobj)
+    coords = np.argwhere(mask)
+    extent = coords.max(axis=0) - coords.min(axis=0) + 1
+    assert extent.tolist() == [5, 5, 3]
+
+
+def test_execute_leaves_masks_unchanged_without_radius(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dataset_dir = tmp_path / "dataset"
+    _write_raw_dataset(dataset_dir)
+    monkeypatch.setattr(preprocess.processor, "preprocess", _fake_point_preprocess)
+
+    preprocess.execute(PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1))
+
+    layout = DatasetLayout(dataset_dir=dataset_dir)
+    manifest = PreprocessedDatasetManifest.read(layout.preprocessed_manifest_path())
+    assert manifest.point_annotation_radius_mm is None
+    mask_path = manifest.subjects[0].variants[0].mask_path
+    assert mask_path is not None
+    assert int(np.asarray(preprocess.io.load_volume(mask_path).dataobj).sum()) == 1
+
+
+def test_execute_resume_rejects_changed_point_annotation_radius(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dataset_dir = tmp_path / "dataset"
+    _write_raw_dataset(dataset_dir)
+    monkeypatch.setattr(preprocess.processor, "preprocess", _fake_point_preprocess)
+    preprocess.execute(
+        PreprocessConfig(
+            dataset_dir=dataset_dir,
+            augmentation_factor=1,
+            point_annotation_radius_mm=2.0,
+        )
+    )
+    manifest_path = DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path()
+    PreprocessedDatasetManifest.read(manifest_path).model_copy(
+        update={"status": ManifestStatus.RUNNING}
+    ).write(manifest_path)
+
+    with pytest.raises(ValueError, match="different point annotation radius"):
+        PreprocessConfig(
+            dataset_dir=dataset_dir,
+            augmentation_factor=1,
+            point_annotation_radius_mm=2.5,
+            resume=True,
+        )

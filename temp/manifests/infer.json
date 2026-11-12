@@ -1,0 +1,117 @@
+{
+  "created_at": "2026-11-12T16:36:48.848465+00:00",
+  "detector_checkpoint_path": "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/experiments/part-mIP-focal/train/detector/checkpoints/best_model.pth",
+  "detector_threshold": 0.2,
+  "device": "cuda",
+  "discriminator_patch_size": 24,
+  "manifest_type": "inference",
+  "maximum_ellipticity": 1.0,
+  "minimum_brain_distance_mm": 0.0,
+  "minimum_volume_mm3": 0.0,
+  "status": "complete",
+  "student_checkpoint_path": "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/experiments/part-mIP-focal/train/student/checkpoints/best_model.pth",
+  "student_threshold": 0.0,
+  "subjects": [
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG0432/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG0432/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_COG0432"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG0894/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG0894/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_COG0894"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG1150/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG1150/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_COG1150"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG1268/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG1268/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_COG1268"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG1374/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG1374/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_COG1374"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG1611/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG1611/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_COG1611"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG1666/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG1666/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_COG1666"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG1877/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG1877/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_COG1877"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG1900/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_COG1900/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_COG1900"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_M028/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_M028/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_M028"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_M085/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_M085/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_M085"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_M089/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_M089/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_M089"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_007_T0/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_007_T0/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_UWD_007_T0"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_015_T0/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_015_T0/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_UWD_015_T0"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_017_T0/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_017_T0/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_UWD_017_T0"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_021_T0/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_021_T0/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_UWD_021_T0"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_031_T0/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_031_T0/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_UWD_031_T0"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_044_T0/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_044_T0/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_UWD_044_T0"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_097_T0/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_097_T0/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_UWD_097_T0"
+    },
+    {
+      "detector_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_100_T0/detector_output.nii.gz",
+      "discriminator_output_path": "/home/gouri/workspace/microbleed-detection/temp/infer/mIP_Data_swan_UWD_100_T0/discriminator_output.nii.gz",
+      "subject_id": "mIP_Data_swan_UWD_100_T0"
+    }
+  ],
+  "updated_at": "2026-11-12T16:36:48.848636+00:00"
+}

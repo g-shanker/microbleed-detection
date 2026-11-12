@@ -27,7 +27,9 @@ def test_augment_preserves_shape_and_binary_mask() -> None:
     volume[16, 16, 2] = 1
     mask[16, 16, 2] = 1
 
-    transformed_volume, transformed_mask = augmentations.augment(volume, mask)
+    transformed_volume, transformed_mask, _ = augmentations.augment(
+        volume, mask, np.ones_like(volume)
+    )
 
     assert transformed_mask is not None
     assert transformed_volume.shape == volume.shape
@@ -38,8 +40,13 @@ def test_augment_preserves_shape_and_binary_mask() -> None:
 def test_augment_is_reproducible_with_matching_generators() -> None:
     volume = np.arange(64, dtype=float).reshape((4, 4, 4))
 
-    first, _ = augmentations.augment(volume, None, np.random.default_rng(42))
-    second, _ = augmentations.augment(volume, None, np.random.default_rng(42))
+    brain = np.ones_like(volume)
+    first, _, _ = augmentations.augment(
+        volume, None, brain, np.random.default_rng(42)
+    )
+    second, _, _ = augmentations.augment(
+        volume, None, brain, np.random.default_rng(42)
+    )
 
     np.testing.assert_array_equal(first, second)
 
@@ -55,10 +62,13 @@ def test_translate_applies_same_random_offsets_to_volume_and_mask(monkeypatch) -
         "default_rng",
         lambda: ControlledGenerator("translate"),
     )
-    translated_volume, translated_mask = augmentations.augment(volume, mask)
+    translated_volume, translated_mask, translated_brain = augmentations.augment(
+        volume, mask, mask.copy()
+    )
     assert translated_mask is not None
 
     np.testing.assert_array_equal(translated_volume > 0, translated_mask > 0)
+    np.testing.assert_array_equal(translated_brain, translated_mask)
 
 
 def test_intensity_augmentations_do_not_change_mask(monkeypatch) -> None:
@@ -70,18 +80,22 @@ def test_intensity_augmentations_do_not_change_mask(monkeypatch) -> None:
         "default_rng",
         lambda: ControlledGenerator("noise"),
     )
-    noisy_volume, noisy_mask = augmentations.augment(volume, mask)
+    noisy_volume, noisy_mask, noisy_brain = augmentations.augment(volume, mask, mask)
     assert noisy_mask is not None
     monkeypatch.setattr(
         augmentations.np.random,
         "default_rng",
         lambda: ControlledGenerator("blur"),
     )
-    blurred_volume, blurred_mask = augmentations.augment(volume, mask)
+    blurred_volume, blurred_mask, blurred_brain = augmentations.augment(
+        volume, mask, mask
+    )
     assert blurred_mask is not None
 
     assert noisy_mask is mask
     assert blurred_mask is mask
+    assert noisy_brain is mask
+    assert blurred_brain is mask
     assert not np.array_equal(noisy_volume, volume)
     assert blurred_volume.shape == volume.shape
 
@@ -94,7 +108,9 @@ def test_translate_supports_missing_mask(monkeypatch) -> None:
         lambda: ControlledGenerator("translate"),
     )
 
-    translated_volume, translated_mask = augmentations.augment(volume, None)
+    translated_volume, translated_mask, _ = augmentations.augment(
+        volume, None, np.ones_like(volume)
+    )
 
     assert translated_volume.shape == volume.shape
     assert translated_mask is None

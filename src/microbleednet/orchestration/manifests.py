@@ -229,6 +229,11 @@ class PreprocessedDatasetManifest(Manifest):
     raw_manifest_fingerprint: str = Field(
         description="Fingerprint of the raw manifest used to create this dataset.",
     )
+    point_annotation_radius_mm: float | None = Field(
+        default=None,
+        gt=0,
+        description="Radius used to dilate point-annotated masks, if any.",
+    )
 
     @model_validator(mode="after")
     def complete_subjects_have_all_variants(self) -> "PreprocessedDatasetManifest":

@@ -12,9 +12,10 @@ from . import volume_ops
 def augment(
     volume: np.ndarray,
     mask: np.ndarray | None,
+    brain_mask: np.ndarray,
     rng: np.random.Generator | None = None,
-) -> tuple[np.ndarray, np.ndarray | None]:
-    """Apply a random combination of the training augmentations."""
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray]:
+    """Apply random augmentations, moving both masks with the volume."""
     if rng is None:
         rng = np.random.default_rng()
     count = int(rng.integers(1, len(AVAILABLE_TRANSFORMATIONS) + 1))
@@ -26,6 +27,7 @@ def augment(
 
     transformed_volume = volume
     transformed_mask = mask
+    transformed_brain_mask = brain_mask
 
     for transformation in transformations:
         if transformation == "translate":
@@ -34,6 +36,9 @@ def augment(
             offset_y = int(rng.integers(low, high + 1))
             transformed_volume = volume_ops.translate(
                 transformed_volume, offset_x, offset_y
+            )
+            transformed_brain_mask = volume_ops.translate(
+                transformed_brain_mask, offset_x, offset_y
             )
             if transformed_mask is not None:
                 transformed_mask = volume_ops.translate(
@@ -47,4 +52,4 @@ def augment(
             sigma = rng.uniform(*BLUR_SIGMA_RANGE)
             transformed_volume = volume_ops.blur(transformed_volume, sigma)
 
-    return transformed_volume, transformed_mask
+    return transformed_volume, transformed_mask, transformed_brain_mask
