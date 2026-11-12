@@ -6,7 +6,7 @@ import numpy as np
 from ...core import io
 from ...core.datamodels import BiasFieldCorrection, Modality, PreprocessInput
 from ...core.engines import processor
-from ...core.transforms import augmentations, frst
+from ...core.transforms import augmentations, frst, point_annotations
 from ...progress import progress
 from ..configs import PreprocessConfig
 from ..layouts import DatasetLayout
@@ -58,6 +58,7 @@ def execute(config: PreprocessConfig) -> None:
         seed=config.seed,
         bias_field_correction=config.bias_field_correction,
         raw_manifest_fingerprint=raw_manifest_fingerprint,
+        point_annotation_radius_mm=config.point_annotation_radius_mm,
     ).write(preprocessed_manifest_path)
 
     for subject_index, subject in enumerate(
@@ -79,6 +80,7 @@ def execute(config: PreprocessConfig) -> None:
                 config.seed,
                 subject_index,
                 config.bias_field_correction,
+                config.point_annotation_radius_mm,
             )
         preprocessed_subjects.append(preprocessed_subject)
         PreprocessedDatasetManifest(
@@ -88,6 +90,7 @@ def execute(config: PreprocessConfig) -> None:
             seed=config.seed,
             bias_field_correction=config.bias_field_correction,
             raw_manifest_fingerprint=raw_manifest_fingerprint,
+            point_annotation_radius_mm=config.point_annotation_radius_mm,
         ).write(preprocessed_manifest_path)
 
     PreprocessedDatasetManifest(
@@ -97,6 +100,7 @@ def execute(config: PreprocessConfig) -> None:
         seed=config.seed,
         bias_field_correction=config.bias_field_correction,
         raw_manifest_fingerprint=raw_manifest_fingerprint,
+        point_annotation_radius_mm=config.point_annotation_radius_mm,
     ).write(preprocessed_manifest_path)
     logger.info(
         "Preprocessing complete; manifest written to %s", preprocessed_manifest_path
@@ -111,6 +115,7 @@ def preprocess_subject(
     seed: int | None = None,
     subject_index: int = 0,
     bias_field_correction: BiasFieldCorrection = "fast",
+    point_annotation_radius_mm: float | None = None,
 ) -> PreprocessedSubject:
     """Preprocess, augment, and persist all variants for one raw subject."""
     raw_volume = io.load_volume(subject.volume_path)
@@ -122,6 +127,15 @@ def preprocess_subject(
     processed_mask = preprocess_output.mask
     brain_mask = preprocess_output.brain_mask
     processed_affine = preprocess_output.affine
+
+    # point annotation dilation
+    if processed_mask is not None and point_annotation_radius_mm is not None:
+        sizes = nib.affines.voxel_sizes(processed_affine)
+        processed_mask = point_annotations.dilate_point_annotations(
+            processed_mask,
+            (float(sizes[0]), float(sizes[1]), float(sizes[2])),
+            point_annotation_radius_mm
+        )
 
     brain_mask_path = layout.brain_mask_path(subject.subject_id)
     io.save_volume(nib.Nifti1Image(brain_mask, processed_affine), brain_mask_path)

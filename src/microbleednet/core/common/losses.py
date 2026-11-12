@@ -9,6 +9,7 @@ from ...constants import (
     DISTILLATION_BETA,
     DISTILLATION_TEMPERATURE,
     FOREGROUND_CLASS,
+    FOCAL_GAMMA,
 )
 
 
@@ -47,6 +48,20 @@ class KnowledgeDistillationLoss(nn.Module):
         return divergence * self.temperature**2
 
 
+class FocalLoss(nn.Module):
+    def __init__(self, weight: tuple[float, ...], gamma: float):
+        super().__init__()
+        self.gamma = gamma
+        self.register_buffer("weight", torch.tensor(weight))
+
+    def forward(self, prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        log_probs = F.log_softmax(prediction.float(), dim=1)
+        log_pt = log_probs.gather(1, target.unsqueeze(1)).squeeze(1)
+        weight = self.weight[target]
+        loss = -weight * (1 - log_pt.exp()) ** self.gamma * log_pt
+        return loss.sum() / weight.sum()
+
+
 class DetectorLoss(nn.Module):
     def __init__(self):
         """Build the combined Dice and weighted cross-entropy loss."""
@@ -55,15 +70,34 @@ class DetectorLoss(nn.Module):
         self.cross_entropy_loss = nn.CrossEntropyLoss(
             weight=torch.tensor(DETECTOR_CLASS_WEIGHTS)
         )
+        self.cross_entropy_loss = FocalLoss(
+            weight=torch.tensor(DETECTOR_CLASS_WEIGHTS), 
+            gamma=FOCAL_GAMMA,
+        )
 
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Combine foreground Dice loss with voxel-wise cross entropy."""
+        cross_entropy_loss = self.cross_entropy_loss(logits, target)
+        total_loss = cross_entropy_loss
+
+        # has_foreground = (target == FOREGROUND_CLASS).flatten(start_dim=1).any(dim=1)
+        # if has_foreground.any():
+        #     # apply dice loss to only to samples that have foreground
+        #     prediction = F.softmax(logits, dim=1)
+        #     dice_loss = self.dice_loss(
+        #         prediction[has_foreground, FOREGROUND_CLASS],
+        #         target[has_foreground] == FOREGROUND_CLASS,
+        #     )
+        #     total_loss = total_loss + dice_loss
+
+        # older method
         prediction = F.softmax(logits, dim=1)
         dice_loss = self.dice_loss(
             prediction[:, FOREGROUND_CLASS], target == FOREGROUND_CLASS
         )
-        cross_entropy_loss = self.cross_entropy_loss(logits, target)
-        return dice_loss + cross_entropy_loss
+        total_loss = total_loss + dice_loss
+
+        return total_loss
 
 
 class DiscriminatorTeacherLoss(nn.Module):

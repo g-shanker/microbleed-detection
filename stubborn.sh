@@ -9,7 +9,7 @@ while true; do
     ( tail -f temp_run.log 2>/dev/null | grep -q "device-side assert triggered" && pkill -9 -f "microbleednet train" ) &
     WATCHDOG_PID=$!
 
-    script -q -e -c "CUDA_LAUNCH_BLOCKING=1 uv run microbleednet train --config configs/train.toml" temp_run.log
+    script -q -e -c "CUDA_LAUNCH_BLOCKING=0 uv run microbleednet train --config configs/train-focal.toml" temp_run.log
     EXIT_CODE=$?
 
     kill $WATCHDOG_PID 2>/dev/null
@@ -22,7 +22,3 @@ while true; do
     echo "Crash or freeze detected. Retrying in 2 seconds (Press Ctrl+C to stop)..."
     sleep 2
 done
-
-uv run microbleednet-check-intensities \
-  /mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/datasets/non_mIP/manifests/preprocessed.json \
-  > variant0-intensities.csv

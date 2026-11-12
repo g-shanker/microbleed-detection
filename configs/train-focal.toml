@@ -1,0 +1,57 @@
+# Paths to the preprocessed dataset and training artifacts.
+dataset_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/datasets/mIP-no-noise-dilated"
+experiment_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/experiments/part-mIP-focal-heavy-weighted"
+device = "cuda:0"
+resume = true
+seed = 42
+
+# Detector candidate selection and persisted-variant sampling.
+detector_candidate_threshold = 0.2
+detector_augmentation_factor = 10
+discriminator_augmentation_factor = 5
+
+# DataLoader settings. pin_memory is mainly useful for CUDA transfers.
+num_workers = 8
+pin_memory = true
+
+# Detector optimizer and training-loop settings.
+[detector_hyperparameters]
+batch_size = 8
+max_epochs = 100
+patience = 20
+learning_rate = 0.001
+adam_epsilon = 0.0001
+learning_rate_factor = 0.5
+learning_rate_period = 10
+minimum_learning_rate = 0.000001
+weight_decay = 0.0
+minimum_improvement = 0.0
+use_amp = true
+
+# Teacher optimizer and training-loop settings.
+[teacher_hyperparameters]
+batch_size = 8
+max_epochs = 100
+patience = 20
+learning_rate = 0.001
+adam_epsilon = 0.0001
+learning_rate_factor = 0.5
+learning_rate_period = 10
+minimum_learning_rate = 0.000001
+weight_decay = 0.0
+minimum_improvement = 0.0
+use_amp = true
+
+# Student optimizer and training-loop settings.
+[student_hyperparameters]
+batch_size = 8
+max_epochs = 100
+patience = 20
+learning_rate = 0.001
+adam_epsilon = 0.0001
+learning_rate_factor = 0.5
+learning_rate_period = 10
+minimum_learning_rate = 0.000001
+weight_decay = 0.0
+minimum_improvement = 0.0
+use_amp = true
