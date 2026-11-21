@@ -8,6 +8,7 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+from microbleednet import frst_report
 from microbleednet.errors import ApplicationError
 from microbleednet.frst_report import (
     SubjectScores,
@@ -17,6 +18,7 @@ from microbleednet.frst_report import (
     main,
     resolve_variants,
     score_map,
+    write_csv,
     write_summary,
 )
 from microbleednet.orchestration.layouts import DatasetLayout
@@ -190,3 +192,22 @@ def test_main_writes_csv_and_summary(tmp_path: Path, capsys) -> None:
     assert [row["variant"] for row in rows] == ["baseline", "alpha_1"]
     assert rows[0]["spacing_mm"] == "0.50x0.50x2.00"
     assert "sens@10" in captured.err
+
+
+def test_inspect_dataset_resumes_from_checkpoint(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dataset_dir = _write_dataset(tmp_path)
+    checkpoint = tmp_path / "checkpoint.jsonl"
+    variants = resolve_variants(["alpha_1"], [])
+    first = io.StringIO()
+    write_csv(inspect_dataset(dataset_dir, variants, checkpoint=checkpoint), first)
+
+    def fail(*args, **kwargs):
+        raise AssertionError("subject should come from the checkpoint")
+
+    monkeypatch.setattr(frst_report.frst_variants, "compute", fail)
+    resumed = io.StringIO()
+    write_csv(inspect_dataset(dataset_dir, variants, checkpoint=checkpoint), resumed)
+
+    assert resumed.getvalue() == first.getvalue()

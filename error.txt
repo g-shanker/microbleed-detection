@@ -1,0 +1,102 @@
+Current thread 0x00007fedc9395740 (most recent call first):
+  Garbage-collecting
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/lib/python3.13/site-packages/joblib/externals/loky/process_executor.py", line 537 in _process_worker
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.uv-python/cpython-3.13.13-linux-x86_64-gnu/lib/python3.13/multiprocessing/process.py", line 108 in run
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.uv-python/cpython-3.13.13-linux-x86_64-gnu/lib/python3.13/multiprocessing/process.py", line 313 in _bootstrap
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/lib/python3.13/site-packages/joblib/externals/loky/backend/popen_loky_posix.py", line 180 in <module>
+  File "<frozen runpy>", line 88 in _run_code
+  File "<frozen runpy>", line 198 in _run_module_as_main
+
+Extension modules: numpy._core._multiarray_umath, numpy.linalg._umath_linalg, _cyutility, scipy._cyutility, scipy._lib._ccallback_c, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._generator, numpy.random._mt19937, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand, scipy.ndimage._nd_image, scipy.ndimage._rank_filter_1d, scipy.special._ufuncs_cxx, scipy.linalg._fblas, scipy.linalg._flapack, scipy.linalg._batched_linalg, scipy.linalg._cythonized_array_utils, scipy.linalg._solve_toeplitz, scipy.linalg._internal_matfuncs, scipy.linalg._linalg_pythran, scipy.linalg.cython_blas, scipy.linalg.cython_lapack, scipy.linalg._decomp_update, scipy.special._ellip_harm_2, scipy.special._special_ufuncs, scipy.special._gufuncs, scipy.special._ufuncs, scipy.special._specfun, scipy.special._comb, _ni_label, scipy.ndimage._ni_label, scipy.sparse._sparsetools, _csparsetools, scipy.sparse._csparsetools, scipy.spatial._ckdtree, scipy.spatial._hausdorff, scipy.spatial._distance_wrap, scipy._lib.messagestream, scipy.spatial._qhull, scipy.spatial._voronoi, scipy.spatial.transform._rotation_cy, scipy.spatial.transform._rigid_transform_cy, scipy.sparse.linalg._dsolve._superlu, scipy.sparse.linalg._eigen.arpack._arpacklib, scipy.sparse.linalg._propack, scipy.optimize._group_columns, scipy.optimize._trlib._trlib, scipy.optimize._lbfgsb, _moduleTNC, scipy.optimize._moduleTNC, scipy.optimize._slsqplib, scipy.optimize._minpack, scipy.optimize._lsq.givens_elimination, scipy.optimize._zeros, scipy._lib._uarray._uarray, scipy.linalg._decomp_interpolative, scipy.optimize._bglu_dense, scipy.optimize._lsap, scipy.optimize._direct, scipy.integrate._odepack, scipy.integrate._quadpack, scipy.integrate._vode, scipy.integrate._dop, scipy.interpolate._fitpack, scipy.interpolate._dierckx, scipy.interpolate._ppoly, scipy.interpolate._interpnd, scipy.interpolate._rbfinterp_pythran, scipy.interpolate._rgi_cython, scipy.special.cython_special, scipy.stats._stats, scipy.stats._biasedurn, scipy.stats._levy_stable.levyst, scipy.stats._stats_pythran, scipy.stats._ansari_swilk_statistics, scipy.sparse.csgraph._tools, scipy.sparse.csgraph._shortest_path, scipy.sparse.csgraph._traversal, scipy.sparse.csgraph._min_spanning_tree, scipy.sparse.csgraph._flow, scipy.sparse.csgraph._matching, scipy.sparse.csgraph._reordering, scipy.stats._sobol, scipy.stats._qmc_cy, scipy.stats._rcont.rcont, scipy.stats._qmvnt_cy, skimage.feature._hessian_det_appx, skimage.feature.corner_cy, skimage.measure._moments_cy, skimage.measure._find_contours_cy, skimage.measure._marching_cubes_lewiner_cy, sklearn.__check_build._check_build, sklearn._cyutility, sklearn.utils._isfinite, sklearn.utils.sparsefuncs_fast, sklearn.utils.murmurhash, sklearn.utils._openmp_helpers, sklearn.metrics.cluster._expected_mutual_info_fast, sklearn.metrics._dist_metrics, sklearn.metrics._pairwise_distances_reduction._datasets_pair, sklearn.utils._cython_blas, sklearn.metrics._pairwise_distances_reduction._base, sklearn.metrics._pairwise_distances_reduction._middle_term_computer, sklearn.utils._heap, sklearn.utils._sorting, sklearn.metrics._pairwise_distances_reduction._argkmin, sklearn.metrics._pairwise_distances_reduction._argkmin_classmode, sklearn.utils._vector_sentinel, sklearn.metrics._pairwise_distances_reduction._radius_neighbors, sklearn.metrics._pairwise_distances_reduction._radius_neighbors_classmode, sklearn.metrics._pairwise_fast, sklearn.preprocessing._csr_polynomial_expansion, sklearn.preprocessing._target_encoder_fast, sklearn.utils._fast_dict, sklearn.cluster._hierarchical_fast, sklearn.cluster._k_means_common, sklearn.cluster._k_means_elkan, sklearn.cluster._k_means_lloyd, sklearn.cluster._k_means_minibatch, sklearn.cluster._dbscan_inner, sklearn.neighbors._partition_nodes, sklearn.neighbors._ball_tree, sklearn.neighbors._kd_tree, sklearn.utils.arrayfuncs, sklearn.utils._random, sklearn.utils._seq_dataset, sklearn.linear_model._cd_fast, sklearn._loss._loss, sklearn.linear_model._sag_fast, sklearn.svm._liblinear, sklearn.svm._libsvm, sklearn.svm._libsvm_sparse, sklearn.utils._weight_vector, sklearn.linear_model._sgd_fast, sklearn.decomposition._online_lda_fast, sklearn.decomposition._cdnmf_fast, sklearn.cluster._hdbscan._tree, sklearn.cluster._hdbscan._linkage, sklearn.cluster._hdbscan._reachability, sklearn._isotonic, sklearn.tree._utils, sklearn.tree._tree, sklearn.tree._partitioner, sklearn.tree._splitter, sklearn.tree._criterion, sklearn.neighbors._quad_tree, sklearn.manifold._barnes_hut_tsne, sklearn.manifold._utils, torch._C, torch._C._dynamo.autograd_compiler, torch._C._dynamo.eval_frame, torch._C._dynamo.guards, torch._C._dynamo.utils, torch._C._fft, torch._C._linalg, torch._C._nested, torch._C._nn, torch._C._sparse, torch._C._special, cuda.bindings._bindings.cydriver, cuda.bindings.cydriver, cuda.bindings.driver, cuda.bindings._bindings.cyruntime_ptds, cuda.bindings._bindings.cyruntime, cuda.bindings.cyruntime, cuda.bindings.runtime, skimage.measure._ccomp, skimage.morphology._misc_cy, _skeletonize_lee_cy, skimage.morphology._skeletonize_lee_cy, skimage.morphology._skeletonize_various_cy, skimage._shared.geometry, skimage.measure._pnpoly, skimage.morphology._convex_hull, skimage.morphology._grayreconstruct, skimage.morphology._extrema_cy, skimage.morphology._flood_fill_cy, skimage.morphology._max_tree, PIL._imaging, PIL._imagingft (total: 184)
+13:08:47 Unexpected subject processing failure: stage=inpainting inspection subject_id=mIP_Data_swan_COG1877
+Traceback (most recent call last):
+  File "/home/gouri/workspace/microbleed-detection/src/microbleednet/orchestration/utils.py", line 26, in subject_failure_context
+    yield
+  File "/home/gouri/workspace/microbleed-detection/src/microbleednet/inpainting_report.py", line 159, in inspect_dataset
+    inspect_subject(
+    ~~~~~~~~~~~~~~~^
+        subject.subject_id, prepared, max_iterations, frst_threshold
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/gouri/workspace/microbleed-detection/src/microbleednet/inpainting_report.py", line 241, in inspect_subject
+    measures = measure(
+        context, dilate(vessels, mode, iterations), frst_threshold
+    )
+  File "/home/gouri/workspace/microbleed-detection/src/microbleednet/inpainting_report.py", line 272, in measure
+    float(vesselness(inpainted)[context.vesselness_region].mean())
+          ~~~~~~~~~~^^^^^^^^^^^
+  File "/home/gouri/workspace/microbleed-detection/src/microbleednet/inpainting_report.py", line 307, in vesselness
+    slices = Parallel(n_jobs=-1)(
+        delayed(slice_vesselness)(volume[:, :, index])
+        for index in range(volume.shape[2])
+    )
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/lib/python3.13/site-packages/joblib/parallel.py", line 2072, in __call__
+    return output if self.return_generator else list(output)
+                                                ~~~~^^^^^^^^
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/lib/python3.13/site-packages/joblib/parallel.py", line 1682, in _get_outputs
+    yield from self._retrieve()
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/lib/python3.13/site-packages/joblib/parallel.py", line 1784, in _retrieve
+    self._raise_error_fast()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/lib/python3.13/site-packages/joblib/parallel.py", line 1859, in _raise_error_fast
+    error_job.get_result(self.timeout)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/lib/python3.13/site-packages/joblib/parallel.py", line 758, in get_result
+    return self._return_or_raise()
+           ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/lib/python3.13/site-packages/joblib/parallel.py", line 773, in _return_or_raise
+    raise self._result
+joblib.externals.loky.process_executor.TerminatedWorkerError: A worker process managed by the executor was unexpectedly terminated. This could be caused by a segmentation fault while calling the function or by an excessive memory usage causing the Operating System to kill the worker.
+
+The exit codes of the workers are {SIGSEGV(-11)}
+Detailed tracebacks of the workers should have been printed to stderr in the executor process if faulthandler was not disabled.
+Traceback (most recent call last):
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/bin/microbleednet-check-inpainting", line 10, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/home/gouri/workspace/microbleed-detection/src/microbleednet/inpainting_report.py", line 490, in main
+    records = inspect_dataset(
+        options.dataset_dir,
+    ...<4 lines>...
+        options.seed,
+    )
+  File "/home/gouri/workspace/microbleed-detection/src/microbleednet/inpainting_report.py", line 159, in inspect_dataset
+    inspect_subject(
+    ~~~~~~~~~~~~~~~^
+        subject.subject_id, prepared, max_iterations, frst_threshold
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/gouri/workspace/microbleed-detection/src/microbleednet/inpainting_report.py", line 241, in inspect_subject
+    measures = measure(
+        context, dilate(vessels, mode, iterations), frst_threshold
+    )
+  File "/home/gouri/workspace/microbleed-detection/src/microbleednet/inpainting_report.py", line 272, in measure
+    float(vesselness(inpainted)[context.vesselness_region].mean())
+          ~~~~~~~~~~^^^^^^^^^^^
+  File "/home/gouri/workspace/microbleed-detection/src/microbleednet/inpainting_report.py", line 307, in vesselness
+    slices = Parallel(n_jobs=-1)(
+        delayed(slice_vesselness)(volume[:, :, index])
+        for index in range(volume.shape[2])
+    )
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/lib/python3.13/site-packages/joblib/parallel.py", line 2072, in __call__
+    return output if self.return_generator else list(output)
+                                                ~~~~^^^^^^^^
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/lib/python3.13/site-packages/joblib/parallel.py", line 1682, in _get_outputs
+    yield from self._retrieve()
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/lib/python3.13/site-packages/joblib/parallel.py", line 1784, in _retrieve
+    self._raise_error_fast()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/lib/python3.13/site-packages/joblib/parallel.py", line 1859, in _raise_error_fast
+    error_job.get_result(self.timeout)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/lib/python3.13/site-packages/joblib/parallel.py", line 758, in get_result
+    return self._return_or_raise()
+           ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/.venv-microbleednet/lib/python3.13/site-packages/joblib/parallel.py", line 773, in _return_or_raise
+    raise self._result
+joblib.externals.loky.process_executor.TerminatedWorkerError: A worker process managed by the executor was unexpectedly terminated. This could be caused by a segmentation fault while calling the function or by an excessive memory usage causing the Operating System to kill the worker.
+
+The exit codes of the workers are {SIGSEGV(-11)}
+Detailed tracebacks of the workers should have been printed to stderr in the executor process if faulthandler was not disabled

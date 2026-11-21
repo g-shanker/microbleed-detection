@@ -9,13 +9,12 @@ import logging
 import math
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Sequence, TextIO, cast
 
 import nibabel as nib
 import numpy as np
-from joblib import Parallel, delayed
 from scipy.ndimage import (
     binary_dilation,
     distance_transform_edt,
@@ -23,6 +22,7 @@ from scipy.ndimage import (
 )
 from skimage.filters import frangi
 
+from . import report_checkpoints
 from .constants import (
     COMPONENT_CONNECTIVITY,
     FRANGI_ALPHA,
@@ -112,6 +112,7 @@ def inspect_dataset(
     frst_threshold: float = DEFAULT_FRST_THRESHOLD,
     subject_count: int | None = None,
     seed: int = 0,
+    checkpoint: Path | None = None,
 ) -> list[IterationRecord]:
     """Measure every dilation setting on the masked subjects of a raw dataset."""
     manifest = RawDatasetManifest.read(
@@ -132,13 +133,37 @@ def inspect_dataset(
         )
         subjects = [subjects[index] for index in sorted(chosen)]
 
+    run_settings = {
+        "dataset_dir": str(dataset_dir),
+        "bias_field_correction": bias_field_correction,
+        "max_iterations": max_iterations,
+        "frst_threshold": frst_threshold,
+        "subjects": [subject.subject_id for subject in subjects],
+    }
+    finished = report_checkpoints.read(checkpoint, run_settings)
+    pending = sum(subject.subject_id not in finished for subject in subjects)
     records: list[IterationRecord] = []
     settings = 1 + len(DILATION_MODES) * max_iterations
     logger.info(
-        "Inspecting %d subjects, %d dilation settings each", len(subjects), settings
+        "Inspecting %d subjects, %d dilation settings each; %d already in checkpoint",
+        len(subjects),
+        settings,
+        len(subjects) - pending,
     )
     started = time.monotonic()
+    computed = 0
     for index, subject in enumerate(subjects, start=1):
+        if subject.subject_id in finished:
+            records.extend(
+                record_from_row(row) for row in finished[subject.subject_id]
+            )
+            logger.info(
+                "[%d/%d] %s: loaded from checkpoint",
+                index,
+                len(subjects),
+                subject.subject_id,
+            )
+            continue
         subject_started = time.monotonic()
         logger.info(
             "[%d/%d] %s: preprocessing up to inpainting",
@@ -155,13 +180,19 @@ def inspect_dataset(
                     bias_field_correction,
                 )
             )
-            records.extend(
-                inspect_subject(
-                    subject.subject_id, prepared, max_iterations, frst_threshold
-                )
+            subject_records = inspect_subject(
+                subject.subject_id, prepared, max_iterations, frst_threshold
             )
+        records.extend(subject_records)
+        report_checkpoints.append(
+            checkpoint,
+            run_settings,
+            subject.subject_id,
+            [asdict(item) for item in subject_records],
+        )
+        computed += 1
         elapsed = time.monotonic() - started
-        remaining = elapsed / index * (len(subjects) - index)
+        remaining = elapsed / computed * (pending - computed)
         logger.info(
             "[%d/%d] %s: done in %s; about %s remaining",
             index,
@@ -171,6 +202,11 @@ def inspect_dataset(
             format_duration(remaining),
         )
     return records
+
+
+def record_from_row(row: dict) -> IterationRecord:
+    """Rebuild a record read back from a checkpoint."""
+    return IterationRecord(**{**row, "contrast_ratios": tuple(row["contrast_ratios"])})
 
 
 def format_duration(seconds: float) -> str:
@@ -304,11 +340,11 @@ def record(
 
 def vesselness(volume: np.ndarray) -> np.ndarray:
     """Compute the pipeline's slice-wise Frangi vesselness for a volume."""
-    slices = Parallel(n_jobs=-1)(
-        delayed(slice_vesselness)(volume[:, :, index])
-        for index in range(volume.shape[2])
+    # Sequential on purpose: parallel workers crashed (SIGSEGV) on real data.
+    return np.stack(
+        [slice_vesselness(volume[:, :, index]) for index in range(volume.shape[2])],
+        axis=2,
     )
-    return np.stack(list(slices), axis=2)
 
 
 def slice_vesselness(image_slice: np.ndarray) -> np.ndarray:
@@ -473,6 +509,11 @@ def main(arguments: Sequence[str] | None = None) -> None:
     )
     parser.add_argument("--seed", type=int, default=0, help="Subset seed")
     parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        help="JSON-lines file that saves each finished subject; rerun to resume",
+    )
+    parser.add_argument(
         "--frst-threshold",
         type=float,
         default=DEFAULT_FRST_THRESHOLD,
@@ -494,6 +535,7 @@ def main(arguments: Sequence[str] | None = None) -> None:
         options.frst_threshold,
         options.subjects,
         options.seed,
+        options.checkpoint,
     )
     write_csv(records, sys.stdout)
     write_summary(records, sys.stderr)
