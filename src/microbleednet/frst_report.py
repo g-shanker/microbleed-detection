@@ -10,14 +10,15 @@ import math
 import sys
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Sequence, TextIO
+from typing import Any, Sequence, TextIO
 
 import nibabel as nib
 import numpy as np
 from scipy.ndimage import distance_transform_edt, maximum_filter
 
+from . import report_checkpoints
 from .constants import COMPONENT_CONNECTIVITY, VARIANT_INDEX
 from .core import io
 from .core.transforms import frst_variants, patch
@@ -89,6 +90,7 @@ def inspect_dataset(
     subject_count: int | None = None,
     seed: int = 0,
     device: str = "cpu",
+    checkpoint: Path | None = None,
 ) -> list[SubjectScores]:
     """Score every variant on the masked subjects of a preprocessed dataset."""
     manifest = PreprocessedDatasetManifest.read(
@@ -112,13 +114,34 @@ def inspect_dataset(
         )
         subjects = [subjects[index] for index in sorted(chosen)]
 
+    run_settings = {
+        "dataset_dir": str(dataset_dir),
+        "variants": {name: asdict(settings) for name, settings in variants.items()},
+        "subjects": [subject.subject_id for subject in subjects],
+    }
+    finished = report_checkpoints.read(checkpoint, run_settings)
+    pending = sum(subject.subject_id not in finished for subject in subjects)
     logger.info(
-        "Scoring %d FRST variants on %d subjects", len(variants), len(subjects)
+        "Scoring %d FRST variants on %d subjects; %d already in checkpoint",
+        len(variants),
+        len(subjects),
+        len(subjects) - pending,
     )
     scores: list[SubjectScores] = []
     started = time.monotonic()
+    computed = 0
     for index, subject in enumerate(subjects, start=1):
+        if subject.subject_id in finished:
+            scores.extend(scores_from_row(row) for row in finished[subject.subject_id])
+            logger.info(
+                "[%d/%d] %s: loaded from checkpoint",
+                index,
+                len(subjects),
+                subject.subject_id,
+            )
+            continue
         subject_started = time.monotonic()
+        subject_scores: list[SubjectScores] = []
         with subject_failure_context(subject.subject_id, "FRST comparison"):
             variant = subject.variants[VARIANT_INDEX]
             image = io.load_volume(variant.volume_path)
@@ -156,11 +179,19 @@ def inspect_dataset(
                 lesion_scores, background = score_map(
                     frst_map, centers, brain & far_from_lesions, spacing
                 )
-                scores.append(
+                subject_scores.append(
                     SubjectScores(
                         subject.subject_id, name, spacing, lesion_scores, background
                     )
                 )
+        scores.extend(subject_scores)
+        report_checkpoints.append(
+            checkpoint,
+            run_settings,
+            subject.subject_id,
+            [row_from_scores(item) for item in subject_scores],
+        )
+        computed += 1
         elapsed = time.monotonic() - started
         logger.info(
             "[%d/%d] %s: done in %s; about %s remaining",
@@ -168,9 +199,32 @@ def inspect_dataset(
             len(subjects),
             subject.subject_id,
             format_duration(time.monotonic() - subject_started),
-            format_duration(elapsed / index * (len(subjects) - index)),
+            format_duration(elapsed / computed * (pending - computed)),
         )
     return scores
+
+
+def row_from_scores(item: SubjectScores) -> dict[str, Any]:
+    """Convert scores to JSON-friendly values for a checkpoint."""
+    return {
+        "subject_id": item.subject_id,
+        "variant": item.variant,
+        "spacing": list(item.spacing),
+        "lesion_scores": item.lesion_scores.tolist(),
+        "background_peaks": item.background_peaks.tolist(),
+    }
+
+
+def scores_from_row(row: dict[str, Any]) -> SubjectScores:
+    """Rebuild scores read back from a checkpoint."""
+    x, y, z = row["spacing"]
+    return SubjectScores(
+        row["subject_id"],
+        row["variant"],
+        (float(x), float(y), float(z)),
+        np.asarray(row["lesion_scores"], dtype=float),
+        np.asarray(row["background_peaks"], dtype=float),
+    )
 
 
 def score_map(
@@ -353,6 +407,11 @@ def main(arguments: Sequence[str] | None = None) -> None:
     )
     parser.add_argument("--seed", type=int, default=0, help="Subset seed")
     parser.add_argument("--device", default="cpu", help="Torch device, e.g. cuda")
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        help="JSON-lines file that saves each finished subject; rerun to resume",
+    )
     options = parser.parse_args(arguments)
     logging.basicConfig(
         level=logging.INFO,
@@ -364,7 +423,12 @@ def main(arguments: Sequence[str] | None = None) -> None:
         options.variants.split(",") if options.variants else None, options.combine
     )
     scores = inspect_dataset(
-        options.dataset_dir, variants, options.subjects, options.seed, options.device
+        options.dataset_dir,
+        variants,
+        options.subjects,
+        options.seed,
+        options.device,
+        options.checkpoint,
     )
     write_csv(scores, sys.stdout)
     write_summary(scores, sys.stderr)

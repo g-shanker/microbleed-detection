@@ -74,3 +74,10 @@ FRST in `frst.py` is untouched; the variants live in their own module.
 * The report imports `format_duration` from the inpainting report and
   `local_distances` and `max_within_radius` from the lesion report, so remove
   it before or together with those two.
+
+## Report checkpoints
+
+`src/microbleednet/report_checkpoints.py` saves each finished subject of the
+inpainting and FRST reports, so a crashed run can resume with `--checkpoint`.
+It is used only by those two reports: delete it and
+`tests/test_report_checkpoints.py` once both reports are removed.

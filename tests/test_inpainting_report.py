@@ -20,6 +20,7 @@ from microbleednet.inpainting_report import (
     recommend,
     slice_vesselness,
     summarize,
+    write_csv,
 )
 from microbleednet.orchestration.layouts import DatasetLayout
 from microbleednet.orchestration.manifests import (
@@ -257,3 +258,32 @@ def test_main_rejects_zero_max_iterations(tmp_path: Path) -> None:
 def test_format_duration_includes_hours_only_when_needed() -> None:
     assert format_duration(75.4) == "1m15s"
     assert format_duration(3725) == "1h02m05s"
+
+
+def test_inspect_dataset_resumes_from_checkpoint(
+    tmp_path: Path, stub_pipeline, monkeypatch, caplog
+) -> None:
+    dataset_dir = _write_dataset(tmp_path)
+    checkpoint = tmp_path / "checkpoint.jsonl"
+    first = io.StringIO()
+    write_csv(
+        inspect_dataset(dataset_dir, "n4", max_iterations=1, checkpoint=checkpoint),
+        first,
+    )
+
+    def fail(preprocess_input):
+        raise AssertionError("subject should come from the checkpoint")
+
+    monkeypatch.setattr(inpainting_report.processor, "prepare_volume", fail)
+    resumed = io.StringIO()
+    with caplog.at_level(logging.INFO, logger=inpainting_report.__name__):
+        write_csv(
+            inspect_dataset(
+                dataset_dir, "n4", max_iterations=1, checkpoint=checkpoint
+            ),
+            resumed,
+        )
+
+    assert resumed.getvalue() == first.getvalue()
+    assert "2 already in checkpoint" in caplog.text
+    assert "[2/2] second: loaded from checkpoint" in caplog.text
