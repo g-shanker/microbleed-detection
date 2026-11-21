@@ -1,6 +1,6 @@
 import numpy as np
 from joblib import Parallel, delayed
-from scipy.ndimage import binary_dilation, convolve
+from scipy.ndimage import binary_dilation, convolve, generate_binary_structure
 from skimage.feature import structure_tensor, structure_tensor_eigenvalues
 from skimage.filters import frangi
 from skimage.measure import regionprops
@@ -16,6 +16,7 @@ from ...constants import (
     MAXIMUM_VESSEL_SOLIDITY,
     MINIMUM_VESSEL_ECCENTRICITY,
     VESSEL_CONNECTIVITY,
+    VESSEL_DILATION_ITERATIONS,
 )
 from ...errors import ApplicationError
 from .. import utils
@@ -26,7 +27,11 @@ def apply(volume: np.ndarray) -> np.ndarray:
     Inpaint vessels in the given volume.
     """
     vessel_mask = get_volume_vessel_mask(volume)
-    vessel_mask = binary_dilation(vessel_mask, iterations=5)
+    # Grow within each slice only: across thick slices it swallows lesions.
+    in_plane = generate_binary_structure(2, 1)[:, :, np.newaxis]
+    vessel_mask = binary_dilation(
+        vessel_mask, structure=in_plane, iterations=VESSEL_DILATION_ITERATIONS
+    )
     inpainted_volume = inpaint_with_neighborhood_mean(volume, vessel_mask)
 
     return inpainted_volume
