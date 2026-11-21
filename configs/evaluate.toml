@@ -1,7 +1,7 @@
 # Evaluate the held-out test split from a completed training experiment.
 # Checkpoint and output paths are derived from experiment_dir.
-dataset_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/datasets/mIP-no-noise"
-experiment_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/experiments/part-mIP-focal"
+dataset_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/datasets/mIP-no-noise-dilated-frst-fixed"
+experiment_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/experiments/part-mIP-no-noise-dilated-frst-fixed"
 # Use float16 autocast for CUDA inference.
 use_amp = true
 device = "cuda"

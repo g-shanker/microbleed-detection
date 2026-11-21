@@ -1,3 +1,4 @@
+
 import math
 
 import numpy as np
@@ -18,27 +19,52 @@ def apply(
     brain_mask: np.ndarray,
 ) -> np.ndarray:
     """
-    Apply 3D FRST to one volume using gradients from the brain interior.
+    Apply slice-wise 2D FRST to a 3D volume.
 
-    Input and output have shape ``(H, W, D)``.
+    Gradients and voting are computed independently in each XY slice,
+    while projection normalization and gradient thresholding use
+    the entire volume.
+
+    Input and output have shape (H, W, D).
     """
-    volume_tensor = torch.from_numpy(np.asarray(volume)).float()
+    volume_tensor = torch.from_numpy(
+        np.asarray(volume)
+    ).float()
+
     height, width, _ = volume_tensor.shape
+
+    # Arrange slices as (D, H, W).
     slices = volume_tensor.permute(2, 0, 1)
     slice_count = slices.shape[0]
 
-    # The zeroed background makes the brain boundary the strongest edge, so
-    # voxels within FRST_EDGE_MARGIN of it in-plane may not vote.
+    # Exclude the brain boundary from voting.
     interior = binary_erosion(
         brain_mask > 0,
         structure=np.ones((3, 3, 1), dtype=bool),
         iterations=FRST_EDGE_MARGIN,
     )
 
+    interior_t = torch.from_numpy(interior).permute(2, 0, 1)
+
+    # Calculate 2D gradients independently for every slice.
     grad_y, grad_x = torch.gradient(slices, dim=(1, 2))
     g_norm = torch.sqrt(grad_x**2 + grad_y**2)
 
-    significant = (g_norm > 0) & torch.from_numpy(interior).permute(2, 0, 1)
+    # Gradient threshold: reject the weakest 20% of
+    # nonzero gradients inside the brain, across the volume.
+    interior_grads = g_norm[interior_t]
+    nonzero_grads = interior_grads[interior_grads > 0]
+
+    if nonzero_grads.numel() == 0:
+        return np.zeros_like(volume, dtype=np.float32)
+
+    grad_thresh = torch.quantile(nonzero_grads, 0.20)
+
+    significant = (
+        interior_t
+        & (g_norm >= grad_thresh)
+    )
+
     grad_x_significant = grad_x[significant]
     grad_y_significant = grad_y[significant]
     g_norm_significant = g_norm[significant]
@@ -57,14 +83,17 @@ def apply(
     )
 
     for radius in FRST_RADII:
-        orientation = torch.zeros(
-            (slice_count, out_height, out_width), dtype=volume_tensor.dtype
-        )
-        magnitude = torch.zeros(
-            (slice_count, out_height, out_width), dtype=volume_tensor.dtype
-        )
-        gp_y = torch.round((grad_y_significant / g_norm_significant) * radius).long()
-        gp_x = torch.round((grad_x_significant / g_norm_significant) * radius).long()
+        orientation = torch.zeros_like(output)
+        magnitude = torch.zeros_like(output)
+
+        # Positive votes only: bright radially symmetric structures.
+        gp_y = torch.round(
+            (grad_y_significant / g_norm_significant) * radius
+        ).long()
+
+        gp_x = torch.round(
+            (grad_x_significant / g_norm_significant) * radius
+        ).long()
 
         pos_y = yy + gp_y + offset
         pos_x = xx + gp_x + offset
