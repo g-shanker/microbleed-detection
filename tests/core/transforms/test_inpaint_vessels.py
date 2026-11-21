@@ -6,10 +6,12 @@ import pytest
 from microbleednet.core.transforms import inpaint_vessels
 
 
-def test_apply_dilates_detected_vessels_before_inpainting(monkeypatch) -> None:
-    volume = np.zeros((3, 3, 3))
+def test_apply_dilates_detected_vessels_in_plane_before_inpainting(
+    monkeypatch,
+) -> None:
+    volume = np.zeros((9, 9, 3))
     vessel_mask = np.zeros_like(volume, dtype=bool)
-    vessel_mask[1, 1, 1] = True
+    vessel_mask[4, 4, 1] = True
     observed = {}
     monkeypatch.setattr(
         inpaint_vessels, "get_volume_vessel_mask", lambda _: vessel_mask
@@ -23,7 +25,12 @@ def test_apply_dilates_detected_vessels_before_inpainting(monkeypatch) -> None:
 
     result = inpaint_vessels.apply(volume)
 
-    assert observed["mask"].sum() > vessel_mask.sum()
+    mask = observed["mask"]
+    # Three in-plane iterations of a cross grow a point into a diamond of
+    # radius 3 (25 voxels) without reaching the neighbouring slices.
+    assert mask[:, :, 1].sum() == 25
+    assert mask[4, 1, 1] and not mask[4, 0, 1]
+    assert not mask[:, :, 0].any() and not mask[:, :, 2].any()
     np.testing.assert_array_equal(result, np.ones_like(volume))
 
 
