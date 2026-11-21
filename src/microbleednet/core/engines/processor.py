@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import numpy as np
 from scipy.ndimage import distance_transform_edt
 from skimage.measure import regionprops
@@ -20,6 +22,14 @@ def preprocess(
     preprocess_input: PreprocessInput,
 ) -> PreprocessOutput:
     """Canonicalize, normalize, crop, and inpaint an input brain volume."""
+    prepared = prepare_volume(preprocess_input)
+    return replace(prepared, volume=inpaint_vessels.apply(prepared.volume))
+
+
+def prepare_volume(
+    preprocess_input: PreprocessInput,
+) -> PreprocessOutput:
+    """Run every preprocessing step that comes before vessel inpainting."""
     volume = preprocess_input.volume
     mask = preprocess_input.mask
     modality = preprocess_input.modality
@@ -53,8 +63,6 @@ def preprocess(
     if mask is not None:
         mask_array = io.nifti_to_numpy(mask).astype(np.uint8)
         mask_array = volume_ops.apply_bounding_box(mask_array, bounding_box)
-
-    volume_array = inpaint_vessels.apply(volume_array)
 
     crop_start: Shape3D = (
         bounding_box[0][0],

@@ -135,7 +135,7 @@ def inspect_run(
     }
 
     records: list[LesionRecord] = []
-    for inferred in progress.track(inference_manifest.subjects):
+    for inferred in progress.track(inference_manifest.subjects, "Tralalala"):
         subject_id = inferred.subject_id
         raw_subject = raw_subjects.get(subject_id)
         preprocessed_subject = preprocessed_subjects.get(subject_id)

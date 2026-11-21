@@ -26,7 +26,7 @@ def apply(volume: np.ndarray) -> np.ndarray:
     Inpaint vessels in the given volume.
     """
     vessel_mask = get_volume_vessel_mask(volume)
-    vessel_mask = binary_dilation(vessel_mask, iterations=1)
+    vessel_mask = binary_dilation(vessel_mask, iterations=5)
     inpainted_volume = inpaint_with_neighborhood_mean(volume, vessel_mask)
 
     return inpainted_volume

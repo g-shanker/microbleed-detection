@@ -1,5 +1,5 @@
 # Preprocess every subject recorded in the indexed dataset manifest.
-dataset_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/datasets/mIP-no-noise-dilated"
+dataset_dir = "/mnt/a4ef64ea-1b6b-4423-b1d2-4794d2e97289/gouri/microbleed-data/datasets/mIP-no-noise-frst-preblurred"
 
 # Includes the original plus nine randomly augmented variants. This must be at
 # least as large as the augmentation factors requested by training.
@@ -8,8 +8,7 @@ augmentation_factor = 10
 bias_field_correction = "n4"
 # Masks mark each microbleed with a single point; dilate each into a ball of
 # this radius in mm. Omit for datasets with full lesion masks.
-point_annotation_radius_mm = 2.5
+# point_annotation_radius_mm = 2.5
 # Omit seed to generate different augmented variants on each run.
 seed = 42
 resume = false
-point_annotation_radius_mm = 2.5
