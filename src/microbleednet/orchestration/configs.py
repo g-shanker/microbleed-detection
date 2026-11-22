@@ -645,7 +645,7 @@ class InferConfig(FrozenModel):
         ),
     )
     use_amp: bool = Field(
-        description="Use float16 autocast for CUDA model inference.",
+        description="Use bfloat16 autocast for CUDA model inference.",
     )
     device: str = Field(
         description=DEVICE_FIELD_DESCRIPTION,
@@ -694,7 +694,7 @@ class EvaluateConfig(FrozenModel):
         ),
     )
     use_amp: bool = Field(
-        description="Use float16 autocast for CUDA inference during evaluation.",
+        description="Use bfloat16 autocast for CUDA inference during evaluation.",
     )
     device: str = Field(
         description=DEVICE_FIELD_DESCRIPTION,
@@ -885,7 +885,7 @@ class TargetCenteredPatchConfig(BasePatchConfig):
         description="Minimum detector probability retained as a candidate.",
     )
     use_amp: bool = Field(
-        description="Use float16 autocast for detector inference on CUDA.",
+        description="Use bfloat16 autocast for detector inference on CUDA.",
     )
     detector: Any = Field(
         description="Loaded detector used to locate candidate centers.",

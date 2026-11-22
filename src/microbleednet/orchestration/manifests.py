@@ -469,7 +469,7 @@ class PatchManifest(Manifest):
         description="Detector probability threshold used for target-centered patches.",
     )
     use_amp: bool = Field(
-        description="Whether target-centered patches used CUDA float16 autocast.",
+        description="Whether target-centered patches used CUDA bfloat16 autocast.",
     )
     records: list[PatchRecord] = Field(
         description="Materialized patch records produced by extraction."

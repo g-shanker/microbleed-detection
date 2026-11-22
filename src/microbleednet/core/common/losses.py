@@ -8,6 +8,7 @@ from ...constants import (
     DISTILLATION_ALPHA,
     DISTILLATION_BETA,
     DISTILLATION_TEMPERATURE,
+    FOCAL_GAMMA,
     FOREGROUND_CLASS,
 )
 
@@ -47,23 +48,45 @@ class KnowledgeDistillationLoss(nn.Module):
         return divergence * self.temperature**2
 
 
-class DetectorLoss(nn.Module):
-    def __init__(self):
-        """Build the combined Dice and weighted cross-entropy loss."""
+class FocalLoss(nn.Module):
+    weight: torch.Tensor
+
+    def __init__(self, weight: tuple[float, ...], gamma: float):
+        """Initialize class-weighted focal loss with the given focusing gamma."""
         super().__init__()
-        self.dice_loss = DiceLoss()
-        self.cross_entropy_loss = nn.CrossEntropyLoss(
-            weight=torch.tensor(DETECTOR_CLASS_WEIGHTS)
-        )
+        self.gamma = gamma
+        self.register_buffer("weight", torch.tensor(weight))
 
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """Combine foreground Dice loss with voxel-wise cross entropy."""
+        """Down-weight easy voxels and average by the total class weight."""
+        log_probabilities = F.log_softmax(logits.float(), dim=1)
+        target_log_probability = log_probabilities.gather(
+            1, target.unsqueeze(1)
+        ).squeeze(1)
+        weight = self.weight[target]
+        loss = (
+            -weight
+            * (1.0 - target_log_probability.exp()) ** self.gamma
+            * target_log_probability
+        )
+        return loss.sum() / weight.sum()
+
+
+class DetectorLoss(nn.Module):
+    def __init__(self):
+        """Build the combined Dice and weighted focal loss."""
+        super().__init__()
+        self.dice_loss = DiceLoss()
+        self.focal_loss = FocalLoss(DETECTOR_CLASS_WEIGHTS, FOCAL_GAMMA)
+
+    def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Combine foreground Dice loss with voxel-wise focal loss."""
         prediction = F.softmax(logits, dim=1)
         dice_loss = self.dice_loss(
             prediction[:, FOREGROUND_CLASS], target == FOREGROUND_CLASS
         )
-        cross_entropy_loss = self.cross_entropy_loss(logits, target)
-        return dice_loss + cross_entropy_loss
+        focal_loss = self.focal_loss(logits, target)
+        return dice_loss + focal_loss
 
 
 class DiscriminatorTeacherLoss(nn.Module):

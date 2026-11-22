@@ -5,6 +5,6 @@ detector_checkpoint_path = "/path/to/detector/checkpoint/to/use/for/inference"
 student_checkpoint_path = "path/to/student/checkpoint/to/use/for/inference"
 # Match the method used to preprocess the training data: "fast" or "n4".
 bias_field_correction = "n4"
-# Use float16 autocast for CUDA inference.
+# Use bfloat16 autocast for CUDA inference.
 use_amp = true
 device = "cuda"
