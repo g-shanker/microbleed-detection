@@ -1,0 +1,50 @@
+# Example dilation experiment. Copy to experiments/inpainting/config.toml and edit.
+# Run: uv run python -m experiments.inpainting.run --config experiments/inpainting/config.toml
+# Add --dry-run to list the subjects without computing anything.
+
+# Indexed raw dataset (the one `microbleednet index-data` produced). Each
+# subject is preprocessed up to vessel inpainting, which needs FSL like the
+# real preprocessing does. Only subjects with a lesion mask are used.
+dataset_dir = "/path/to/indexed/dataset"
+
+# Use the method you preprocess your training data with: "fast" or "n4".
+bias_field_correction = "n4"
+
+# Receives results.csv, the saved masks and a per-subject cache (reruns skip
+# preprocessing and vessel detection).
+output_dir = "experiments/inpainting/results"
+
+# Vessel detection strategies to compare:
+#   "axial"          the pipeline's detector, slice by slice
+#   "frangi3d"       the same recipe on the whole volume, with the pipeline's
+#                    Frangi parameters; FRANGI_SIGMAS (0.5, 1.2, 0.2) is passed
+#                    as three scales, as the pipeline does
+#   "frangi3d_range" like frangi3d, but FRANGI_SIGMAS is read as
+#                    (start, stop, step), giving the scales 0.5, 0.7, 0.9, 1.1
+# The 3D strategies are slower (about 20 s per volume per detection).
+strategies = ["axial", "frangi3d", "frangi3d_range"]
+
+# Write NIfTI files to diagnose failures: each subject's volume, lesion mask and
+# brain mask, plus the dilated vessel mask of every strategy and iteration count
+# (results/masks/<subject_id>/<strategy>_n<N>.nii.gz). The inpainted volumes are
+# large (float data) and off by default.
+save_masks = true
+save_inpainted = false
+
+# In-plane dilation iteration counts to compare; 0 means no dilation.
+iterations = [0, 1, 2, 3, 4, 5, 6]
+
+max_subjects = 20
+seed = 0
+
+# FRST-only scoring (see the README in this directory).
+lesion_margin = 1
+exclusion_radius = 4
+peak_min_distance = 3
+recall_at = [5, 20]
+
+# Recommendation rule: only counts that erase at most this share of the
+# lesion voxels qualify, and the smallest count whose mean_auc is within
+# auc_tolerance of the best qualifying one is recommended.
+max_lesion_loss = 0.05
+auc_tolerance = 0.01

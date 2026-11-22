@@ -1,0 +1,49 @@
+# Example FRST experiment. Copy to experiments/frst/config.toml and edit.
+# Run: uv run python -m experiments.frst.run --config experiments/frst/config.toml
+# Add --dry-run to list the variants without computing anything.
+
+# Preprocessed dataset (the one `microbleednet preprocess` produced). Only
+# subjects with a lesion mask are used, and only their unaugmented variant.
+dataset_dir = "/path/to/indexed/and/preprocessed/dataset"
+output_dir = "experiments/frst/results"
+
+# Each FRST variant is computed for every subject, so start small.
+max_subjects = 20
+seed = 0
+
+# Scoring (see the README in this directory).
+lesion_margin = 1       # voxels a lesion is widened by before taking its peak
+exclusion_radius = 4    # voxels around lesions that hold no background peaks
+peak_min_distance = 3   # minimum voxel distance between background peaks
+recall_at = [5, 20]
+
+# "one_at_a_time" changes one swept field at a time from the base;
+# "grid" tries every combination of the swept values.
+sweep_mode = "one_at_a_time"
+
+# Fields every swept variant starts from. Empty means the pipeline's FRST.
+# The unmodified pipeline FRST is always evaluated as the "pipeline" reference.
+[base]
+
+# FrstSpec fields (see variants.py) mapped to the values to try.
+[sweep]
+radii = [[2, 3, 4], [3, 4, 6], [2, 3, 4, 6, 8]]
+alpha = [1, 3, 4]
+blur_factor = [0.0, 0.2, 0.3]
+gradient_quantile = [0.1, 0.2, 0.4]
+edge_margin = [1, 2, 4]
+normalization = ["volume"]
+mode = ["volume"]
+through_slice_blur_mm = [1.0, 2.0]
+
+# Hand-written combinations; "name" is optional.
+[[variants]]
+name = "slice-edge-volume-norm"
+edge_margin = 2
+normalization = "volume"
+
+[[variants]]
+name = "volume-3d-quantile"
+mode = "volume"
+normalization = "volume"
+gradient_quantile = 0.2
