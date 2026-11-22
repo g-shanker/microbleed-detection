@@ -118,6 +118,45 @@ def test_main_writes_ranked_results_and_variant_specs(
     assert "mean_auc" in capsys.readouterr().out
 
 
+def test_main_logs_every_subject_and_variant_and_mirrors_to_run_log(
+    tmp_path: Path, dataset: Path, capsys
+) -> None:
+    config = write_config(tmp_path, dataset, "[sweep]\nalpha = [3]\n")
+
+    assert run.main(["--config", str(config)]) == 0
+
+    log = (tmp_path / "results" / "run.log").read_text()
+    for expected in (
+        "variants: 2; subjects: 2",
+        "[1/2] a",
+        "[2/2] b",
+        "[1/2] pipeline:",
+        "[2/2] alpha=3:",
+        "subject done in",
+        "left",
+    ):
+        assert expected in log
+    assert log.count("[1/2] pipeline:") == 2
+    log_path = tmp_path / "results" / "run.log"
+    assert capsys.readouterr().out.strip().endswith(f"log: {log_path}")
+
+
+def test_main_logs_the_traceback_when_the_run_fails(
+    tmp_path: Path, dataset: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(run.variants, "apply", fail)
+    config = write_config(tmp_path, dataset)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        run.main(["--config", str(config)])
+
+    log = (tmp_path / "results" / "run.log").read_text()
+    assert "FAILED" in log and "RuntimeError: boom" in log
+
+
 def test_dry_run_lists_variants_without_computing(
     tmp_path: Path, dataset: Path, capsys
 ) -> None:

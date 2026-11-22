@@ -18,6 +18,7 @@ Nothing in `src/` or `tests/` imports this directory. To remove it, see
 | `scoring.py` | Turns a FRST map into lesion scores and background peaks, and summarizes them into metrics. |
 | `config.py` | Experiment settings and the expansion of sweeps into named variants. |
 | `run.py` | Command-line runner. |
+| `log.py` | Progress output, mirrored to `run.log`. |
 | `config.example.toml` | Annotated example configuration. |
 | `tests/` | Tests for the workspace (not part of the project's test gate). |
 
@@ -51,6 +52,31 @@ Nothing in `src/` or `tests/` imports this directory. To remove it, see
 Each variant costs roughly one FRST per subject (about a second for a
 256 x 256 x 60 volume for the pipeline settings, more for `mode = "volume"`),
 so start with `max_subjects = 10` to 20 and widen the sweep afterwards.
+
+### Progress and logs
+
+The run reports every step as it happens, and mirrors everything to
+`results/run.log` (appended to on reruns, each run starting with a
+`=== run started … ===` header). A trimmed example:
+
+```text
+[18:37:31] dataset: /data/preprocessed
+[18:37:31] variants: 22; subjects: 20
+[18:37:31] [1/20] subject-001
+[18:37:32]   loaded in 0.4s: shape (190, 220, 60), spacing (0.5, 0.5, 2.0)
+[18:37:34]   [1/22] pipeline: 3 lesions, 143 background peaks, 1.9s
+[18:37:36]   [2/22] radii=[2, 3, 4]: 3 lesions, 151 background peaks, 1.5s
+[18:38:40]   subject done in 69s; elapsed 1m09s, about 21m left
+```
+
+* Each variant reports how long it took and how many lesions and background
+  peaks it scored on that subject. A variant with no peaks or no lesions
+  stands out at once.
+* After each subject, the log estimates the time left from the average so far.
+* The final table and the path of the outputs are logged too.
+* If the run fails, the traceback is written to `run.log` before the error is
+  raised, so it survives a closed terminal.
+* `--dry-run` writes no log.
 
 ## What can be varied
 

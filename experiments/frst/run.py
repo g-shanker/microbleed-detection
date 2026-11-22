@@ -8,6 +8,7 @@ import csv
 import json
 import random
 import time
+import traceback
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from microbleednet.orchestration.manifests import (
 
 from . import scoring, variants
 from .config import ExperimentConfig, expand_variants, load_config
+from .log import Log, RunLog, format_duration, silent
 
 
 def select_subjects(
@@ -59,30 +61,51 @@ def evaluate(
     config: ExperimentConfig,
     named_specs: Sequence[tuple[str, variants.FrstSpec]],
     subjects: Sequence[PreprocessedSubject],
-    log=print,
+    log: Log = silent,
 ) -> list[dict[str, object]]:
-    """Score every variant on every subject and return one row per variant."""
+    """Score every variant on every subject and return one row per variant.
+
+    Progress is reported to ``log``: every subject, every variant on it and an
+    estimate of the time left.
+    """
     per_variant: dict[str, list[scoring.SubjectScores]] = {
         name: [] for name, _ in named_specs
     }
     seconds = dict.fromkeys(per_variant, 0.0)
+    run_started = time.perf_counter()
     for position, subject in enumerate(subjects, start=1):
+        subject_started = time.perf_counter()
         log(f"[{position}/{len(subjects)}] {subject.subject_id}")
         volume, lesions, brain, spacing = load_subject(subject)
-        for name, spec in named_specs:
+        log(
+            f"  loaded in {time.perf_counter() - subject_started:.1f}s: "
+            f"shape {volume.shape}, spacing {tuple(round(s, 2) for s in spacing)}"
+        )
+        for index, (name, spec) in enumerate(named_specs, start=1):
             started = time.perf_counter()
             frst_map = variants.apply(volume, brain, spacing, spec)
-            per_variant[name].append(
-                scoring.subject_scores(
-                    frst_map,
-                    lesions,
-                    brain,
-                    lesion_margin=config.lesion_margin,
-                    exclusion_radius=config.exclusion_radius,
-                    peak_min_distance=config.peak_min_distance,
-                )
+            scores = scoring.subject_scores(
+                frst_map,
+                lesions,
+                brain,
+                lesion_margin=config.lesion_margin,
+                exclusion_radius=config.exclusion_radius,
+                peak_min_distance=config.peak_min_distance,
             )
-            seconds[name] += time.perf_counter() - started
+            per_variant[name].append(scores)
+            elapsed = time.perf_counter() - started
+            seconds[name] += elapsed
+            log(
+                f"  [{index}/{len(named_specs)}] {name}: "
+                f"{len(scores.lesion_scores)} lesions, "
+                f"{len(scores.background_peaks)} background peaks, {elapsed:.1f}s"
+            )
+        done = time.perf_counter() - run_started
+        remaining = done / position * (len(subjects) - position)
+        log(
+            f"  subject done in {time.perf_counter() - subject_started:.0f}s; "
+            f"elapsed {format_duration(done)}, about {format_duration(remaining)} left"
+        )
 
     rows: list[dict[str, object]] = []
     for name, spec in named_specs:
@@ -150,10 +173,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("No subjects with lesion masks in the dataset.")
         return 1
 
-    rows = evaluate(config, named_specs, subjects)
+    log = RunLog(config.output_dir / "run.log")
+    log(f"dataset: {config.dataset_dir}")
+    log(f"variants: {len(named_specs)}; subjects: {len(subjects)}")
+    try:
+        rows = evaluate(config, named_specs, subjects, log)
+    except Exception:
+        log("FAILED; the run stopped with this error:")
+        log.raw(traceback.format_exc())
+        raise
     write_results(config.output_dir, rows, named_specs)
-    print(format_table(rows, config.recall_at))
-    print(f"\nWrote {config.output_dir / 'results.csv'}")
+    log.raw("")
+    log.raw(format_table(rows, config.recall_at))
+    log.raw("")
+    log(f"wrote {config.output_dir / 'results.csv'}")
+    log(f"log: {log.path}")
     return 0
 
 
