@@ -16,6 +16,7 @@ from ...constants import (
     MAXIMUM_VESSEL_SOLIDITY,
     MINIMUM_VESSEL_ECCENTRICITY,
     VESSEL_CONNECTIVITY,
+    VESSEL_DILATION_ITERATIONS,
 )
 from ...errors import ApplicationError
 from .. import utils
@@ -26,14 +27,13 @@ def apply(volume: np.ndarray) -> np.ndarray:
     Inpaint vessels in the given volume.
     """
     vessel_mask = get_volume_vessel_mask(volume)
-    vessel_mask = binary_dilation(vessel_mask, iterations=1)
     inpainted_volume = inpaint_with_neighborhood_mean(volume, vessel_mask)
 
     return inpainted_volume
 
 
 def get_volume_vessel_mask(volume: np.ndarray) -> np.ndarray:
-    """Get vessel mask using Frangi filter and KMeans clustering in parallel"""
+    """Get the in-plane dilated vessel mask, slice by slice, in parallel"""
 
     _, _, depth = volume.shape
     vessel_mask = np.zeros_like(volume)
@@ -44,7 +44,11 @@ def get_volume_vessel_mask(volume: np.ndarray) -> np.ndarray:
     )
 
     for slice_idx, vessel_mask_slice in enumerate(parallel_generator):
-        vessel_mask[:, :, slice_idx] = vessel_mask_slice
+        # Dilating each slice on its own keeps vessels from growing across
+        # slices, which are thick compared with the in-plane resolution.
+        vessel_mask[:, :, slice_idx] = binary_dilation(
+            vessel_mask_slice, iterations=VESSEL_DILATION_ITERATIONS
+        )
 
     return vessel_mask
 

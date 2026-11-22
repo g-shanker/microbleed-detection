@@ -44,6 +44,8 @@ CLUSTERER_RANDOM_STATE = 0
 MINIMUM_VESSEL_ECCENTRICITY = 0.9
 MAXIMUM_VESSEL_SOLIDITY = 0.5
 VESSEL_CONNECTIVITY = 1
+# In-plane dilation of each slice's vessel mask before inpainting.
+VESSEL_DILATION_ITERATIONS = 1
 INVERTED_MODALITIES = frozenset({"T2*-GRE", "SWI"})
 
 # Core processing and training

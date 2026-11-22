@@ -17,7 +17,7 @@ class SerialParallel:
         return (function(*args, **kwargs) for function, args, kwargs in tasks)
 
 
-def test_apply_dilates_detected_vessels_before_inpainting(monkeypatch) -> None:
+def test_apply_inpaints_the_vessel_mask_unchanged(monkeypatch) -> None:
     volume = np.zeros((3, 3, 3))
     vessel_mask = voxels((3, 3, 3), (1, 1, 1), dtype=bool)
     observed = {}
@@ -33,27 +33,59 @@ def test_apply_dilates_detected_vessels_before_inpainting(monkeypatch) -> None:
 
     result = inpaint_vessels.apply(volume)
 
-    assert observed["mask"].sum() > vessel_mask.sum()
+    np.testing.assert_array_equal(observed["mask"], vessel_mask)
     np.testing.assert_array_equal(result, np.ones_like(volume))
 
 
-def test_get_volume_vessel_mask_processes_every_slice_in_order(monkeypatch) -> None:
-    created = []
+@pytest.fixture
+def serial_parallel(monkeypatch) -> list[dict]:
+    """Replace joblib's pool with an in-process runner; return its options."""
+    created: list[dict] = []
 
     def parallel(**options) -> SerialParallel:
         created.append(options)
         return SerialParallel(**options)
 
     monkeypatch.setattr(inpaint_vessels, "Parallel", parallel)
+    return created
+
+
+def test_get_volume_vessel_mask_processes_every_slice_in_order(
+    monkeypatch, serial_parallel: list[dict]
+) -> None:
     monkeypatch.setattr(
-        inpaint_vessels, "get_slice_vessel_mask", lambda image_slice: image_slice + 100
+        inpaint_vessels,
+        "get_slice_vessel_mask",
+        lambda image_slice: image_slice > 0,
     )
-    volume = np.arange(12, dtype=float).reshape((2, 3, 2))
+    volume = voxels((5, 5, 2), (1, 1, 0), (3, 3, 1))
 
     mask = inpaint_vessels.get_volume_vessel_mask(volume)
 
-    np.testing.assert_array_equal(mask, volume + 100)
-    assert created == [{"n_jobs": -1, "return_as": "generator"}]
+    cross = ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1))
+    expected = voxels(
+        (5, 5, 2),
+        *[(1 + dx, 1 + dy, 0) for dx, dy in cross],
+        *[(3 + dx, 3 + dy, 1) for dx, dy in cross],
+    )
+    np.testing.assert_array_equal(mask, expected)
+    assert serial_parallel == [{"n_jobs": -1, "return_as": "generator"}]
+
+
+def test_get_volume_vessel_mask_dilates_within_each_slice(
+    monkeypatch, serial_parallel: list[dict]
+) -> None:
+    monkeypatch.setattr(
+        inpaint_vessels,
+        "get_slice_vessel_mask",
+        lambda image_slice: image_slice > 0,
+    )
+    volume = voxels((5, 5, 3), (2, 2, 1))
+
+    mask = inpaint_vessels.get_volume_vessel_mask(volume)
+
+    expected = voxels((5, 5, 3), (2, 2, 1), (1, 2, 1), (3, 2, 1), (2, 1, 1), (2, 3, 1))
+    np.testing.assert_array_equal(mask, expected)
 
 
 @pytest.mark.parametrize("image_slice", [np.zeros((2, 2)), np.ones((2, 2))])
