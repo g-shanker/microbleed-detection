@@ -1,5 +1,6 @@
 from pathlib import Path
-from typing import Literal
+from types import ModuleType
+from typing import Any, Literal
 
 import pytest
 from pydantic import BaseModel, Field, model_validator
@@ -7,45 +8,41 @@ from pydantic import BaseModel, Field, model_validator
 from microbleednet.cli.utils import (
     ConfigField,
     config_fields,
+    is_pipe_module,
     load_config,
     parse_config,
 )
 from microbleednet.errors import ApplicationError, print_application_error
 from microbleednet.orchestration.configs import IndexDataConfig
+from tests.support_cli_core import FakeConfig
 
 
-def test_load_config_rejects_missing_file(tmp_path: Path) -> None:
-    with pytest.raises(ApplicationError, match="Configuration file not found"):
-        load_config(tmp_path / "missing.toml")
+@pytest.mark.parametrize(
+    ("name", "content", "message"),
+    [
+        ("missing.toml", None, "Configuration file not found"),
+        ("config.json", "{}", "must use the TOML format"),
+        ("config", "{}", "<none>"),
+        ("config.toml", "not = valid = toml", "Could not load configuration file"),
+    ],
+)
+def test_load_config_rejects_unusable_file(
+    tmp_path: Path, name: str, content: str | None, message: str
+) -> None:
+    path = tmp_path / name
+    if content is not None:
+        path.write_text(content, encoding="utf-8")
 
-
-def test_load_config_rejects_non_toml_suffix(tmp_path: Path) -> None:
-    path = tmp_path / "config.json"
-    path.write_text("{}", encoding="utf-8")
-    with pytest.raises(ApplicationError, match="must use the TOML format"):
+    with pytest.raises(ApplicationError, match=message):
         load_config(path)
 
 
-def test_load_config_reports_missing_suffix(tmp_path: Path) -> None:
-    path = tmp_path / "config"
-    path.write_text("{}", encoding="utf-8")
-
-    with pytest.raises(ApplicationError, match="<none>"):
-        load_config(path)
-
-
-def test_load_config_rejects_malformed_toml(tmp_path: Path) -> None:
-    path = tmp_path / "config.toml"
-    path.write_text("not = valid = toml", encoding="utf-8")
-    with pytest.raises(ApplicationError, match="Could not load configuration file"):
-        load_config(path)
-
-
-def test_parse_config_reports_validation_error_as_bad_parameter(
+def test_parse_config_reports_validation_error_as_application_error(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "config.toml"
     path.write_text("dataset_dir = 'dataset'\n", encoding="utf-8")  # missing fields
+
     with pytest.raises(ApplicationError) as error:
         parse_config(path, IndexDataConfig, "index-data")
 
@@ -74,90 +71,86 @@ def test_parse_config_preserves_nested_application_error(tmp_path: Path) -> None
     assert error.value.fix == "Rerun the producing stage"
 
 
-def test_application_error_string_includes_optional_fields() -> None:
-    error = ApplicationError(
-        category="Configuration",
-        summary="Configuration failed",
-        cause="A field is invalid",
-        fix="Correct the field",
-    )
-
-    assert str(error) == (
-        "Configuration failed. Cause: A field is invalid. Fix: Correct the field."
-    )
-
-
-def test_application_error_string_supports_summary_only() -> None:
-    assert str(ApplicationError(category="Internal", summary="Operation failed")) == (
-        "Operation failed."
-    )
-
-
-def test_print_application_error_uses_plain_terminal_output(capsys) -> None:
-    print_application_error(
-        ApplicationError(
-            category="Configuration",
-            summary="Configuration failed",
-            fix="Correct the field",
-            context={"path": "config.toml"},
-        )
-    )
-
-    assert capsys.readouterr().out == (
-        "Configuration failed. Fix: Correct the field. "
-        "Context: path: config.toml.\n"
-    )
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        (
+            {
+                "category": "Configuration",
+                "summary": "Configuration failed",
+                "cause": "A field is invalid",
+                "fix": "Correct the field",
+            },
+            "Configuration failed. Cause: A field is invalid. Fix: Correct the field.",
+        ),
+        ({"category": "Internal", "summary": "Operation failed"}, "Operation failed."),
+    ],
+)
+def test_application_error_string_includes_optional_fields(
+    kwargs: dict[str, Any], expected: str
+) -> None:
+    assert str(ApplicationError(**kwargs)) == expected
 
 
-def test_print_application_error_without_context(capsys) -> None:
-    print_application_error(
-        ApplicationError(category="Internal", summary="Operation failed")
-    )
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        (
+            {
+                "category": "Configuration",
+                "summary": "Configuration failed",
+                "fix": "Correct the field",
+                "context": {"path": "config.toml"},
+            },
+            "Configuration failed. Fix: Correct the field. "
+            "Context: path: config.toml.\n",
+        ),
+        (
+            {"category": "Internal", "summary": "Operation failed"},
+            "Operation failed.\n",
+        ),
+    ],
+)
+def test_print_application_error_uses_plain_terminal_output(
+    capsys: pytest.CaptureFixture[str], kwargs: dict, expected: str
+) -> None:
+    print_application_error(ApplicationError(**kwargs))
 
-    assert capsys.readouterr().out == "Operation failed.\n"
+    assert capsys.readouterr().out == expected
 
 
-def test_config_fields_recurses_into_nested_models() -> None:
-    class Inner(BaseModel):
-        knob: int = Field(default=1, description="An inner knob.")
-
-    class Outer(BaseModel):
-        inner: Inner = Field(default_factory=Inner)
-
-    fields = config_fields(Outer, prefix="")
-    assert fields == [
-        ConfigField(
-            section="inner",
-            key="knob",
-            default="1",
-            description="An inner knob.",
-        )
+def test_config_fields_flatten_nested_models_and_mark_required_fields() -> None:
+    assert config_fields(FakeConfig, prefix="") == [
+        ConfigField("", "top_level", None, "A top-level field."),
+        ConfigField("nested", "knob", "1", "A nested knob."),
+        ConfigField("", "trailing", "True", "A trailing top-level field."),
     ]
 
 
-def test_config_fields_reports_literal_options() -> None:
+def test_config_fields_report_literal_options() -> None:
     class Config(BaseModel):
         modality: Literal["T2*-GRE", "SWI", "QSM"] = Field(
             default="T2*-GRE", description="Imaging modality."
         )
 
-    fields = config_fields(Config, prefix="")
-
-    assert fields == [
+    assert config_fields(Config, prefix="") == [
         ConfigField(
             section="",
             key="modality",
             default="'T2*-GRE'",
-            description=(
-                "Imaging modality. Allowed values: 'T2*-GRE', 'SWI', 'QSM'."
-            ),
+            description="Imaging modality. Allowed values: 'T2*-GRE', 'SWI', 'QSM'.",
         )
     ]
 
 
-def test_config_field_derives_required_state_from_default() -> None:
-    required = ConfigField(section="", key="missing", default=None, description="")
-    optional = ConfigField(section="", key="present", default="1", description="")
+@pytest.mark.parametrize(
+    ("attributes", "expected"),
+    [({}, False), ({"execute": 1}, False), ({"execute": print}, True)],
+)
+def test_is_pipe_module_requires_callable_execute(
+    attributes: dict, expected: bool
+) -> None:
+    module = ModuleType("pipe")
+    module.__dict__.update(attributes)
 
-    assert required.default is None
-    assert optional.default == "1"
+    assert is_pipe_module(module) is expected

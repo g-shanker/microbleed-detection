@@ -1,16 +1,17 @@
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from microbleednet.constants import DETECTOR_STAGE, STUDENT_STAGE
 from microbleednet.core.common.models import CandidateDetector
-from microbleednet.core.datamodels import Hyperparameters
 from microbleednet.orchestration.configs import (
     EvaluateConfig,
     IndexDataConfig,
     InferConfig,
+    NonOverlappingPatchConfig,
     PreprocessConfig,
     SplitConfig,
     TargetCenteredPatchConfig,
@@ -19,1555 +20,931 @@ from microbleednet.orchestration.configs import (
     ensure_subjects_have_masks,
     ensure_training_resume_state,
 )
-from microbleednet.orchestration.layouts import (
-    DatasetLayout,
-    ExperimentLayout,
-)
+from microbleednet.orchestration.layouts import DatasetLayout, ExperimentLayout
 from microbleednet.orchestration.manifests import (
     ManifestStatus,
-    PreprocessedDatasetManifest,
     PreprocessedSubject,
-    PreprocessedVariant,
     RawDatasetManifest,
-    RawSource,
-    RawSubject,
     SplitManifest,
-    TrainManifest,
     TrainStageManifest,
     content_fingerprint,
-    timestamp,
 )
-from tests.support import make_index_config
+from tests.support import (
+    hyperparameters,
+    make_index_config,
+    preprocessed_subjects,
+    raw_subjects,
+    train_config,
+    train_manifest_for,
+    write_preprocessed_manifest,
+    write_raw_manifest,
+    write_split_manifest,
+    write_training_dataset,
+)
+
+SUBJECT_IDS = [f"subject-{index}" for index in range(7)]
+RESUME_HINT = "Set resume to false and rerun preprocessing"
+ValuesFactory = Callable[..., dict[str, Any]]
+
+
+# --- builders -----------------------------------------------------------------
+
+
+def preprocess_values(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
+    return {
+        "dataset_dir": tmp_path / "dataset",
+        "augmentation_factor": 1,
+        **overrides,
+    }
+
+
+def explicit_values(tmp_path: Path, output: str, **overrides: Any) -> dict[str, Any]:
+    checkpoints = {}
+    for stage in (DETECTOR_STAGE, STUDENT_STAGE):
+        checkpoint = tmp_path / f"{stage}.pth"
+        checkpoint.touch()
+        checkpoints[f"{stage}_checkpoint_path"] = checkpoint
+    return {
+        "dataset_dir": tmp_path / "dataset",
+        "output_dir": tmp_path / output,
+        **checkpoints,
+        "use_amp": False,
+        "device": "cpu",
+        **overrides,
+    }
+
+
+def infer_values(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
+    return explicit_values(tmp_path, "inference", **overrides)
+
+
+def evaluate_values(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
+    return explicit_values(
+        tmp_path, "evaluation", **{"bias_field_correction": "fast", **overrides}
+    )
+
+
+def split_config(
+    dataset_dir: Path, experiment_dir: Path, **overrides: Any
+) -> SplitConfig:
+    sizes = {"train_size": 0.7, "validation_size": 0.1, "test_size": 0.2}
+    return SplitConfig(
+        dataset_dir=dataset_dir, experiment_dir=experiment_dir, **{**sizes, **overrides}
+    )
+
+
+def write_preprocess_checkpoint(
+    dataset_dir: Path, *, status: ManifestStatus = ManifestStatus.RUNNING, **overrides
+) -> None:
+    raw_manifest = RawDatasetManifest.read(
+        DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path()
+    )
+    overrides.setdefault("raw_manifest_fingerprint", content_fingerprint(raw_manifest))
+    write_preprocessed_manifest(dataset_dir, [], status=status, **overrides)
+
+
+def write_experiment(
+    config: TrainConfig,
+    layout: ExperimentLayout,
+    split_fingerprint: str,
+    status: ManifestStatus = ManifestStatus.COMPLETE,
+) -> None:
+    train_manifest_for(config, split_fingerprint, status=status).write(
+        layout.train_manifest_path()
+    )
+    for stage in (DETECTOR_STAGE, STUDENT_STAGE):
+        checkpoint = layout.best_checkpoint_path(stage)
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint.touch()
+
+
+def write_detector_stage(
+    config: TrainConfig, layout: ExperimentLayout, status: ManifestStatus
+) -> None:
+    TrainStageManifest(
+        status=status,
+        stage=DETECTOR_STAGE,
+        hyperparameters=config.detector_hyperparameters,
+        history=[],
+    ).write(layout.stage_manifest_path(DETECTOR_STAGE))
+
+
+def resumed(config: TrainConfig, **overrides: Any) -> TrainConfig:
+    return TrainConfig(**{**config.model_dump(), "resume": True, **overrides})
+
+
+def without_masks(subject: PreprocessedSubject) -> PreprocessedSubject:
+    return subject.model_copy(
+        update={
+            "variants": [
+                variant.model_copy(update={"mask_path": None})
+                for variant in subject.variants
+            ]
+        }
+    )
+
+
+def patch_values(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
+    return {
+        "experiment_layout": ExperimentLayout(experiment_dir=tmp_path),
+        "stage": "student",
+        "split": "train",
+        "subjects": preprocessed_subjects(1, tmp_path),
+        "patch_size": 24,
+        "augmentation_factor": 1,
+        **overrides,
+    }
+
+
+def assert_incomplete_manifest(
+    error: pytest.ExceptionInfo[ValidationError], kind: str, path: Path
+) -> None:
+    message = str(error.value)
+    assert f"Cannot use incomplete {kind} manifest" in message
+    assert "Rerun the producing stage to completion" in message
+    assert str(path) in message
+
+
+PREPROCESS = pytest.param(PreprocessConfig, preprocess_values, id="preprocess")
+INFER = pytest.param(InferConfig, infer_values, id="infer")
+EVALUATE = pytest.param(EvaluateConfig, evaluate_values, id="evaluate")
+CONFIG_PARAMS = ("config_cls", "make_values")
+
+
+# --- fixtures -----------------------------------------------------------------
+
+
+@pytest.fixture
+def raw_dataset(tmp_path: Path) -> Path:
+    dataset_dir = tmp_path / "dataset"
+    write_raw_manifest(dataset_dir)
+    return dataset_dir
+
+
+@pytest.fixture
+def dataset_dir(tmp_path: Path) -> Path:
+    return write_training_dataset(tmp_path)
+
+
+@pytest.fixture
+def split(tmp_path: Path, dataset_dir: Path) -> SplitManifest:
+    return write_split_manifest(tmp_path, SUBJECT_IDS)
+
+
+@pytest.fixture
+def layout(tmp_path: Path) -> ExperimentLayout:
+    return ExperimentLayout(experiment_dir=tmp_path / "experiment")
+
+
+@pytest.fixture
+def config(
+    dataset_dir: Path, split: SplitManifest, layout: ExperimentLayout
+) -> TrainConfig:
+    return train_config(dataset_dir, layout.experiment_dir)
+
+
+# --- IndexDataConfig ----------------------------------------------------------
 
 
 @pytest.mark.parametrize("source_id", ["siteA", "site-a", "site_a", "123"])
-def test_source_id_accepts_filesystem_safe_values(tmp_path, source_id: str) -> None:
-    config = make_index_config(tmp_path, source_id=source_id)
-
-    assert config.source_id == source_id
-
-
-def test_missing_mask_error_bounds_subject_ids() -> None:
-    subjects = [
-        RawSubject(
-            subject_id=f"subject-{index}",
-            source_id="source",
-            volume_path=f"volume-{index}",
-            mask_path=None,
-        )
-        for index in range(6)
-    ]
-
-    with pytest.raises(ValueError, match="6 total"):
-        ensure_subjects_have_masks(subjects)
+def test_source_id_accepts_filesystem_safe_values(
+    tmp_path: Path, source_id: str
+) -> None:
+    assert make_index_config(tmp_path, source_id=source_id).source_id == source_id
 
 
 @pytest.mark.parametrize("source_id", ["site/A", "site A", "site@A", ""])
-def test_source_id_rejects_unsafe_values(tmp_path, source_id: str) -> None:
-    with pytest.raises(ValidationError, match="Value error"):
+def test_source_id_rejects_unsafe_values(tmp_path: Path, source_id: str) -> None:
+    with pytest.raises(ValidationError, match="Source ID is not filesystem-safe"):
         make_index_config(tmp_path, source_id=source_id)
 
 
-def test_source_id_is_required(tmp_path) -> None:
-    with pytest.raises(ValidationError, match="source_id"):
-        IndexDataConfig.model_validate(
-            {
-                "dataset_dir": tmp_path / "dataset",
-                "input_dir": tmp_path,
-                "volume_pattern": "{subject_id}.nii.gz",
-                "mask_dir": tmp_path / "masks",
-                "mask_pattern": "{subject_id}.nii.gz",
-            }
-        )
+@pytest.mark.parametrize("field", ["source_id", "modality"])
+def test_index_config_requires_field(tmp_path: Path, field: str) -> None:
+    values = make_index_config(tmp_path).model_dump()
+    del values[field]
 
-
-def test_modality_is_required(tmp_path) -> None:
-    with pytest.raises(ValidationError, match="modality"):
-        IndexDataConfig.model_validate(
-            {
-                "dataset_dir": tmp_path / "dataset",
-                "input_dir": tmp_path,
-                "volume_pattern": "{subject_id}.nii.gz",
-                "mask_dir": tmp_path / "masks",
-                "mask_pattern": "{subject_id}.nii.gz",
-                "source_id": "test-source",
-            }
-        )
+    with pytest.raises(ValidationError, match=field):
+        IndexDataConfig.model_validate(values)
 
 
 @pytest.mark.parametrize(
     ("overrides", "field"),
     [
         ({"volume_pattern": "volume.nii.gz"}, "volume_pattern"),
-        (
-            {
-                "mask_dir": "masks",
-                "mask_pattern": "mask.nii.gz",
-            },
-            "mask_pattern",
-        ),
+        ({"mask_pattern": "mask.nii.gz"}, "mask_pattern"),
     ],
 )
 def test_patterns_require_subject_id_placeholder(
-    tmp_path, overrides: dict[str, object], field: str
+    tmp_path: Path, overrides: dict[str, object], field: str
 ) -> None:
-    with pytest.raises(ValidationError, match="Value error"):
+    with pytest.raises(
+        ValidationError, match=f"{field} is missing the subject ID placeholder"
+    ):
         make_index_config(tmp_path, **overrides)
 
 
-def test_pattern_accepts_multiple_subject_id_placeholders(tmp_path) -> None:
+def test_pattern_accepts_multiple_subject_id_placeholders(tmp_path: Path) -> None:
     pattern = "{subject_id}/{subject_id}_volume.nii.gz"
 
-    config = make_index_config(tmp_path, volume_pattern=pattern)
-
-    assert config.volume_pattern == pattern
+    assert make_index_config(tmp_path, volume_pattern=pattern).volume_pattern == pattern
 
 
-def test_mask_inputs_are_optional(tmp_path) -> None:
-    config = IndexDataConfig.model_validate(
-        {
-            "dataset_dir": tmp_path / "dataset",
-            "input_dir": tmp_path,
-            "volume_pattern": "{subject_id}.nii.gz",
-            "source_id": "test-source",
-            "modality": "T2*-GRE",
-        }
-    )
+def test_mask_inputs_are_optional(tmp_path: Path) -> None:
+    values = make_index_config(tmp_path).model_dump()
+    del values["mask_dir"], values["mask_pattern"]
+
+    config = IndexDataConfig.model_validate(values)
 
     assert config.mask_dir is None
     assert config.mask_pattern is None
 
 
-def test_mask_inputs_must_be_provided_together(tmp_path) -> None:
-    with pytest.raises(ValidationError, match="Value error"):
-        IndexDataConfig.model_validate(
-            {
-                "dataset_dir": tmp_path / "dataset",
-                "input_dir": tmp_path,
-                "volume_pattern": "{subject_id}.nii.gz",
-                "mask_dir": tmp_path,
-                "source_id": "test-source",
-                "modality": "T2*-GRE",
-            }
-        )
+@pytest.mark.parametrize("omitted", ["mask_dir", "mask_pattern"])
+def test_mask_inputs_must_be_provided_together(tmp_path: Path, omitted: str) -> None:
+    values = make_index_config(tmp_path).model_dump()
+    del values[omitted]
+
+    with pytest.raises(ValidationError, match="must be provided together"):
+        IndexDataConfig.model_validate(values)
 
 
-def test_index_config_rejects_missing_input_dir(tmp_path) -> None:
-    with pytest.raises(ValidationError, match="Value error"):
-        make_index_config(tmp_path, input_dir=tmp_path / "missing")
+@pytest.mark.parametrize("field", ["input_dir", "mask_dir"])
+def test_index_config_rejects_missing_directories(tmp_path: Path, field: str) -> None:
+    with pytest.raises(ValidationError, match=f"Required {field} directory not found"):
+        make_index_config(tmp_path, **{field: tmp_path / "missing"})
 
 
-def test_index_config_rejects_missing_mask_dir(tmp_path) -> None:
-    with pytest.raises(ValidationError, match="Value error"):
-        make_index_config(tmp_path, mask_dir=tmp_path / "missing")
+# --- PreprocessConfig ---------------------------------------------------------
 
 
-def test_preprocess_config_rejects_missing_dataset_dir(tmp_path) -> None:
-    with pytest.raises(ValidationError, match="Value error"):
-        PreprocessConfig(dataset_dir=tmp_path / "missing", augmentation_factor=1)
-
-
-def test_preprocess_config_rejects_running_raw_manifest(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("prepare", "message"),
+    [
+        (None, "Required dataset_dir directory not found"),
+        ("empty", "Required raw manifest file not found"),
+        ("unreadable", "Manifest schema validation failed"),
+    ],
+)
+def test_preprocess_config_requires_readable_raw_manifest(
+    tmp_path: Path, prepare: str | None, message: str
+) -> None:
     dataset_dir = tmp_path / "dataset"
-    _write_raw_dataset_manifest(
-        tmp_path,
-        dataset_dir,
-        mask_path=str(tmp_path / "mask.nii.gz"),
-        status=ManifestStatus.RUNNING,
-    )
-    manifest_path = DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path()
+    if prepare:
+        manifest_path = DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path()
+        manifest_path.parent.mkdir(parents=True)
+        if prepare == "unreadable":
+            manifest_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match=message):
+        PreprocessConfig.model_validate(preprocess_values(tmp_path))
+
+
+@pytest.mark.parametrize(CONFIG_PARAMS, [PREPROCESS, INFER, EVALUATE])
+def test_raw_manifest_must_be_complete(
+    tmp_path: Path, config_cls: type[BaseModel], make_values: ValuesFactory
+) -> None:
+    write_raw_manifest(tmp_path / "dataset", status=ManifestStatus.RUNNING)
+    manifest_path = DatasetLayout(dataset_dir=tmp_path / "dataset").raw_manifest_path()
 
     with pytest.raises(ValidationError) as error:
-        PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1)
+        config_cls.model_validate(make_values(tmp_path))
 
-    message = str(error.value)
-    assert "Cannot use incomplete raw manifest" in message
-    assert "Rerun the producing stage to completion" in message
-    assert str(manifest_path) in message
+    assert_incomplete_manifest(error, "raw", manifest_path)
+
+
+@pytest.mark.parametrize(CONFIG_PARAMS, [PREPROCESS, EVALUATE])
+def test_bias_field_correction_rejects_unknown_method(
+    tmp_path: Path, config_cls: type[BaseModel], make_values: ValuesFactory
+) -> None:
+    with pytest.raises(ValidationError, match="bias_field_correction"):
+        config_cls.model_validate(make_values(tmp_path, bias_field_correction="other"))
 
 
 def test_preprocess_config_ignores_existing_checkpoint_without_resume(
-    tmp_path: Path,
+    tmp_path: Path, raw_dataset: Path
 ) -> None:
-    dataset_dir = tmp_path / "dataset"
-    raw_manifest = _write_raw_dataset_manifest(
-        tmp_path,
-        dataset_dir,
-        mask_path=str(tmp_path / "mask.nii.gz"),
-    )
-    PreprocessedDatasetManifest(
-        status=ManifestStatus.RUNNING,
-        created_at=timestamp(),
-        updated_at=timestamp(),
-        subjects=[],
-        augmentation_factor=99,
-        bias_field_correction="fast",
-        raw_manifest_fingerprint=content_fingerprint(raw_manifest),
-    ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
+    write_preprocess_checkpoint(raw_dataset, augmentation_factor=99)
 
-    config = PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1)
+    config = PreprocessConfig.model_validate(preprocess_values(tmp_path))
 
     assert config.resume is False
     assert config.bias_field_correction == "fast"
 
 
-def test_preprocess_config_rejects_unknown_bias_field_correction(
-    tmp_path: Path,
+@pytest.mark.parametrize("checkpoint_seed", [None, 41])
+def test_preprocess_resume_accepts_running_checkpoint(
+    tmp_path: Path, raw_dataset: Path, checkpoint_seed: int | None
 ) -> None:
-    dataset_dir = tmp_path / "dataset"
-    _write_raw_dataset_manifest(
-        tmp_path,
-        dataset_dir,
-        mask_path=str(tmp_path / "mask.nii.gz"),
+    write_preprocess_checkpoint(raw_dataset, seed=checkpoint_seed)
+
+    config = PreprocessConfig.model_validate(
+        preprocess_values(tmp_path, seed=42, resume=True)
     )
 
-    with pytest.raises(ValidationError, match="bias_field_correction"):
-        PreprocessConfig.model_validate(
-            {
-                "dataset_dir": dataset_dir,
-                "augmentation_factor": 1,
-                "bias_field_correction": "other",
-            }
-        )
-
-
-def test_preprocess_config_resume_requires_existing_checkpoint(tmp_path: Path) -> None:
-    dataset_dir = tmp_path / "dataset"
-    _write_raw_dataset_manifest(
-        tmp_path,
-        dataset_dir,
-        mask_path=str(tmp_path / "mask.nii.gz"),
-    )
-
-    with pytest.raises(ValidationError, match="Value error"):
-        PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=1, resume=True)
-
-
-def test_preprocess_config_resume_accepts_running_checkpoint(tmp_path: Path) -> None:
-    dataset_dir = tmp_path / "dataset"
-    raw_manifest = _write_raw_dataset_manifest(
-        tmp_path,
-        dataset_dir,
-        mask_path=str(tmp_path / "mask.nii.gz"),
-    )
-    PreprocessedDatasetManifest(
-        status=ManifestStatus.RUNNING,
-        created_at=timestamp(),
-        updated_at=timestamp(),
-        subjects=[],
-        augmentation_factor=1,
-        bias_field_correction="fast",
-        raw_manifest_fingerprint=content_fingerprint(raw_manifest),
-    ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
-
-    config = PreprocessConfig(
-        dataset_dir=dataset_dir, augmentation_factor=1, resume=True
-    )
-
-    assert config.resume is True
-
-
-def test_preprocess_config_resume_allows_changed_seed(tmp_path: Path) -> None:
-    dataset_dir = tmp_path / "dataset"
-    raw_manifest = _write_raw_dataset_manifest(
-        tmp_path,
-        dataset_dir,
-        mask_path=str(tmp_path / "mask.nii.gz"),
-    )
-    PreprocessedDatasetManifest(
-        status=ManifestStatus.RUNNING,
-        subjects=[],
-        augmentation_factor=1,
-        seed=41,
-        bias_field_correction="fast",
-        raw_manifest_fingerprint=content_fingerprint(raw_manifest),
-    ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
-
-    config = PreprocessConfig(
-        dataset_dir=dataset_dir,
-        augmentation_factor=1,
-        seed=42,
-        resume=True,
-    )
-
-    assert config.seed == 42
-
-
-def test_preprocess_config_resume_rejects_complete_manifest(tmp_path: Path) -> None:
-    dataset_dir = tmp_path / "dataset"
-    raw_manifest = _write_raw_dataset_manifest(
-        tmp_path,
-        dataset_dir,
-        mask_path=str(tmp_path / "mask.nii.gz"),
-    )
-    PreprocessedDatasetManifest(
-        status=ManifestStatus.COMPLETE,
-        created_at=timestamp(),
-        updated_at=timestamp(),
-        subjects=[],
-        augmentation_factor=3,
-        bias_field_correction="fast",
-        raw_manifest_fingerprint=content_fingerprint(raw_manifest),
-    ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
-
-    with pytest.raises(ValidationError) as error:
-        PreprocessConfig(dataset_dir=dataset_dir, augmentation_factor=3, resume=True)
-
-    assert "Set resume to false to run the stage again" in str(error.value)
-
-
-def test_preprocessed_resume_rejects_unknown_subject() -> None:
-    subjects = [
-        PreprocessedSubject(
-            subject_id=f"stale-{index}",
-            original_volume_path="volume.nii.gz",
-            brain_mask_path="brain-mask.nii.gz",
-            bounding_box=((0, 1), (0, 1), (0, 1)),
-            variants=[],
-        )
-        for index in range(6)
-    ]
-
-    with pytest.raises(ValueError) as error:
-        ensure_preprocessed_subjects_complete(subjects, {"current"}, 0)
-
-    message = str(error.value)
-    assert "unknown subjects" in message
-    assert "Set resume to false and rerun preprocessing" in message
-
-
-def test_preprocessed_resume_rejects_incomplete_variants() -> None:
-    subject = PreprocessedSubject(
-        subject_id="subject",
-        original_volume_path="volume.nii.gz",
-        brain_mask_path="brain-mask.nii.gz",
-        bounding_box=((0, 1), (0, 1), (0, 1)),
-        variants=[],
-    )
-
-    with pytest.raises(ValueError) as error:
-        ensure_preprocessed_subjects_complete([subject], {"subject"}, 1)
-
-    message = str(error.value)
-    assert "incomplete variants" in message
-    assert "Set resume to false and rerun preprocessing" in message
-
-
-def test_preprocessed_resume_rejects_missing_variant_file(tmp_path: Path) -> None:
-    brain_mask_path = tmp_path / "brain-mask.nii.gz"
-    brain_mask_path.touch()
-    subject = PreprocessedSubject(
-        subject_id="subject",
-        original_volume_path=str(tmp_path / "volume.nii.gz"),
-        brain_mask_path=str(brain_mask_path),
-        bounding_box=((0, 1), (0, 1), (0, 1)),
-        variants=[
-            PreprocessedVariant(
-                volume_path=str(tmp_path / "missing-volume.nii.gz"),
-                frst_path=str(tmp_path / "missing-frst.nii.gz"),
-                mask_path=None,
-            )
-        ],
-    )
-
-    with pytest.raises(ValueError) as error:
-        ensure_preprocessed_subjects_complete([subject], {"subject"}, 1)
-
-    message = str(error.value)
-    assert "output is missing" in message
-    assert "Set resume to false and rerun preprocessing" in message
-
-
-def test_preprocessed_resume_rejects_missing_brain_mask(tmp_path: Path) -> None:
-    volume_path = tmp_path / "volume.nii.gz"
-    volume_path.touch()
-    subject = PreprocessedSubject(
-        subject_id="subject",
-        original_volume_path=str(volume_path),
-        brain_mask_path=str(tmp_path / "missing-brain-mask.nii.gz"),
-        bounding_box=((0, 1), (0, 1), (0, 1)),
-        variants=[
-            PreprocessedVariant(
-                volume_path=str(volume_path),
-                frst_path=str(volume_path),
-                mask_path=None,
-            )
-        ],
-    )
-
-    with pytest.raises(ValueError, match="brain mask is missing"):
-        ensure_preprocessed_subjects_complete([subject], {"subject"}, 1)
-
-
-def test_preprocessed_resume_accepts_existing_variant_files(tmp_path: Path) -> None:
-    volume_path = tmp_path / "volume.nii.gz"
-    frst_path = tmp_path / "frst.nii.gz"
-    volume_path.touch()
-    frst_path.touch()
-    subject = PreprocessedSubject(
-        subject_id="subject",
-        original_volume_path=str(volume_path),
-        brain_mask_path=str(volume_path),
-        bounding_box=((0, 1), (0, 1), (0, 1)),
-        variants=[
-            PreprocessedVariant(
-                volume_path=str(volume_path),
-                frst_path=str(frst_path),
-                mask_path=None,
-            )
-        ],
-    )
-
-    ensure_preprocessed_subjects_complete([subject], {"subject"}, 1)
-
-
-def _training_dataset(tmp_path: Path) -> Path:
-    dataset_dir = tmp_path / "dataset"
-    dataset_dir.mkdir()
-    now = timestamp()
-    subjects = []
-    for index in range(7):
-        volume_path = tmp_path / f"volume-{index}.nii.gz"
-        mask_path = tmp_path / f"mask-{index}.nii.gz"
-        volume_path.touch()
-        mask_path.touch()
-        subjects.append(
-            PreprocessedSubject(
-                subject_id=f"subject-{index}",
-                original_volume_path=str(volume_path),
-                brain_mask_path=str(volume_path),
-                bounding_box=((0, 1), (0, 1), (0, 1)),
-                variants=[
-                    PreprocessedVariant(
-                        volume_path=str(volume_path),
-                        mask_path=str(mask_path),
-                        frst_path=str(volume_path),
-                    )
-                ],
-            )
-        )
-    PreprocessedDatasetManifest(
-        status=ManifestStatus.COMPLETE,
-        created_at=now,
-        updated_at=now,
-        subjects=subjects,
-        bias_field_correction="fast",
-        raw_manifest_fingerprint="test-raw-manifest",
-    ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
-    return dataset_dir
-
-
-def _complete_split(tmp_path: Path, subject_ids: list[str]) -> None:
-    preprocessed_manifest = PreprocessedDatasetManifest.read(
-        DatasetLayout(dataset_dir=tmp_path / "dataset").preprocessed_manifest_path()
-    )
-    SplitManifest(
-        status=ManifestStatus.COMPLETE,
-        created_at=timestamp(),
-        updated_at=timestamp(),
-        dataset_dir=str((tmp_path / "dataset").resolve()),
-        preprocessed_manifest_fingerprint=content_fingerprint(preprocessed_manifest),
-        train_size=0.7,
-        validation_size=0.1,
-        test_size=0.2,
-        train_subject_ids=subject_ids,
-        validation_subject_ids=[],
-        test_subject_ids=[],
-    ).write(
-        ExperimentLayout(experiment_dir=tmp_path / "experiment").split_manifest_path()
-    )
-
-
-def _train_config(
-    dataset_dir: Path, experiment_dir: Path, **overrides: Any
-) -> TrainConfig:
-    hyperparameters = Hyperparameters(
-        batch_size=8,
-        max_epochs=100,
-        patience=20,
-        learning_rate=1e-3,
-        adam_epsilon=1e-4,
-        learning_rate_factor=0.1,
-        learning_rate_period=2,
-        minimum_learning_rate=1e-6,
-        weight_decay=0.0,
-        minimum_improvement=0.0,
-        use_amp=False,
-    )
-    values: dict[str, Any] = {
-        "device": "cpu",
-        "detector_candidate_threshold": 0.5,
-        "detector_augmentation_factor": 1,
-        "discriminator_augmentation_factor": 1,
-        "num_workers": 0,
-        "pin_memory": False,
-        "detector_hyperparameters": hyperparameters,
-        "teacher_hyperparameters": hyperparameters,
-        "student_hyperparameters": hyperparameters,
-    }
-    values.update(overrides)
-    return TrainConfig(
-        dataset_dir=dataset_dir,
-        experiment_dir=experiment_dir,
-        **values,
-    )
-
-
-def test_hyperparameters_require_even_batch_size() -> None:
-    values = Hyperparameters(
-        batch_size=8,
-        max_epochs=100,
-        patience=20,
-        learning_rate=1e-3,
-        adam_epsilon=1e-4,
-        learning_rate_factor=0.1,
-        learning_rate_period=2,
-        minimum_learning_rate=1e-6,
-        weight_decay=0.0,
-        minimum_improvement=0.0,
-        use_amp=False,
-    ).model_dump()
-    values["batch_size"] = 3
-
-    with pytest.raises(ValidationError, match="multiple of 2"):
-        Hyperparameters.model_validate(values)
-
-
-def _train_manifest_for_config(
-    config: TrainConfig, split_manifest_fingerprint: str
-) -> TrainManifest:
-    return TrainManifest(
-        status=ManifestStatus.RUNNING,
-        dataset_dir=str(config.dataset_dir.resolve()),
-        split_manifest_fingerprint=split_manifest_fingerprint,
-        device=config.device,
-        seed=config.seed,
-        detector_candidate_threshold=config.detector_candidate_threshold,
-        detector_augmentation_factor=config.detector_augmentation_factor,
-        discriminator_augmentation_factor=config.discriminator_augmentation_factor,
-        validation_augmentation_factor=1,
-        detector_patch_size=48,
-        discriminator_patch_size=24,
-        num_workers=config.num_workers,
-        pin_memory=config.pin_memory,
-    )
-
-
-def _write_raw_dataset_manifest(
-    tmp_path: Path,
-    dataset_dir: Path,
-    mask_path: str | None,
-    status: ManifestStatus = ManifestStatus.COMPLETE,
-) -> RawDatasetManifest:
-    dataset_dir.mkdir(parents=True, exist_ok=True)
-    volume_path = tmp_path / f"{dataset_dir.name}-volume.nii.gz"
-    volume_path.touch()
-    manifest = RawDatasetManifest(
-        status=status,
-        sources=[
-            RawSource(
-                input_dir=str(tmp_path),
-                volume_pattern="{subject_id}.nii.gz",
-                source_id="source",
-                modality="QSM",
-            )
-        ],
-        subjects=[
-            RawSubject(
-                subject_id="subject-1",
-                source_id="source",
-                volume_path=str(volume_path),
-                mask_path=mask_path,
-            )
-        ],
-    )
-    manifest.write(DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path())
-    return manifest
-
-
-def test_train_config_rejects_invalid_and_unavailable_devices(
-    tmp_path: Path, monkeypatch
-) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    with pytest.raises(ValidationError, match="Value error"):
-        _train_config(dataset_dir, tmp_path / "experiment", device="invalid")
-
-    monkeypatch.setattr("torch.cuda.is_available", lambda: False)
-    with pytest.raises(ValidationError, match="Value error"):
-        _train_config(dataset_dir, tmp_path / "experiment", device="cuda")
-
-
-def test_split_config_requires_split_sizes(tmp_path: Path) -> None:
-    with pytest.raises(ValidationError, match="train_size"):
-        SplitConfig.model_validate(
-            {
-                "dataset_dir": _training_dataset(tmp_path),
-                "experiment_dir": tmp_path / "experiment",
-            }
-        )
-
-
-def test_train_config_requires_training_recipe(tmp_path: Path) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
-
-    with pytest.raises(ValidationError, match="detector_candidate_threshold"):
-        TrainConfig.model_validate(
-            {
-                "dataset_dir": dataset_dir,
-                "experiment_dir": tmp_path / "experiment",
-            }
-        )
-
-
-def test_train_config_resume_requires_existing_stage_state(tmp_path: Path) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
-
-    with pytest.raises(ValidationError, match="Value error"):
-        _train_config(dataset_dir, tmp_path / "experiment", resume=True)
+    assert (config.resume, config.seed) == (True, 42)
 
 
 @pytest.mark.parametrize(
-    "factor_name",
-    ["detector_augmentation_factor", "discriminator_augmentation_factor"],
+    ("checkpoint", "message"),
+    [
+        (None, "Required preprocessed manifest file not found"),
+        ({"status": ManifestStatus.COMPLETE}, "Set resume to false to run the stage"),
+        ({"raw_manifest_fingerprint": "stale"}, "fingerprint does not match"),
+    ],
 )
-def test_train_config_rejects_unavailable_augmentation_factor(
-    tmp_path: Path, factor_name: str
+def test_preprocess_resume_rejects_unusable_checkpoint(
+    tmp_path: Path,
+    raw_dataset: Path,
+    checkpoint: dict[str, Any] | None,
+    message: str,
 ) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
+    if checkpoint is not None:
+        write_preprocess_checkpoint(raw_dataset, **checkpoint)
 
-    with pytest.raises(ValidationError, match="augmentation factor exceeds"):
-        _train_config(
+    with pytest.raises(ValidationError, match=message):
+        PreprocessConfig.model_validate(preprocess_values(tmp_path, resume=True))
+
+
+# --- resumable preprocessing subjects ----------------------------------------
+
+
+def test_missing_mask_error_bounds_subject_ids() -> None:
+    with pytest.raises(ValueError, match=r"subject-4, \.\.\. \(6 total\)"):
+        ensure_subjects_have_masks(raw_subjects(6, with_mask=False))
+
+
+def test_preprocessed_resume_rejects_unknown_subjects(tmp_path: Path) -> None:
+    subjects = preprocessed_subjects(6, tmp_path)
+
+    with pytest.raises(ValueError) as error:
+        ensure_preprocessed_subjects_complete(subjects, {"current"}, 1)
+
+    message = str(error.value)
+    assert "unknown subjects" in message
+    assert "subject-4, ... (6 total)" in message
+    assert RESUME_HINT in message
+
+
+def test_preprocessed_resume_rejects_incomplete_variants(tmp_path: Path) -> None:
+    subjects = preprocessed_subjects(1, tmp_path)
+
+    with pytest.raises(ValueError) as error:
+        ensure_preprocessed_subjects_complete(subjects, {"subject-0"}, 2)
+
+    message = str(error.value)
+    assert "incomplete variants" in message
+    assert RESUME_HINT in message
+
+
+def test_preprocessed_resume_rejects_missing_brain_mask(tmp_path: Path) -> None:
+    subject = preprocessed_subjects(1, tmp_path)[0].model_copy(
+        update={"brain_mask_path": str(tmp_path / "missing-brain-mask.nii.gz")}
+    )
+
+    with pytest.raises(ValueError, match="brain mask is missing"):
+        ensure_preprocessed_subjects_complete([subject], {"subject-0"}, 1)
+
+
+@pytest.mark.parametrize("field", ["volume_path", "frst_path", "mask_path"])
+def test_preprocessed_resume_rejects_missing_variant_file(
+    tmp_path: Path, field: str
+) -> None:
+    subject = preprocessed_subjects(1, tmp_path, variants=2)[0]
+    missing = Path(getattr(subject.variants[1], field))
+    missing.unlink()
+
+    with pytest.raises(ValueError) as error:
+        ensure_preprocessed_subjects_complete([subject], {"subject-0"}, 2)
+
+    message = str(error.value)
+    assert "output is missing" in message
+    assert f"variant 1 references missing files: {missing}" in message
+    assert RESUME_HINT in message
+
+
+@pytest.mark.parametrize("with_masks", [True, False])
+def test_preprocessed_resume_accepts_existing_files(
+    tmp_path: Path, with_masks: bool
+) -> None:
+    subjects = preprocessed_subjects(2, tmp_path, variants=2, with_masks=with_masks)
+
+    ensure_preprocessed_subjects_complete(
+        subjects, {subject.subject_id for subject in subjects}, 2
+    )
+
+
+# --- SplitConfig and TrainConfig inputs --------------------------------------
+
+
+@pytest.mark.parametrize("field", ["train_size", "validation_size", "test_size"])
+def test_split_config_requires_each_size(tmp_path: Path, field: str) -> None:
+    values = {
+        "dataset_dir": tmp_path,
+        "experiment_dir": tmp_path,
+        "train_size": 0.7,
+        "validation_size": 0.1,
+        "test_size": 0.2,
+    }
+    del values[field]
+
+    with pytest.raises(ValidationError, match=field):
+        SplitConfig.model_validate(values)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("train_size", 0.0, "greater than 0"),
+        ("validation_size", 1.0, "less than 1"),
+        ("test_size", 0.0, "greater than 0"),
+    ],
+)
+def test_split_config_rejects_out_of_range_size(
+    tmp_path: Path, field: str, value: float, message: str
+) -> None:
+    with pytest.raises(ValidationError, match=f"(?s){field}.*{message}"):
+        split_config(tmp_path, tmp_path, **{field: value})
+
+
+def test_split_config_requires_sizes_to_sum_to_one(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="Split proportions must total 1.0"):
+        split_config(tmp_path, tmp_path, train_size=0.6, validation_size=0.1)
+
+
+def test_split_config_accepts_complete_dataset(
+    tmp_path: Path, dataset_dir: Path
+) -> None:
+    config = split_config(dataset_dir, tmp_path / "experiment", seed=3)
+
+    assert (config.train_size, config.seed) == (0.7, 3)
+
+
+def test_split_config_rejects_subjects_without_masks(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "dataset"
+    subjects = preprocessed_subjects(2, tmp_path / "inputs", with_masks=False)
+    write_preprocessed_manifest(dataset_dir, subjects)
+
+    with pytest.raises(ValidationError, match="Required subject masks are missing"):
+        split_config(dataset_dir, tmp_path / "experiment")
+
+
+def _missing_dataset(tmp_path: Path) -> Path:
+    return tmp_path / "missing"
+
+
+def _empty_dataset(tmp_path: Path) -> Path:
+    dataset_dir = tmp_path / "empty"
+    dataset_dir.mkdir()
+    return dataset_dir
+
+
+def _running_dataset(tmp_path: Path) -> Path:
+    dataset_dir = tmp_path / "running"
+    write_preprocessed_manifest(dataset_dir, [], status=ManifestStatus.RUNNING)
+    return dataset_dir
+
+
+@pytest.mark.parametrize("build", [split_config, train_config])
+@pytest.mark.parametrize(
+    ("make_dataset", "message"),
+    [
+        (_missing_dataset, "Required dataset_dir directory not found"),
+        (_empty_dataset, "Required preprocessed manifest file not found"),
+        (_running_dataset, "Cannot use incomplete"),
+    ],
+)
+def test_dataset_inputs_are_validated(
+    tmp_path: Path,
+    build: Callable[..., Any],
+    make_dataset: Callable[[Path], Path],
+    message: str,
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        build(make_dataset(tmp_path), tmp_path / "experiment")
+
+
+# --- TrainConfig --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("device", "message"),
+    [
+        ("invalid", "Invalid compute device"),
+        ("cuda", "Requested CUDA device is unavailable"),
+    ],
+)
+def test_train_config_rejects_unusable_devices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, device: str, message: str
+) -> None:
+    monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+
+    with pytest.raises(ValidationError, match=message):
+        train_config(tmp_path, tmp_path, device=device)
+
+
+def test_train_config_requires_training_recipe(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError) as error:
+        TrainConfig.model_validate(
+            {"dataset_dir": tmp_path, "experiment_dir": tmp_path}
+        )
+
+    for field in (
+        "device",
+        "detector_candidate_threshold",
+        "detector_augmentation_factor",
+        "discriminator_augmentation_factor",
+        "num_workers",
+        "pin_memory",
+        "detector_hyperparameters",
+        "teacher_hyperparameters",
+        "student_hyperparameters",
+    ):
+        assert field in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "detector_candidate_threshold",
+        "detector_augmentation_factor",
+        "discriminator_augmentation_factor",
+        "num_workers",
+    ],
+)
+def test_train_config_rejects_out_of_range_values(tmp_path: Path, field: str) -> None:
+    invalid = {"detector_candidate_threshold": 1.1, "num_workers": -1}
+
+    with pytest.raises(ValidationError, match=field):
+        train_config(tmp_path, tmp_path, **{field: invalid.get(field, 0)})
+
+
+def test_train_config_accepts_stage_training_settings(
+    dataset_dir: Path, split: SplitManifest, layout: ExperimentLayout
+) -> None:
+    config = train_config(
+        dataset_dir,
+        layout.experiment_dir,
+        pin_memory=True,
+        detector_hyperparameters=hyperparameters(batch_size=4, max_epochs=12),
+        teacher_hyperparameters=hyperparameters(batch_size=6, max_epochs=13),
+        student_hyperparameters=hyperparameters(batch_size=6, max_epochs=14),
+    )
+
+    assert config.pin_memory is True
+    assert [
+        (recipe.batch_size, recipe.max_epochs)
+        for recipe in (
+            config.detector_hyperparameters,
+            config.teacher_hyperparameters,
+            config.student_hyperparameters,
+        )
+    ] == [(4, 12), (6, 13), (6, 14)]
+
+
+def test_hyperparameters_require_even_batch_size() -> None:
+    with pytest.raises(ValidationError, match="multiple of 2"):
+        hyperparameters(batch_size=3)
+
+
+@pytest.mark.parametrize("factor_name", ["detector", "discriminator"])
+def test_train_config_rejects_unavailable_augmentation_factor(
+    dataset_dir: Path, layout: ExperimentLayout, factor_name: str
+) -> None:
+    with pytest.raises(
+        ValidationError, match=f"augmentation factor exceeds.*{factor_name}=2"
+    ):
+        train_config(
             dataset_dir,
-            tmp_path / "experiment",
-            **{factor_name: 2},
+            layout.experiment_dir,
+            **{f"{factor_name}_augmentation_factor": 2},
         )
 
 
-def test_train_config_rejects_running_split_manifest(tmp_path: Path) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
-    manifest_path = ExperimentLayout(
-        experiment_dir=tmp_path / "experiment"
-    ).split_manifest_path()
-    SplitManifest.read(manifest_path).model_copy(
-        update={"status": ManifestStatus.RUNNING}
-    ).write(manifest_path)
+def test_train_config_requires_split_manifest(
+    dataset_dir: Path, layout: ExperimentLayout
+) -> None:
+    with pytest.raises(ValidationError, match="Required split manifest file not found"):
+        train_config(dataset_dir, layout.experiment_dir)
+
+
+def test_train_config_rejects_running_split_manifest(
+    tmp_path: Path, dataset_dir: Path, layout: ExperimentLayout
+) -> None:
+    write_split_manifest(tmp_path, SUBJECT_IDS, status=ManifestStatus.RUNNING)
 
     with pytest.raises(ValidationError) as error:
-        _train_config(dataset_dir, tmp_path / "experiment")
+        train_config(dataset_dir, layout.experiment_dir)
 
-    message = str(error.value)
-    assert "Cannot use incomplete split manifest" in message
-    assert "Rerun the producing stage to completion" in message
-    assert str(manifest_path) in message
+    assert_incomplete_manifest(error, "split", layout.split_manifest_path())
 
 
-def test_train_config_resume_rejects_running_stage_without_checkpoint(
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"dataset_dir": "other-dataset"}, "belongs to a different dataset"),
+        ({"preprocessed_manifest_fingerprint": "stale"}, "fingerprint does not match"),
+    ],
+)
+def test_train_config_rejects_inconsistent_split_manifest(
     tmp_path: Path,
+    dataset_dir: Path,
+    layout: ExperimentLayout,
+    overrides: dict[str, Any],
+    message: str,
 ) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
-    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
-    split_manifest = SplitManifest.read(layout.split_manifest_path())
-    config = _train_config(dataset_dir, tmp_path / "experiment")
-    _train_manifest_for_config(
-        config, content_fingerprint(split_manifest)
-    ).write(layout.train_manifest_path())
-    TrainStageManifest(
-        status=ManifestStatus.RUNNING,
-        stage=DETECTOR_STAGE,
-        hyperparameters=config.detector_hyperparameters,
-        history=[],
-    ).write(layout.stage_manifest_path(DETECTOR_STAGE))
+    write_split_manifest(tmp_path, SUBJECT_IDS, **overrides)
 
-    with pytest.raises(ValidationError, match="Value error"):
-        TrainConfig(**config.model_dump(exclude={"resume"}), resume=True)
+    with pytest.raises(ValidationError, match=message):
+        train_config(dataset_dir, layout.experiment_dir)
 
 
-def test_ensure_training_resume_state_returns_for_existing_latest_checkpoint(
-    tmp_path: Path,
+# --- TrainConfig resume -------------------------------------------------------
+
+
+def test_resume_requires_train_manifest(config: TrainConfig) -> None:
+    with pytest.raises(ValidationError, match="Required train manifest file not found"):
+        resumed(config)
+
+
+def test_resume_rejects_completed_train_manifest(
+    config: TrainConfig, layout: ExperimentLayout, split: SplitManifest
 ) -> None:
-    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
-    latest_checkpoint = layout.latest_checkpoint_path(DETECTOR_STAGE)
-    latest_checkpoint.parent.mkdir(parents=True)
-    latest_checkpoint.touch()
+    write_experiment(config, layout, content_fingerprint(split))
+
+    with pytest.raises(ValidationError, match="Cannot resume a completed manifest"):
+        resumed(config)
+
+
+@pytest.mark.parametrize("stage_status", [None, ManifestStatus.RUNNING])
+def test_resume_requires_recoverable_training_state(
+    config: TrainConfig,
+    layout: ExperimentLayout,
+    split: SplitManifest,
+    stage_status: ManifestStatus | None,
+) -> None:
+    write_experiment(config, layout, content_fingerprint(split), ManifestStatus.RUNNING)
+    if stage_status is not None:
+        write_detector_stage(config, layout, stage_status)
+
+    with pytest.raises(ValidationError, match="No recoverable training state found"):
+        resumed(config)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{}, {"detector_hyperparameters": hyperparameters(max_epochs=101)}],
+    ids=["unchanged", "changed-settings"],
+)
+def test_resume_accepts_completed_stage(
+    config: TrainConfig,
+    layout: ExperimentLayout,
+    split: SplitManifest,
+    changes: dict[str, Any],
+) -> None:
+    write_experiment(config, layout, content_fingerprint(split), ManifestStatus.RUNNING)
+    write_detector_stage(config, layout, ManifestStatus.COMPLETE)
+
+    assert resumed(config, **changes).resume is True
+
+
+def test_resume_rejects_changed_split(
+    config: TrainConfig, layout: ExperimentLayout, split: SplitManifest
+) -> None:
+    write_experiment(config, layout, content_fingerprint(split), ManifestStatus.RUNNING)
+    write_detector_stage(config, layout, ManifestStatus.COMPLETE)
+    split.model_copy(update={"seed": 99}).write(layout.split_manifest_path())
+
+    with pytest.raises(ValidationError, match="fingerprint does not match"):
+        resumed(config)
+
+
+def test_training_resume_state_accepts_latest_checkpoint(
+    layout: ExperimentLayout,
+) -> None:
+    checkpoint = layout.latest_checkpoint_path(DETECTOR_STAGE)
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.touch()
 
     ensure_training_resume_state(layout)
 
 
-def test_train_config_resume_accepts_changed_training_settings(tmp_path: Path) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
-    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
-    split_manifest = SplitManifest.read(layout.split_manifest_path())
-    config = _train_config(dataset_dir, tmp_path / "experiment")
-    _train_manifest_for_config(
-        config, content_fingerprint(split_manifest)
-    ).write(layout.train_manifest_path())
-    changed_config = config.model_dump(exclude={"resume"})
-    changed_config["detector_hyperparameters"] = (
-        config.detector_hyperparameters.model_copy(
-            update={"max_epochs": config.detector_hyperparameters.max_epochs + 1}
-        )
-    )
-    TrainStageManifest(
-        status=ManifestStatus.COMPLETE,
-        stage=DETECTOR_STAGE,
-        hyperparameters=config.detector_hyperparameters,
-        history=[],
-    ).write(layout.stage_manifest_path(DETECTOR_STAGE))
-
-    resumed = TrainConfig(**changed_config, resume=True)
-
-    assert resumed.resume is True
-
-
-def test_train_config_resume_rejects_changed_split(tmp_path: Path) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
-    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
-    split_manifest = SplitManifest.read(layout.split_manifest_path())
-    config = _train_config(dataset_dir, tmp_path / "experiment")
-    _train_manifest_for_config(
-        config, content_fingerprint(split_manifest)
-    ).write(layout.train_manifest_path())
-    TrainStageManifest(
-        status=ManifestStatus.COMPLETE,
-        stage=DETECTOR_STAGE,
-        hyperparameters=config.detector_hyperparameters,
-        history=[],
-    ).write(layout.stage_manifest_path(DETECTOR_STAGE))
-    split_manifest.model_copy(update={"seed": 99}).write(
-        layout.split_manifest_path()
-    )
-
-    with pytest.raises(ValidationError, match="fingerprint does not match"):
-        TrainConfig(**config.model_dump(exclude={"resume"}), resume=True)
+# --- InferConfig and explicit EvaluateConfig ---------------------------------
 
 
 @pytest.mark.parametrize(
-    "overrides",
+    ("config_cls", "make_values", "field"),
     [
-        {"train_size": 0.5},
-        {"validation_size": 0.0},
-        {"test_size": 0.3},
-        {"detector_candidate_threshold": 1.1},
-        {"detector_augmentation_factor": 0},
-        {"discriminator_augmentation_factor": 0},
-        {"num_workers": -1},
+        (InferConfig, infer_values, field)
+        for field in (
+            "dataset_dir",
+            "output_dir",
+            "detector_checkpoint_path",
+            "student_checkpoint_path",
+            "use_amp",
+            "device",
+        )
+    ]
+    + [
+        (EvaluateConfig, evaluate_values, field)
+        for field in (
+            "dataset_dir",
+            "output_dir",
+            "detector_checkpoint_path",
+            "student_checkpoint_path",
+            "bias_field_correction",
+            "use_amp",
+            "device",
+        )
     ],
 )
-def test_split_config_rejects_invalid_split_values(
-    tmp_path: Path, overrides: dict[str, object]
-) -> None:
-    with pytest.raises(ValidationError):
-        SplitConfig.model_validate(
-            {
-                "dataset_dir": _training_dataset(tmp_path),
-                "experiment_dir": tmp_path / "experiment",
-                **overrides,
-            }
-        )
-
-
-def test_train_config_accepts_stage_training_settings_and_pin_memory(
+def test_explicit_config_requires_field(
     tmp_path: Path,
+    config_cls: type[BaseModel],
+    make_values: ValuesFactory,
+    field: str,
 ) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
-    config = TrainConfig.model_validate(
-        {
-            "dataset_dir": dataset_dir,
-            "experiment_dir": tmp_path / "experiment",
-            "device": "cpu",
-            "detector_candidate_threshold": 0.5,
-            "detector_augmentation_factor": 1,
-            "discriminator_augmentation_factor": 1,
-            "num_workers": 0,
-            "pin_memory": True,
-            "detector_hyperparameters": Hyperparameters(
-                batch_size=4,
-                max_epochs=12,
-                patience=20,
-                learning_rate=1e-3,
-                adam_epsilon=1e-4,
-                learning_rate_factor=0.1,
-                learning_rate_period=2,
-                minimum_learning_rate=1e-6,
-                weight_decay=0.0,
-                minimum_improvement=0.0,
-                use_amp=False,
-            ),
-            "teacher_hyperparameters": Hyperparameters(
-                batch_size=6,
-                max_epochs=13,
-                patience=20,
-                learning_rate=1e-3,
-                adam_epsilon=1e-4,
-                learning_rate_factor=0.1,
-                learning_rate_period=2,
-                minimum_learning_rate=1e-6,
-                weight_decay=0.0,
-                minimum_improvement=0.0,
-                use_amp=False,
-            ),
-            "student_hyperparameters": Hyperparameters(
-                batch_size=6,
-                max_epochs=14,
-                patience=20,
-                learning_rate=1e-3,
-                adam_epsilon=1e-4,
-                learning_rate_factor=0.1,
-                learning_rate_period=2,
-                minimum_learning_rate=1e-6,
-                weight_decay=0.0,
-                minimum_improvement=0.0,
-                use_amp=False,
-            ),
-        }
-    )
+    values = make_values(tmp_path)
+    del values[field]
 
-    assert config.pin_memory is True
-    assert config.detector_hyperparameters.batch_size == 4
-    assert config.detector_hyperparameters.max_epochs == 12
-    assert config.teacher_hyperparameters.batch_size == 6
-    assert config.teacher_hyperparameters.max_epochs == 13
-    assert config.student_hyperparameters.batch_size == 6
-    assert config.student_hyperparameters.max_epochs == 14
+    with pytest.raises(ValidationError, match=field):
+        config_cls.model_validate(values)
 
 
-def test_split_config_requires_split_sizes_to_sum_to_one(tmp_path: Path) -> None:
-    with pytest.raises(ValidationError, match="Value error"):
-        SplitConfig(
-            dataset_dir=_training_dataset(tmp_path),
-            experiment_dir=tmp_path / "experiment",
-            train_size=0.6,
-            validation_size=0.1,
-            test_size=0.1,
-        )
-
-
-def test_split_config_requires_preprocessed_manifest(tmp_path: Path) -> None:
-    dataset_dir = tmp_path / "dataset"
-    dataset_dir.mkdir()
-
-    with pytest.raises(ValidationError, match="Value error"):
-        SplitConfig(
-            dataset_dir=dataset_dir,
-            experiment_dir=tmp_path / "experiment",
-            train_size=0.7,
-            validation_size=0.1,
-            test_size=0.2,
-        )
-
-
-def test_split_config_rejects_non_complete_preprocessed_manifest(
+@pytest.mark.parametrize("stage", [DETECTOR_STAGE, STUDENT_STAGE])
+@pytest.mark.parametrize(CONFIG_PARAMS, [INFER, EVALUATE])
+def test_explicit_config_requires_existing_checkpoints(
     tmp_path: Path,
+    raw_dataset: Path,
+    config_cls: type[BaseModel],
+    make_values: ValuesFactory,
+    stage: str,
 ) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    manifest_path = DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path()
-    PreprocessedDatasetManifest.read(manifest_path).model_copy(
-        update={"status": ManifestStatus.RUNNING}
-    ).write(manifest_path)
+    values = make_values(tmp_path, **{f"{stage}_checkpoint_path": tmp_path / "gone"})
 
-    with pytest.raises(ValidationError, match="Value error"):
-        SplitConfig(
-            dataset_dir=dataset_dir,
-            experiment_dir=tmp_path / "experiment",
-            train_size=0.7,
-            validation_size=0.1,
-            test_size=0.2,
-        )
+    with pytest.raises(ValidationError, match=f"Required {stage} checkpoint file"):
+        config_cls.model_validate(values)
 
 
-def test_split_config_rejects_subjects_with_missing_masks(tmp_path: Path) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    manifest_path = DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path()
-    manifest = PreprocessedDatasetManifest.read(manifest_path)
-    maskless_subject = PreprocessedSubject(
-        subject_id="subject-maskless",
-        original_volume_path=str(tmp_path / "maskless-volume.nii.gz"),
-        brain_mask_path=str(tmp_path / "maskless-brain-mask.nii.gz"),
-        bounding_box=((0, 1), (0, 1), (0, 1)),
-        variants=[
-            PreprocessedVariant(
-                volume_path=str(tmp_path / "maskless-volume.nii.gz"),
-                mask_path=None,
-                frst_path=str(tmp_path / "maskless-frst.nii.gz"),
-            )
-        ],
-    )
-    manifest.model_copy(
-        update={"subjects": [*manifest.subjects, maskless_subject]}
-    ).write(
-        manifest_path
-    )
+def test_infer_config_accepts_raw_dataset(tmp_path: Path, raw_dataset: Path) -> None:
+    config = InferConfig.model_validate(infer_values(tmp_path))
 
-    with pytest.raises(
-        ValidationError, match="Value error"
-    ):
-        SplitConfig(
-            dataset_dir=dataset_dir,
-            experiment_dir=tmp_path / "experiment",
-            train_size=0.7,
-            validation_size=0.1,
-            test_size=0.2,
-        )
+    assert config.dataset_dir == raw_dataset
+    assert config.model_dump(mode="json")["dataset_dir"] == str(raw_dataset)
 
 
-def test_split_config_requires_dataset_dir(tmp_path: Path) -> None:
-    with pytest.raises(ValidationError, match="Value error"):
-        SplitConfig(
-            dataset_dir=tmp_path / "missing",
-            experiment_dir=tmp_path / "experiment",
-            train_size=0.7,
-            validation_size=0.1,
-            test_size=0.2,
-        )
-
-
-def test_train_config_requires_dataset_and_preprocessed_manifest(
-    tmp_path: Path,
+def test_evaluate_config_accepts_explicit_checkpoints(
+    tmp_path: Path, raw_dataset: Path
 ) -> None:
-    with pytest.raises(ValidationError, match="Value error"):
-        _train_config(tmp_path / "missing", tmp_path / "experiment")
-
-
-def test_train_config_rejects_non_complete_preprocessed_manifest(
-    tmp_path: Path,
-) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    manifest_path = DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path()
-    PreprocessedDatasetManifest.read(manifest_path).model_copy(
-        update={"status": ManifestStatus.RUNNING}
-    ).write(manifest_path)
-
-    with pytest.raises(ValidationError, match="Value error"):
-        _train_config(dataset_dir, tmp_path / "experiment")
-
-
-def test_train_config_requires_split_manifest(tmp_path: Path) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-
-    with pytest.raises(ValidationError, match="Value error"):
-        _train_config(dataset_dir, tmp_path / "experiment")
-
-
-def test_train_config_resume_rejects_complete_training_manifest(tmp_path: Path) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
-    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
-    split_manifest = SplitManifest.read(layout.split_manifest_path())
-    config = _train_config(dataset_dir, tmp_path / "experiment")
-    _train_manifest_for_config(
-        config, content_fingerprint(split_manifest)
-    ).model_copy(update={"status": ManifestStatus.COMPLETE}).write(
-        layout.train_manifest_path()
-    )
-
-    with pytest.raises(ValidationError, match="Value error"):
-        _train_config(dataset_dir, tmp_path / "experiment", resume=True)
-
-
-def test_train_config_resume_accepts_complete_stage_manifest(tmp_path: Path) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
-    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
-    split_manifest = SplitManifest.read(layout.split_manifest_path())
-    config = _train_config(dataset_dir, tmp_path / "experiment")
-    _train_manifest_for_config(
-        config, content_fingerprint(split_manifest)
-    ).write(layout.train_manifest_path())
-    TrainStageManifest(
-        status=ManifestStatus.COMPLETE,
-        stage=DETECTOR_STAGE,
-        hyperparameters=config.detector_hyperparameters,
-        history=[],
-    ).write(layout.stage_manifest_path(DETECTOR_STAGE))
-
-    resumed = _train_config(dataset_dir, tmp_path / "experiment", resume=True)
-
-    assert resumed.resume is True
-
-
-def test_train_config_rejects_split_manifest_for_another_dataset(
-    tmp_path: Path,
-) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    experiment_dir = tmp_path / "experiment"
-    SplitManifest(
-        status=ManifestStatus.COMPLETE,
-        created_at=timestamp(),
-        updated_at=timestamp(),
-        dataset_dir=str((tmp_path / "other-dataset").resolve()),
-        preprocessed_manifest_fingerprint="different-dataset",
-        train_size=0.6,
-        validation_size=0.2,
-        test_size=0.2,
-        train_subject_ids=["subject-0"],
-        validation_subject_ids=["subject-1"],
-        test_subject_ids=["subject-2"],
-    ).write(ExperimentLayout(experiment_dir=experiment_dir).split_manifest_path())
-
-    with pytest.raises(ValidationError, match="Value error"):
-        _train_config(dataset_dir, experiment_dir)
-
-    dataset_dir = tmp_path / "empty-dataset"
-    dataset_dir.mkdir()
-    with pytest.raises(ValidationError, match="Value error"):
-        _train_config(dataset_dir, tmp_path / "experiment")
-
-
-def test_preprocess_config_requires_readable_raw_manifest(tmp_path: Path) -> None:
-    with pytest.raises(ValidationError, match="Value error"):
-        PreprocessConfig(dataset_dir=tmp_path, augmentation_factor=1)
-
-    manifest_path = DatasetLayout(dataset_dir=tmp_path).raw_manifest_path()
-    manifest_path.parent.mkdir()
-    manifest_path.write_text("{}", encoding="utf-8")
-    with pytest.raises(ValidationError, match="Value error"):
-        PreprocessConfig(dataset_dir=tmp_path, augmentation_factor=1)
-
-
-def test_train_config_accepts_complete_manifest_without_training_policy(
-    tmp_path: Path,
-) -> None:
-    dataset_dir = tmp_path / "dataset"
-    dataset_dir.mkdir()
-    now = timestamp()
-    manifest_path = DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path()
-    PreprocessedDatasetManifest(
-        status=ManifestStatus.COMPLETE,
-        created_at=now,
-        updated_at=now,
-        subjects=[],
-        bias_field_correction="fast",
-        raw_manifest_fingerprint="test-raw-manifest",
-    ).write(manifest_path)
-    _complete_split(tmp_path, [])
-    _train_config(dataset_dir, tmp_path / "experiment")
-
-    missing_subjects = [
-        PreprocessedSubject(
-            subject_id=f"subject-{index}",
-            original_volume_path=str(tmp_path / f"missing-volume-{index}"),
-            brain_mask_path=str(tmp_path / f"missing-brain-mask-{index}"),
-            bounding_box=((0, 1), (0, 1), (0, 1)),
-            variants=[
-                PreprocessedVariant(
-                    volume_path=str(tmp_path / f"missing-volume-{index}"),
-                    mask_path=str(tmp_path / f"missing-mask-{index}"),
-                    frst_path=str(tmp_path / f"missing-frst-{index}"),
-                )
-            ],
-        )
-        for index in range(7)
-    ]
-    PreprocessedDatasetManifest(
-        status=ManifestStatus.COMPLETE,
-        created_at=now,
-        updated_at=now,
-        subjects=missing_subjects,
-        bias_field_correction="fast",
-        raw_manifest_fingerprint="test-raw-manifest",
-    ).write(manifest_path)
-    with pytest.raises(
-        ValidationError,
-        match="Value error",
-    ):
-        _train_config(dataset_dir, tmp_path / "experiment")
-
-
-def test_infer_config_accepts_raw_dataset_explicit_input(tmp_path: Path) -> None:
-    detector_checkpoint = tmp_path / "detector.pth"
-    student_checkpoint = tmp_path / "student.pth"
-    detector_checkpoint.touch()
-    student_checkpoint.touch()
-    dataset_dir = tmp_path / "dataset"
-    volume_path = tmp_path / "raw.nii.gz"
-    volume_path.touch()
-    RawDatasetManifest(
-        status=ManifestStatus.COMPLETE,
-        sources=[
-            RawSource(
-                input_dir=str(tmp_path),
-                volume_pattern="{subject_id}.nii.gz",
-                source_id="source",
-                modality="QSM",
-            )
-        ],
-        subjects=[
-            RawSubject(
-                subject_id="subject-1",
-                source_id="source",
-                volume_path=str(volume_path),
-            )
-        ],
-    ).write(DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path())
-
-    config = InferConfig(
-        output_dir=tmp_path / "inference",
-        dataset_dir=dataset_dir,
-        detector_checkpoint_path=detector_checkpoint,
-        student_checkpoint_path=student_checkpoint,
-        use_amp=False,
-        device="cpu",
-    )
-
-    assert config.dataset_dir == dataset_dir
-    assert config.model_dump(mode="json")["dataset_dir"] == str(dataset_dir)
-
-
-def test_infer_config_rejects_running_raw_manifest(tmp_path: Path) -> None:
-    detector_checkpoint = tmp_path / "detector.pth"
-    student_checkpoint = tmp_path / "student.pth"
-    detector_checkpoint.touch()
-    student_checkpoint.touch()
-    dataset_dir = tmp_path / "dataset"
-    _write_raw_dataset_manifest(
-        tmp_path,
-        dataset_dir,
-        mask_path=None,
-        status=ManifestStatus.RUNNING,
-    )
-    manifest_path = DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path()
-
-    with pytest.raises(ValidationError) as error:
-        InferConfig(
-            output_dir=tmp_path / "inference",
-            dataset_dir=dataset_dir,
-            detector_checkpoint_path=detector_checkpoint,
-            student_checkpoint_path=student_checkpoint,
-            use_amp=False,
-            device="cpu",
-        )
-
-    message = str(error.value)
-    assert "Cannot use incomplete raw manifest" in message
-    assert "Rerun the producing stage to completion" in message
-    assert str(manifest_path) in message
-
-
-def test_infer_config_rejects_missing_explicit_detector_checkpoint(
-    tmp_path: Path,
-) -> None:
-    dataset_dir = tmp_path / "dataset"
-    _write_raw_dataset_manifest(
-        tmp_path,
-        dataset_dir,
-        mask_path=None,
-    )
-    student_checkpoint = tmp_path / "student.pth"
-    student_checkpoint.touch()
-
-    with pytest.raises(ValidationError, match="Value error"):
-        InferConfig(
-            output_dir=tmp_path / "inference",
-            dataset_dir=dataset_dir,
-            detector_checkpoint_path=tmp_path / "missing-detector.pth",
-            student_checkpoint_path=student_checkpoint,
-            use_amp=False,
-            device="cpu",
-        )
-
-
-def test_infer_config_requires_device_and_paths(
-    tmp_path: Path,
-) -> None:
-    with pytest.raises(ValidationError, match="output_dir"):
-        InferConfig.model_validate({"device": "cpu"})
-
-
-def test_evaluate_config_accepts_explicit_checkpoints(tmp_path: Path) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    raw_manifest_path = DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path()
-    raw_subjects = [
-        RawSubject(
-            subject_id="subject-1",
-            source_id="source",
-            volume_path=str(tmp_path / "volume.nii.gz"),
-            mask_path=str(tmp_path / "mask.nii.gz"),
-        )
-    ]
-    (tmp_path / "volume.nii.gz").touch()
-    (tmp_path / "mask.nii.gz").touch()
-    RawDatasetManifest(
-        status=ManifestStatus.COMPLETE,
-        sources=[
-            RawSource(
-                input_dir=str(tmp_path),
-                volume_pattern="{subject_id}.nii.gz",
-                source_id="source",
-                modality="QSM",
-            )
-        ],
-        subjects=raw_subjects,
-    ).write(raw_manifest_path)
-    detector_checkpoint = tmp_path / "detector.pth"
-    student_checkpoint = tmp_path / "student.pth"
-    detector_checkpoint.touch()
-    student_checkpoint.touch()
-
-    config = EvaluateConfig(
-        dataset_dir=dataset_dir,
-        output_dir=tmp_path / "evaluation",
-        detector_checkpoint_path=detector_checkpoint,
-        student_checkpoint_path=student_checkpoint,
-        use_amp=False,
-        device="cpu",
-    )
+    config = EvaluateConfig.model_validate(evaluate_values(tmp_path))
 
     assert config.output_dir == tmp_path / "evaluation"
     assert config.bias_field_correction == "fast"
 
 
-def test_evaluate_config_rejects_unknown_bias_field_correction(
-    tmp_path: Path,
+def test_evaluate_config_rejects_maskless_raw_subjects(tmp_path: Path) -> None:
+    write_raw_manifest(tmp_path / "dataset", raw_subjects(with_mask=False))
+
+    with pytest.raises(ValidationError, match="Required subject masks are missing"):
+        EvaluateConfig.model_validate(evaluate_values(tmp_path))
+
+
+# --- EvaluateConfig from an experiment ---------------------------------------
+
+
+def experiment_evaluate_values(
+    dataset_dir: Path, experiment_dir: Path
+) -> dict[str, Any]:
+    return {
+        "dataset_dir": dataset_dir,
+        "experiment_dir": experiment_dir,
+        "bias_field_correction": "fast",
+        "use_amp": False,
+        "device": "cpu",
+    }
+
+
+def test_evaluate_config_derives_paths_from_experiment(
+    config: TrainConfig, layout: ExperimentLayout, split: SplitManifest
 ) -> None:
-    with pytest.raises(ValidationError, match="bias_field_correction"):
+    write_experiment(config, layout, content_fingerprint(split))
+
+    evaluated = EvaluateConfig.model_validate(
+        experiment_evaluate_values(config.dataset_dir, layout.experiment_dir)
+    )
+
+    assert evaluated.output_dir == layout.experiment_dir
+    assert evaluated.detector_checkpoint_path == layout.best_checkpoint_path(
+        DETECTOR_STAGE
+    )
+    assert evaluated.student_checkpoint_path == layout.best_checkpoint_path(
+        STUDENT_STAGE
+    )
+
+
+@pytest.mark.parametrize(
+    ("state", "message"),
+    [
+        ({"status": ManifestStatus.RUNNING}, "Cannot use incomplete"),
+        ({"split_fingerprint": "stale"}, "fingerprint does not match"),
+    ],
+)
+def test_evaluate_config_rejects_inconsistent_train_manifest(
+    config: TrainConfig,
+    layout: ExperimentLayout,
+    split: SplitManifest,
+    state: dict[str, Any],
+    message: str,
+) -> None:
+    state = {"split_fingerprint": content_fingerprint(split), **state}
+    write_experiment(config, layout, **state)
+
+    with pytest.raises(ValidationError, match=message):
         EvaluateConfig.model_validate(
-            {
-                "dataset_dir": tmp_path,
-                "output_dir": tmp_path / "output",
-                "detector_checkpoint_path": tmp_path / "detector.pth",
-                "student_checkpoint_path": tmp_path / "student.pth",
-                "bias_field_correction": "other",
-                "use_amp": False,
-                "device": "cpu",
-            }
+            experiment_evaluate_values(config.dataset_dir, layout.experiment_dir)
         )
 
 
-def test_evaluate_config_rejects_running_raw_manifest(tmp_path: Path) -> None:
-    detector_checkpoint = tmp_path / "detector.pth"
-    student_checkpoint = tmp_path / "student.pth"
-    detector_checkpoint.touch()
-    student_checkpoint.touch()
-    dataset_dir = tmp_path / "dataset"
-    mask_path = tmp_path / "mask.nii.gz"
-    mask_path.touch()
-    _write_raw_dataset_manifest(
-        tmp_path,
-        dataset_dir,
-        mask_path=str(mask_path),
-        status=ManifestStatus.RUNNING,
-    )
-    manifest_path = DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path()
-
-    with pytest.raises(ValidationError) as error:
-        EvaluateConfig(
-            dataset_dir=dataset_dir,
-            output_dir=tmp_path / "evaluation",
-            detector_checkpoint_path=detector_checkpoint,
-            student_checkpoint_path=student_checkpoint,
-            use_amp=False,
-            device="cpu",
-        )
-
-    message = str(error.value)
-    assert "Cannot use incomplete raw manifest" in message
-    assert "Rerun the producing stage to completion" in message
-    assert str(manifest_path) in message
-
-
-def test_evaluate_config_derives_paths_from_experiment(tmp_path: Path) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
-    experiment_dir = tmp_path / "experiment"
-    layout = ExperimentLayout(experiment_dir=experiment_dir)
-    split_manifest = SplitManifest.read(layout.split_manifest_path())
-    train_config = _train_config(dataset_dir, experiment_dir)
-    _train_manifest_for_config(
-        train_config, content_fingerprint(split_manifest)
-    ).model_copy(update={"status": ManifestStatus.COMPLETE}).write(
-        layout.train_manifest_path()
-    )
-    detector_checkpoint = layout.best_checkpoint_path(DETECTOR_STAGE)
-    student_checkpoint = layout.best_checkpoint_path(STUDENT_STAGE)
-    detector_checkpoint.parent.mkdir(parents=True)
-    student_checkpoint.parent.mkdir(parents=True)
-    detector_checkpoint.touch()
-    student_checkpoint.touch()
-
-    config = EvaluateConfig.model_validate(
-        {
-            "dataset_dir": dataset_dir,
-            "experiment_dir": experiment_dir,
-            "use_amp": False,
-            "device": "cpu",
-        }
-    )
-
-    assert config.output_dir == experiment_dir
-    assert config.detector_checkpoint_path == detector_checkpoint
-    assert config.student_checkpoint_path == student_checkpoint
-
-
-def test_evaluate_config_rejects_maskless_experiment_subject(
-    tmp_path: Path,
+def test_evaluate_config_rejects_changed_preprocessed_manifest(
+    config: TrainConfig, layout: ExperimentLayout, split: SplitManifest
 ) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    subject_ids = [f"subject-{index}" for index in range(7)]
-    preprocessed_manifest_path = DatasetLayout(
-        dataset_dir=dataset_dir
-    ).preprocessed_manifest_path()
-    preprocessed_manifest = PreprocessedDatasetManifest.read(
-        preprocessed_manifest_path
+    write_experiment(config, layout, content_fingerprint(split))
+    write_preprocessed_manifest(config.dataset_dir, [])
+
+    with pytest.raises(ValidationError, match="fingerprint does not match"):
+        EvaluateConfig.model_validate(
+            experiment_evaluate_values(config.dataset_dir, layout.experiment_dir)
+        )
+
+
+def test_evaluate_config_rejects_maskless_test_subject(
+    tmp_path: Path, layout: ExperimentLayout
+) -> None:
+    dataset_dir = tmp_path / "dataset"
+    train_subject, test_subject = preprocessed_subjects(2, tmp_path / "inputs")
+    write_preprocessed_manifest(
+        dataset_dir, [train_subject, without_masks(test_subject)]
     )
-    preprocessed_manifest.model_copy(
-        update={
-            "subjects": [
-                subject.model_copy(
-                    update={
-                        "variants": [
-                            variant.model_copy(update={"mask_path": None})
-                            for variant in subject.variants
-                        ]
-                    }
-                )
-                if subject.subject_id == subject_ids[-1]
-                else subject
-                for subject in preprocessed_manifest.subjects
-            ]
-        }
-    ).write(preprocessed_manifest_path)
-    _complete_split(tmp_path, subject_ids[:-1])
-    experiment_dir = tmp_path / "experiment"
-    layout = ExperimentLayout(experiment_dir=experiment_dir)
-    split_manifest = SplitManifest.read(layout.split_manifest_path()).model_copy(
-        update={"test_subject_ids": [subject_ids[-1]]}
-    )
-    split_manifest.write(layout.split_manifest_path())
-    train_config = _train_config(dataset_dir, experiment_dir)
-    _train_manifest_for_config(
-        train_config, content_fingerprint(split_manifest)
-    ).model_copy(update={"status": ManifestStatus.COMPLETE}).write(
-        layout.train_manifest_path()
-    )
+    split = write_split_manifest(tmp_path, ["subject-0"], test_ids=["subject-1"])
+    config = train_config(dataset_dir, layout.experiment_dir)
+    write_experiment(config, layout, content_fingerprint(split))
 
     with pytest.raises(ValidationError, match="Required subject masks are missing"):
         EvaluateConfig.model_validate(
-            {
-                "dataset_dir": dataset_dir,
-                "experiment_dir": experiment_dir,
-                "use_amp": False,
-                "device": "cpu",
-            }
+            experiment_evaluate_values(dataset_dir, layout.experiment_dir)
         )
 
 
-def test_evaluate_config_rejects_non_complete_experiment_manifest(
-    tmp_path: Path,
+# --- Patch configs ------------------------------------------------------------
+
+
+def test_patch_config_rejects_unavailable_augmentation_factor(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="Patch augmentation factor exceeds"):
+        NonOverlappingPatchConfig.model_validate(
+            patch_values(tmp_path, augmentation_factor=2)
+        )
+
+
+def test_patch_config_rejects_variant_without_mask(tmp_path: Path) -> None:
+    subjects = preprocessed_subjects(1, tmp_path, with_masks=False)
+
+    with pytest.raises(ValidationError, match="requires a variant mask"):
+        NonOverlappingPatchConfig.model_validate(
+            patch_values(tmp_path, subjects=subjects)
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "name"),
+    [("volume_path", "volume"), ("mask_path", "mask"), ("frst_path", "FRST")],
+)
+def test_patch_config_rejects_missing_input_file(
+    tmp_path: Path, field: str, name: str
 ) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
-    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
-    split_manifest = SplitManifest.read(layout.split_manifest_path())
-    config = _train_config(dataset_dir, tmp_path / "experiment")
-    _train_manifest_for_config(
-        config, content_fingerprint(split_manifest)
-    ).write(layout.train_manifest_path())
+    values = patch_values(tmp_path)
+    Path(getattr(values["subjects"][0].variants[0], field)).unlink()
 
-    with pytest.raises(ValidationError, match="Value error"):
-        EvaluateConfig.model_validate(
-            {
-                "dataset_dir": dataset_dir,
-                "experiment_dir": tmp_path / "experiment",
-                "use_amp": False,
-                "device": "cpu",
-            }
-        )
+    with pytest.raises(ValidationError, match=f"variant 0 {name} file was not found"):
+        NonOverlappingPatchConfig.model_validate(values)
 
 
-def test_evaluate_config_rejects_mismatched_preprocessed_manifest(
-    tmp_path: Path,
-) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
-    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
-    split_manifest = SplitManifest.read(layout.split_manifest_path())
-    config = _train_config(dataset_dir, tmp_path / "experiment")
-    _train_manifest_for_config(
-        config, content_fingerprint(split_manifest)
-    ).model_copy(update={"status": ManifestStatus.COMPLETE}).write(
-        layout.train_manifest_path()
-    )
-    manifest_path = DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path()
-    PreprocessedDatasetManifest.read(manifest_path).model_copy(
-        update={"subjects": []}
-    ).write(manifest_path)
-
-    with pytest.raises(ValidationError, match="Value error"):
-        EvaluateConfig.model_validate(
-            {
-                "dataset_dir": dataset_dir,
-                "experiment_dir": tmp_path / "experiment",
-                "use_amp": False,
-                "device": "cpu",
-            }
-        )
-
-
-def test_evaluate_config_rejects_mismatched_train_manifest_split(
-    tmp_path: Path,
-) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    _complete_split(tmp_path, [f"subject-{index}" for index in range(7)])
-    layout = ExperimentLayout(experiment_dir=tmp_path / "experiment")
-    config = _train_config(dataset_dir, tmp_path / "experiment")
-    _train_manifest_for_config(
-        config, "different-split-fingerprint"
-    ).model_copy(update={"status": ManifestStatus.COMPLETE}).write(
-        layout.train_manifest_path()
-    )
-
-    with pytest.raises(ValidationError, match="Value error"):
-        EvaluateConfig.model_validate(
-            {
-                "dataset_dir": dataset_dir,
-                "experiment_dir": tmp_path / "experiment",
-                "use_amp": False,
-                "device": "cpu",
-            }
-        )
-
-
-def test_evaluate_config_requires_complete_explicit_mode(tmp_path: Path) -> None:
-    dataset_dir = _training_dataset(tmp_path)
-    detector_checkpoint = tmp_path / "detector.pth"
-    detector_checkpoint.touch()
-
-    with pytest.raises(ValidationError, match="student_checkpoint_path"):
-        EvaluateConfig.model_validate(
-            {
-                "dataset_dir": dataset_dir,
-                "output_dir": tmp_path / "evaluation",
-                "detector_checkpoint_path": detector_checkpoint,
-                "device": "cpu",
-            }
-        )
-
-
-def test_evaluate_config_rejects_missing_explicit_detector_checkpoint(
-    tmp_path: Path,
-) -> None:
-    dataset_dir = tmp_path / "dataset"
-    mask_path = tmp_path / "mask.nii.gz"
-    mask_path.touch()
-    _write_raw_dataset_manifest(
-        tmp_path,
-        dataset_dir,
-        mask_path=str(mask_path),
-    )
-    student_checkpoint = tmp_path / "student.pth"
-    student_checkpoint.touch()
-
-    with pytest.raises(ValidationError, match="Value error"):
-        EvaluateConfig(
-            dataset_dir=dataset_dir,
-            output_dir=tmp_path / "evaluation",
-            detector_checkpoint_path=tmp_path / "missing-detector.pth",
-            student_checkpoint_path=student_checkpoint,
+def test_target_centered_config_accepts_candidate_detector(tmp_path: Path) -> None:
+    config = TargetCenteredPatchConfig.model_validate(
+        patch_values(
+            tmp_path,
+            probability_threshold=0.5,
             use_amp=False,
-            device="cpu",
+            detector=CandidateDetector(),
         )
-
-
-def test_evaluate_config_rejects_maskless_raw_subjects(tmp_path: Path) -> None:
-    detector_checkpoint = tmp_path / "detector.pth"
-    student_checkpoint = tmp_path / "student.pth"
-    detector_checkpoint.touch()
-    student_checkpoint.touch()
-    dataset_dir = tmp_path / "dataset"
-    _write_raw_dataset_manifest(
-        tmp_path,
-        dataset_dir,
-        mask_path=None,
     )
 
-    with pytest.raises(ValidationError, match="Value error"):
-        EvaluateConfig(
-            dataset_dir=dataset_dir,
-            output_dir=tmp_path / "evaluation",
-            detector_checkpoint_path=detector_checkpoint,
-            student_checkpoint_path=student_checkpoint,
-            use_amp=False,
-            device="cpu",
-        )
-
-
-def test_evaluate_config_requires_explicit_values_without_experiment(
-    tmp_path: Path,
-) -> None:
-    with pytest.raises(ValidationError, match="output_dir"):
-        EvaluateConfig.model_validate(
-            {"dataset_dir": tmp_path, "device": "cpu"}
-        )
-
-
-def test_target_centered_config_validates_threshold(tmp_path: Path) -> None:
-    volume_path = tmp_path / "volume.nii.gz"
-    mask_path = tmp_path / "mask.nii.gz"
-    frst_path = tmp_path / "frst.nii.gz"
-    for path in (volume_path, mask_path, frst_path):
-        path.touch()
-    values = {
-        "experiment_layout": ExperimentLayout(experiment_dir=tmp_path),
-        "stage": "student",
-        "split": "train",
-        "subjects": [
-            PreprocessedSubject(
-                subject_id="subject",
-                original_volume_path="volume.nii.gz",
-                brain_mask_path=str(volume_path),
-                bounding_box=((0, 1), (0, 1), (0, 1)),
-                variants=[
-                    PreprocessedVariant(
-                        volume_path=str(volume_path),
-                        mask_path=str(mask_path),
-                        frst_path=str(frst_path),
-                    )
-                ],
-            )
-        ],
-        "patch_size": 24,
-        "augmentation_factor": 1,
-        "probability_threshold": 0.5,
-        "use_amp": False,
-        "detector": CandidateDetector(),
-    }
-    assert TargetCenteredPatchConfig.model_validate(values).probability_threshold == 0.5
+    assert config.probability_threshold == 0.5
 
 
 def test_target_centered_config_rejects_invalid_detector(tmp_path: Path) -> None:
-    values = {
-        "experiment_layout": ExperimentLayout(experiment_dir=tmp_path),
-        "stage": "student",
-        "split": "train",
-        "subjects": [
-            PreprocessedSubject(
-                subject_id="subject",
-                original_volume_path="volume.nii.gz",
-                brain_mask_path="brain-mask.nii.gz",
-                bounding_box=((0, 1), (0, 1), (0, 1)),
-                variants=[
-                    PreprocessedVariant(
-                        volume_path="volume.nii.gz",
-                        mask_path="mask.nii.gz",
-                        frst_path="frst.nii.gz",
-                    )
-                ],
-            )
-        ],
-        "patch_size": 24,
-        "augmentation_factor": 5,
-        "probability_threshold": 0.5,
-        "use_amp": False,
-        "detector": object(),
-    }
+    values = patch_values(
+        tmp_path, probability_threshold=0.5, use_amp=False, detector=object()
+    )
 
     with pytest.raises(TypeError, match="Target-centered patch extraction"):
         TargetCenteredPatchConfig.model_validate(values)

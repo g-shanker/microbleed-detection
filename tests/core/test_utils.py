@@ -21,14 +21,13 @@ def test_stack_volume_and_frst_returns_channel_first_input() -> None:
 
 
 def test_microbleed_probability_detaches_logits_before_conversion() -> None:
-    logits = torch.tensor([[[[0.0]], [[1.0]]]], requires_grad=True).squeeze(0)
+    logits = torch.tensor([[[0.0]], [[1.0]]], requires_grad=True)
 
     probability = utils.microbleed_probability(logits)
 
     assert isinstance(probability, np.ndarray)
-    assert probability == pytest.approx(
-        torch.softmax(logits, dim=0)[1].detach().numpy()
-    )
+    expected = torch.softmax(logits, dim=0)[1].detach().numpy()
+    assert probability == pytest.approx(expected)
 
 
 def test_initialize_teacher_transfers_detector_feature_and_segmentor_state() -> None:
@@ -46,16 +45,12 @@ def test_initialize_teacher_transfers_detector_feature_and_segmentor_state() -> 
         teacher.segmentor.out_conv.layer.weight,
         detector.segmentor.out_conv.layer.weight,
     )
-    torch.testing.assert_close(
-        teacher.classifier.fc_3.weight,
-        classifier_weight,
-    )
+    assert torch.equal(teacher.classifier.fc_3.weight, classifier_weight)
 
 
 def test_initialize_teacher_rejects_missing_detector_keys() -> None:
-    detector = CandidateDetector()
     teacher = CandidateDiscriminatorTeacher()
     del teacher.segmentor
 
     with pytest.raises(ValueError, match="incompatible"):
-        utils.initialize_teacher_from_detector(detector, teacher)
+        utils.initialize_teacher_from_detector(CandidateDetector(), teacher)

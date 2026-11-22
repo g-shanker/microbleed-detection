@@ -4,12 +4,22 @@ import numpy as np
 import pytest
 
 from microbleednet.core.transforms import inpaint_vessels
+from tests.support_core import voxels
+
+
+class SerialParallel:
+    """Run joblib's delayed calls in order, without starting worker processes."""
+
+    def __init__(self, **options) -> None:
+        self.options = options
+
+    def __call__(self, tasks):
+        return (function(*args, **kwargs) for function, args, kwargs in tasks)
 
 
 def test_apply_dilates_detected_vessels_before_inpainting(monkeypatch) -> None:
     volume = np.zeros((3, 3, 3))
-    vessel_mask = np.zeros_like(volume, dtype=bool)
-    vessel_mask[1, 1, 1] = True
+    vessel_mask = voxels((3, 3, 3), (1, 1, 1), dtype=bool)
     observed = {}
     monkeypatch.setattr(
         inpaint_vessels, "get_volume_vessel_mask", lambda _: vessel_mask
@@ -27,18 +37,26 @@ def test_apply_dilates_detected_vessels_before_inpainting(monkeypatch) -> None:
     np.testing.assert_array_equal(result, np.ones_like(volume))
 
 
-def test_get_volume_vessel_mask_processes_every_slice() -> None:
-    volume = np.zeros((2, 2, 2))
+def test_get_volume_vessel_mask_processes_every_slice_in_order(monkeypatch) -> None:
+    created = []
+
+    def parallel(**options) -> SerialParallel:
+        created.append(options)
+        return SerialParallel(**options)
+
+    monkeypatch.setattr(inpaint_vessels, "Parallel", parallel)
+    monkeypatch.setattr(
+        inpaint_vessels, "get_slice_vessel_mask", lambda image_slice: image_slice + 100
+    )
+    volume = np.arange(12, dtype=float).reshape((2, 3, 2))
 
     mask = inpaint_vessels.get_volume_vessel_mask(volume)
 
-    np.testing.assert_array_equal(mask, volume)
+    np.testing.assert_array_equal(mask, volume + 100)
+    assert created == [{"n_jobs": -1, "return_as": "generator"}]
 
 
-@pytest.mark.parametrize(
-    "image_slice",
-    [np.zeros((2, 2)), np.ones((2, 2))],
-)
+@pytest.mark.parametrize("image_slice", [np.zeros((2, 2)), np.ones((2, 2))])
 def test_get_slice_vessel_mask_returns_empty_for_unusable_slice(
     image_slice: np.ndarray,
 ) -> None:
@@ -53,6 +71,7 @@ def test_get_slice_vessel_mask_returns_empty_for_unusable_slice(
         (np.array([0, 0, 0, 1]), np.arange(4).reshape((2, 2))),
         (np.array([0, 1, 1, 1]), np.zeros((2, 2))),
     ],
+    ids=["second-cluster-smaller", "first-cluster-smaller"],
 )
 def test_get_slice_vessel_mask_selects_smaller_cluster_and_filters_regions(
     clusters: np.ndarray, linearity: np.ndarray, monkeypatch
@@ -66,25 +85,24 @@ def test_get_slice_vessel_mask_selects_smaller_cluster_and_filters_regions(
             self.labels_ = clusters
             return self
 
+    def fake_kmeans(**kwargs) -> FakeClusterer:
+        clusterer_arguments.update(kwargs)
+        return FakeClusterer()
+
+    def fake_frangi(_image: np.ndarray, **kwargs) -> np.ndarray:
+        frangi_arguments.update(kwargs)
+        return np.ones((2, 2))
+
     properties = [
         SimpleNamespace(label=1, eccentricity=0.95, solidity=0.9),
         SimpleNamespace(label=2, eccentricity=0.5, solidity=0.9),
         SimpleNamespace(label=3, eccentricity=0.5, solidity=0.4),
     ]
-    def fake_frangi(_image: np.ndarray, **kwargs) -> np.ndarray:
-        frangi_arguments.update(kwargs)
-        return np.ones((2, 2))
-
     monkeypatch.setattr(inpaint_vessels, "frangi", fake_frangi)
+    monkeypatch.setattr(inpaint_vessels, "KMeans", fake_kmeans)
     monkeypatch.setattr(
         inpaint_vessels, "get_linearity_measure", lambda _: linearity.copy()
     )
-
-    def fake_kmeans(**kwargs):
-        clusterer_arguments.update(kwargs)
-        return FakeClusterer()
-
-    monkeypatch.setattr(inpaint_vessels, "KMeans", fake_kmeans)
     monkeypatch.setattr(
         inpaint_vessels.utils,
         "label_components",
@@ -100,9 +118,9 @@ def test_get_slice_vessel_mask_selects_smaller_cluster_and_filters_regions(
         "random_state": inpaint_vessels.CLUSTERER_RANDOM_STATE,
     }
     assert frangi_arguments == {
-            "sigmas": (0.5, 1.2, 0.2),
+        "sigmas": (0.5, 1.2, 0.2),
         "beta": 0.9,
-            "alpha": 20,
+        "alpha": 20,
         "black_ridges": False,
     }
 
@@ -118,8 +136,7 @@ def test_get_linearity_measure_returns_nonnegative_image() -> None:
 
 def test_inpaint_with_neighborhood_mean_fills_masked_voxel() -> None:
     volume = np.arange(27, dtype=float).reshape((3, 3, 3))
-    mask = np.zeros_like(volume, dtype=bool)
-    mask[1, 1, 1] = True
+    mask = voxels((3, 3, 3), (1, 1, 1), dtype=bool)
 
     inpainted = inpaint_vessels.inpaint_with_neighborhood_mean(volume, mask)
 

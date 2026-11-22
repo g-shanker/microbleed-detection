@@ -8,16 +8,19 @@ def test_progress_uses_a_silent_tracker_by_default() -> None:
 
 
 def test_progress_can_configure_a_tracker() -> None:
-    progress_instance = Progress()
-    tracked_items = [1, 2, 3]
+    instance = Progress()
+    items = [1, 2, 3]
     descriptions: list[str] = []
 
-    def tracker(items, description):
+    def tracker(tracked, description):
         descriptions.append(description)
-        return items
+        return tracked
 
-    assert progress_instance.track(tracked_items, "before") is tracked_items
-    progress_instance.configure(tracker)
-    assert progress_instance.track(tracked_items, "after") is tracked_items
+    instance.configure(tracker)
+
+    assert instance.track(items, "after") is items
     assert descriptions == ["after"]
+
+
+def test_shared_progress_is_a_progress_instance() -> None:
     assert isinstance(progress, Progress)

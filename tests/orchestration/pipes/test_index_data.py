@@ -2,48 +2,54 @@ from pathlib import Path
 
 import pytest
 
+from microbleednet.errors import ApplicationError
+from microbleednet.orchestration.layouts import DatasetLayout
 from microbleednet.orchestration.manifests import (
     ManifestStatus,
     RawDatasetManifest,
-    RawSource,
     RawSubject,
 )
 from microbleednet.orchestration.pipes.index_data import (
     build_subject_map,
+    execute,
     extract_subject_id,
     find_matching_paths,
     index_source,
     merge_source,
 )
-from tests.support import create_volume_source, make_index_config
+from tests.support import create_volume_source, make_index_config, raw_source
+
+VOLUME_PATTERN = "{subject_id}_volume.nii.gz"
+REPEATED_PATTERN = "{subject_id}/{subject_id}_volume.nii.gz"
 
 
-def test_extract_subject_id_matches_relative_pattern(tmp_path: Path) -> None:
-    path = tmp_path / "nested" / "subject_1_volume.nii.gz"
-
-    subject_id = extract_subject_id(tmp_path, path, "nested/{subject_id}_volume.nii.gz")
-
-    assert subject_id == "subject_1"
-
-
-def test_extract_subject_id_returns_none_for_nonmatch(tmp_path: Path) -> None:
-    path = tmp_path / "subject_1_mask.nii.gz"
-
-    subject_id = extract_subject_id(tmp_path, path, "{subject_id}_volume.nii.gz")
-
-    assert subject_id is None
-
-
-def test_extract_subject_id_accepts_matching_repeated_placeholders(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "subject_1" / "subject_1_volume.nii.gz"
-
-    subject_id = extract_subject_id(
-        tmp_path, path, "{subject_id}/{subject_id}_volume.nii.gz"
+def _subject(subject_id: str, source_id: str) -> RawSubject:
+    return RawSubject(
+        subject_id=subject_id, source_id=source_id, volume_path=f"/{subject_id}"
     )
 
-    assert subject_id == "subject_1"
+
+def _manifest(source_id: str, *subject_ids: str) -> RawDatasetManifest:
+    return RawDatasetManifest(
+        status=ManifestStatus.COMPLETE,
+        sources=[raw_source(source_id)],
+        subjects=[_subject(subject_id, source_id) for subject_id in subject_ids],
+    )
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "pattern", "expected"),
+    [
+        ("nested/subject_1_volume.nii.gz", "nested/" + VOLUME_PATTERN, "subject_1"),
+        ("subject_1_mask.nii.gz", VOLUME_PATTERN, None),
+        ("subject_1/subject_1_volume.nii.gz", REPEATED_PATTERN, "subject_1"),
+    ],
+    ids=["relative-pattern", "nonmatch", "matching-repeated-placeholders"],
+)
+def test_extract_subject_id(
+    tmp_path: Path, relative_path: str, pattern: str, expected: str | None
+) -> None:
+    assert extract_subject_id(tmp_path, tmp_path / relative_path, pattern) == expected
 
 
 def test_extract_subject_id_rejects_mismatched_repeated_placeholders(
@@ -52,9 +58,7 @@ def test_extract_subject_id_rejects_mismatched_repeated_placeholders(
     path = tmp_path / "subject_1" / "subject_2_volume.nii.gz"
 
     with pytest.raises(ValueError, match="inconsistent subject IDs"):
-        extract_subject_id(
-            tmp_path, path, "{subject_id}/{subject_id}_volume.nii.gz"
-        )
+        extract_subject_id(tmp_path, path, REPEATED_PATTERN)
 
 
 def test_find_matching_paths_treats_pattern_text_literally(tmp_path: Path) -> None:
@@ -62,33 +66,24 @@ def test_find_matching_paths_treats_pattern_text_literally(tmp_path: Path) -> No
     expected.write_bytes(b"")
     (tmp_path / "scan1_subject_2.nii.gz").write_bytes(b"")
 
-    paths = find_matching_paths(tmp_path, "scan[1]_{subject_id}.nii.gz")
-
-    assert paths == [expected]
+    assert find_matching_paths(tmp_path, "scan[1]_{subject_id}.nii.gz") == [expected]
 
 
-def test_build_subject_map_rejects_empty_subject_id(tmp_path: Path) -> None:
-    path = tmp_path / "_volume.nii.gz"
-    path.write_bytes(b"")
-    with pytest.raises(ValueError, match="could not be extracted"):
-        build_subject_map(
-            tmp_path,
-            [path],
-            "{subject_id}_volume.nii.gz",
-            "Indexing volumes",
-        )
+@pytest.mark.parametrize(
+    ("filenames", "message"),
+    [
+        (["_volume.nii.gz"], "could not be extracted"),
+        (["subject_1_volume.nii.gz"] * 2, "duplicate subject IDs"),
+    ],
+    ids=["empty-subject-id", "duplicate-subject-id"],
+)
+def test_build_subject_map_rejects_invalid_subject_ids(
+    tmp_path: Path, filenames: list[str], message: str
+) -> None:
+    paths = [tmp_path / name for name in filenames]
 
-
-def test_build_subject_map_rejects_duplicate_subject_id(tmp_path: Path) -> None:
-    path = tmp_path / "subject_1_volume.nii.gz"
-    path.write_bytes(b"")
-    with pytest.raises(ValueError, match="duplicate subject IDs"):
-        build_subject_map(
-            tmp_path,
-            [path, path],
-            "{subject_id}_volume.nii.gz",
-            "Indexing volumes",
-        )
+    with pytest.raises(ApplicationError, match=message):
+        build_subject_map(tmp_path, paths, VOLUME_PATTERN, "Indexing volumes")
 
 
 def test_index_source_sorts_naturally_and_namespaces_subjects(tmp_path: Path) -> None:
@@ -110,17 +105,13 @@ def test_index_source_sorts_naturally_and_namespaces_subjects(tmp_path: Path) ->
     assert source.source_id == "siteA"
     assert source.modality == "SWI"
     assert {subject.source_id for subject in subjects} == {"siteA"}
+    assert all(subject.mask_path for subject in subjects)
 
 
 def test_index_source_allows_missing_masks(tmp_path: Path) -> None:
-    source_dir = tmp_path / "source"
-    source_dir.mkdir()
-    (source_dir / "subject_1_volume.nii.gz").write_bytes(b"")
+    source_dir = create_volume_source(tmp_path, "source", ["subject_1"])
     config = make_index_config(
-        tmp_path,
-        input_dir=source_dir,
-        mask_dir=None,
-        mask_pattern=None,
+        tmp_path, input_dir=source_dir, mask_dir=None, mask_pattern=None
     )
 
     source, subjects = index_source(config)
@@ -130,37 +121,37 @@ def test_index_source_allows_missing_masks(tmp_path: Path) -> None:
     assert subjects[0].mask_path is None
 
 
-def test_merge_source_preserves_creation_and_combines_state() -> None:
-    existing_source = _source("first", "2026-01-01T00:00:00+00:00")
-    existing = RawDatasetManifest(
-        status=ManifestStatus.COMPLETE,
-        created_at="2026-01-01T00:00:00+00:00",
-        updated_at="2026-01-01T00:00:00+00:00",
-        sources=[existing_source],
-        subjects=[
-            RawSubject(
-                subject_id="subject_10",
-                source_id="first",
-                volume_path="/subject_10",
-                mask_path="/mask_10",
-            )
-        ],
+@pytest.mark.parametrize(
+    ("unmatched_file", "message"),
+    [
+        ("source_masks/subject_2_mask.nii.gz", "volumes without masks: subject_2"),
+        ("source/subject_2_volume.nii.gz", "masks without volumes: subject_2"),
+    ],
+)
+def test_index_source_rejects_unmatched_volumes_and_masks(
+    tmp_path: Path, unmatched_file: str, message: str
+) -> None:
+    source_dir = create_volume_source(tmp_path, "source", ["subject_1", "subject_2"])
+    (tmp_path / unmatched_file).unlink()
+    config = make_index_config(
+        tmp_path, input_dir=source_dir, mask_dir=tmp_path / "source_masks"
     )
-    new_source = _source("second", "2026-01-02T00:00:00+00:00")
+
+    with pytest.raises(ApplicationError, match="IDs do not match") as raised:
+        index_source(config)
+
+    assert message in str(raised.value)
+
+
+def test_merge_source_appends_source_and_sorts_subjects_naturally() -> None:
+    existing = _manifest("first", "subject_10")
+    addition = _manifest("second", "subject_2")
 
     merged = merge_source(
-        existing,
-        source=new_source,
-        subjects=[
-            RawSubject(
-                subject_id="subject_2",
-                source_id="second",
-                volume_path="/subject_2",
-                mask_path="/mask_2",
-            )
-        ],
+        existing, source=addition.sources[0], subjects=addition.subjects
     )
 
+    assert [source.source_id for source in merged.sources] == ["first", "second"]
     assert [subject.subject_id for subject in merged.subjects] == [
         "subject_2",
         "subject_10",
@@ -168,30 +159,11 @@ def test_merge_source_preserves_creation_and_combines_state() -> None:
 
 
 def test_merge_source_rejects_existing_source_id() -> None:
-    existing = RawDatasetManifest(
-        status=ManifestStatus.COMPLETE,
-        sources=[_source("first", "2026-01-01T00:00:00+00:00")],
-        subjects=[
-            RawSubject(
-                subject_id="first_subject_1",
-                source_id="first",
-                volume_path="/subject_1",
-            )
-        ],
-    )
+    existing = _manifest("first", "first_subject_1")
+    duplicate = _manifest("first", "first_subject_2")
 
     with pytest.raises(ValueError) as error:
-        merge_source(
-            existing,
-            source=_source("first", "2026-01-02T00:00:00+00:00"),
-            subjects=[
-                RawSubject(
-                    subject_id="first_subject_2",
-                    source_id="first",
-                    volume_path="/subject_2",
-                )
-            ],
-        )
+        merge_source(existing, source=duplicate.sources[0], subjects=duplicate.subjects)
 
     message = str(error.value)
     assert "Source ID already exists" in message
@@ -199,12 +171,22 @@ def test_merge_source_rejects_existing_source_id() -> None:
     assert "replacement workflow" not in message
 
 
-def _source(name: str, added_on: str) -> RawSource:
-    return RawSource(
-        input_dir=f"/{name}",
-        mask_dir=f"/{name}-masks",
-        volume_pattern="{subject_id}_volume.nii.gz",
-        mask_pattern="{subject_id}_mask.nii.gz",
-        source_id=name,
-        added_on=added_on,
-    )
+def test_execute_creates_manifest_then_merges_new_sources(tmp_path: Path) -> None:
+    manifest_path = DatasetLayout(dataset_dir=tmp_path / "dataset").raw_manifest_path()
+    for name in ("a", "b"):
+        create_volume_source(tmp_path, name, ["subject_1"])
+        execute(
+            make_index_config(
+                tmp_path,
+                input_dir=tmp_path / name,
+                mask_dir=tmp_path / f"{name}_masks",
+                source_id=name,
+            )
+        )
+
+    manifest = RawDatasetManifest.read(manifest_path)
+    assert [source.source_id for source in manifest.sources] == ["a", "b"]
+    assert [subject.subject_id for subject in manifest.subjects] == [
+        "a_subject_1",
+        "b_subject_1",
+    ]

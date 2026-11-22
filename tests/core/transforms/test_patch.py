@@ -1,36 +1,34 @@
 import numpy as np
+import pytest
 
 from microbleednet.core.transforms import patch
 from microbleednet.core.utils import label_components
+from tests.support_core import voxels
 
 
-def test_label_components_returns_connected_labels() -> None:
-    mask = np.zeros((3, 3, 3), dtype=np.uint8)
-    mask[0, 0, 0] = 1
-    mask[2, 2, 1:] = 1
-
-    labels = label_components(mask, 3)
-
-    assert labels[0, 0, 0] == 1
-    assert labels[2, 2, 1] == 2
-
-
-def test_label_components_labels_explicitly_thresholded_mask() -> None:
-    probability_map = np.array([[[0.2, 0.8]]])
-
-    labels = label_components(probability_map > 0.5, 3)
-
-    np.testing.assert_array_equal(labels, np.array([[[0, 1]]]))
+@pytest.mark.parametrize(
+    ("mask", "expected"),
+    [
+        (
+            voxels((3, 3, 3), (0, 0, 0), (2, 2, slice(1, None)), dtype=np.uint8),
+            voxels((3, 3, 3), (0, 0, 0), dtype=int)
+            + voxels((3, 3, 3), (2, 2, slice(1, None)), value=2, dtype=int),
+        ),
+        (np.array([[[0.2, 0.8]]]) > 0.5, np.array([[[0, 1]]])),
+    ],
+    ids=["two-components", "thresholded-probabilities"],
+)
+def test_label_components_returns_connected_labels(
+    mask: np.ndarray, expected: np.ndarray
+) -> None:
+    np.testing.assert_array_equal(label_components(mask, 3), expected)
 
 
 def test_get_target_centers_returns_rounded_centers() -> None:
-    labels = np.zeros((3, 3, 3), dtype=np.int32)
-    labels[0, 0, 0] = 1
+    labels = voxels((3, 3, 3), (0, 0, 0), dtype=np.int32)
     labels[2, 2, 1:] = 2
 
-    centers = patch.get_target_centers(labels)
-
-    assert centers == [(0, 0, 0), (2, 2, 2)]
+    assert patch.get_target_centers(labels) == [(0, 0, 0), (2, 2, 2)]
 
 
 def test_nonoverlapping_patches_pad_each_axis_to_patch_size_multiple() -> None:
@@ -54,9 +52,7 @@ def test_nonoverlapping_patches_pad_volume_smaller_than_patch() -> None:
 
 def test_overlapping_patch_bounds_cover_each_axis_and_trailing_edge() -> None:
     bounding_boxes = patch.get_overlapping_patch_bounding_boxes(
-        shape=(3, 6, 5),
-        patch_size=4,
-        overlap=2,
+        shape=(3, 6, 5), patch_size=4, overlap=2
     )
 
     assert bounding_boxes == [
@@ -68,12 +64,8 @@ def test_overlapping_patch_bounds_cover_each_axis_and_trailing_edge() -> None:
 
 
 def test_centered_patches_use_requested_size_at_volume_boundary() -> None:
-    volume = np.ones((4, 4, 4))
-
     patches = patch.extract_centered_patches(
-        volume,
-        centers=[(0, 0, 0)],
-        patch_size=4,
+        np.ones((4, 4, 4)), centers=[(0, 0, 0)], patch_size=4
     )
 
     assert patches[0].shape == (4, 4, 4)
@@ -81,13 +73,8 @@ def test_centered_patches_use_requested_size_at_volume_boundary() -> None:
 
 
 def test_centered_patches_place_center_at_patch_center() -> None:
-    volume = np.zeros((7, 7, 7))
-    volume[3, 3, 3] = 1
-
     patches = patch.extract_centered_patches(
-        volume,
-        centers=[(3, 3, 3)],
-        patch_size=5,
+        voxels((7, 7, 7), (3, 3, 3)), centers=[(3, 3, 3)], patch_size=5
     )
 
     assert patches[0][2, 2, 2] == 1

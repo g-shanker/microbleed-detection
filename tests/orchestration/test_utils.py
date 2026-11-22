@@ -1,6 +1,7 @@
 import logging
 import pickle
 from pathlib import Path
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -9,21 +10,18 @@ import torch.nn as nn
 
 from microbleednet.errors import ApplicationError
 from microbleednet.orchestration import utils
-from microbleednet.orchestration.manifests import (
-    PreprocessedSubject,
-    PreprocessedVariant,
-)
+from tests.support import preprocessed_subjects
+
+
+def _fail_checkpoint_load(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    monkeypatch.setattr(utils.core_io, "load_model_weights", Mock(side_effect=error))
 
 
 def test_create_rng_is_stable_for_matching_seed_and_spawn_key() -> None:
-    first = utils.create_rng(42, 3, 2)
-    repeated = utils.create_rng(42, 3, 2)
-    other_variant = utils.create_rng(42, 3, 3)
+    draws = [utils.create_rng(42, 3, key).random(4) for key in (2, 2, 3)]
 
-    np.testing.assert_array_equal(first.random(4), repeated.random(4))
-    assert not np.array_equal(
-        utils.create_rng(42, 3, 2).random(4), other_variant.random(4)
-    )
+    np.testing.assert_array_equal(draws[0], draws[1])
+    assert not np.array_equal(draws[0], draws[2])
 
 
 def test_create_rng_accepts_no_seed() -> None:
@@ -89,19 +87,13 @@ def test_resolve_path_string_returns_absolute_string(tmp_path: Path) -> None:
     ],
 )
 def test_load_stage_checkpoint_wraps_expected_failure(
-    tmp_path: Path, monkeypatch, failure: Exception
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
 ) -> None:
     checkpoint_path = tmp_path / "detector.pth"
-    monkeypatch.setattr(
-        utils.core_io,
-        "load_model_weights",
-        lambda *_: (_ for _ in ()).throw(failure),
-    )
+    _fail_checkpoint_load(monkeypatch, failure)
 
     with pytest.raises(ApplicationError) as raised:
-        utils.load_stage_checkpoint(
-            nn.Linear(1, 1), checkpoint_path, "detector"
-        )
+        utils.load_stage_checkpoint(nn.Linear(1, 1), checkpoint_path, "detector")
 
     assert raised.value.category == "Checkpoint"
     assert raised.value.context == {
@@ -109,90 +101,50 @@ def test_load_stage_checkpoint_wraps_expected_failure(
         "stage": "detector",
     }
     assert str(failure) in str(raised.value)
+    assert raised.value.__cause__ is failure
 
 
-def test_load_stage_checkpoint_preserves_application_error(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ApplicationError(category="Checkpoint", summary="already structured"),
+        TypeError("unexpected checkpoint failure"),
+    ],
+    ids=["application-error", "unexpected-error"],
+)
+def test_load_stage_checkpoint_preserves_unwrapped_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
 ) -> None:
-    expected = ApplicationError(
-        category="Checkpoint",
-        summary="already structured",
-    )
-    monkeypatch.setattr(
-        utils.core_io,
-        "load_model_weights",
-        lambda *_: (_ for _ in ()).throw(expected),
-    )
+    _fail_checkpoint_load(monkeypatch, failure)
 
-    with pytest.raises(ApplicationError) as raised:
-        utils.load_stage_checkpoint(
-            nn.Linear(1, 1), tmp_path / "detector.pth", "detector"
-        )
+    with pytest.raises(type(failure)) as raised:
+        utils.load_stage_checkpoint(nn.Linear(1, 1), tmp_path / "x.pth", "detector")
 
-    assert raised.value is expected
+    assert raised.value is failure
 
 
-def test_load_stage_checkpoint_preserves_unexpected_error(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize(
+    ("cuda_available", "expected_calls"),
+    [(True, ["gc", "cuda"]), (False, ["gc"])],
+)
+def test_release_gpu_memory_collects_and_clears_cuda_only_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+    cuda_available: bool,
+    expected_calls: list[str],
 ) -> None:
-    expected = TypeError("unexpected checkpoint failure")
-    monkeypatch.setattr(
-        utils.core_io,
-        "load_model_weights",
-        lambda *_: (_ for _ in ()).throw(expected),
-    )
-
-    with pytest.raises(TypeError) as raised:
-        utils.load_stage_checkpoint(
-            nn.Linear(1, 1), tmp_path / "detector.pth", "detector"
-        )
-
-    assert raised.value is expected
-
-
-def test_release_gpu_memory_collects_and_clears_cuda(monkeypatch) -> None:
-    calls = []
+    calls: list[str] = []
     monkeypatch.setattr(utils.gc, "collect", lambda: calls.append("gc"))
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda_available)
     monkeypatch.setattr(torch.cuda, "empty_cache", lambda: calls.append("cuda"))
 
     utils.release_gpu_memory()
 
-    assert calls == ["gc", "cuda"]
+    assert calls == expected_calls
 
 
-def test_release_gpu_memory_skips_cuda_when_unavailable(monkeypatch) -> None:
-    calls = []
-    monkeypatch.setattr(utils.gc, "collect", lambda: calls.append("gc"))
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: calls.append("cuda"))
+def test_resolve_subjects_preserves_requested_id_order(tmp_path: Path) -> None:
+    subjects = preprocessed_subjects(2, tmp_path)
 
-    utils.release_gpu_memory()
+    resolved = utils.resolve_subjects(subjects, ["subject-1", "subject-0"])
 
-    assert calls == ["gc"]
-
-
-def test_resolve_subjects_preserves_requested_id_order() -> None:
-    subjects = [
-        PreprocessedSubject(
-            subject_id=subject_id,
-            original_volume_path="original-volume",
-            brain_mask_path="brain-mask",
-            bounding_box=((0, 1), (0, 1), (0, 1)),
-            variants=[
-                PreprocessedVariant(
-                    volume_path="volume",
-                    mask_path="mask",
-                    frst_path="frst",
-                )
-            ],
-        )
-        for subject_id in ("subject-1", "subject-2")
-    ]
-
-    resolved = utils.resolve_subjects(subjects, ["subject-2", "subject-1"])
-
-    assert [subject.subject_id for subject in resolved] == [
-        "subject-2",
-        "subject-1",
-    ]
+    assert resolved == [subjects[1], subjects[0]]

@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import nibabel as nib
@@ -6,51 +7,73 @@ import numpy as np
 import pytest
 import torch.nn as nn
 
-from microbleednet.constants import DETECTOR_STAGE, STUDENT_STAGE
+from microbleednet.constants import (
+    DETECTOR_THRESHOLD,
+    DISCRIMINATOR_PATCH_SIZE,
+    MAXIMUM_ELLIPTICITY,
+    MINIMUM_BRAIN_DISTANCE_MM,
+    MINIMUM_VOLUME_MM3,
+    PREPROCESSING_AUGMENTATION_FACTOR,
+    STUDENT_THRESHOLD,
+)
 from microbleednet.core.engines import processor
 from microbleednet.errors import ApplicationError
-from microbleednet.orchestration.configs import (
-    InferConfig,
-)
-from microbleednet.orchestration.layouts import (
-    DatasetLayout,
-    ExperimentLayout,
-)
+from microbleednet.orchestration.configs import InferConfig
+from microbleednet.orchestration.layouts import DatasetLayout, ExperimentLayout
 from microbleednet.orchestration.manifests import (
     InferManifest,
+    InferredSubject,
     ManifestStatus,
     PreprocessedSubject,
-    PreprocessedVariant,
     RawDatasetManifest,
-    RawSource,
-    RawSubject,
-    timestamp,
 )
 from microbleednet.orchestration.pipes import infer
+from tests.support import preprocessed_subjects, raw_source, raw_subjects
+from tests.support_pipes import write_explicit_inputs
+
+IGNORED_LIFECYCLE_FIELDS = {"created_at", "updated_at"}
 
 
-def test_cleanup_candidates_rejects_small_and_boundary_components() -> None:
-    volume = np.ones((12, 12, 12), dtype=np.float32)
-    candidate_mask = np.zeros_like(volume, dtype=np.uint8)
-    candidate_mask[6:9, 6:9, 6:9] = 1
-    candidate_mask[0, 0, 0] = 1
-
-    output = processor.postprocess(
-        candidate_mask,
-        volume,
-        (1.0, 1.0, 1.0),
-        minimum_volume_mm3=2.5,
-        maximum_ellipticity=0.2,
-        minimum_brain_distance_mm=5.0,
+def postprocess(
+    *regions: slice,
+    spacing: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    minimum_volume_mm3: float = 2.5,
+    maximum_ellipticity: float = 0.2,
+    minimum_brain_distance_mm: float = 5.0,
+) -> np.ndarray:
+    """Post-process a 12^3 candidate mask holding one cube per region slice."""
+    candidates = np.zeros((12, 12, 12), dtype=np.uint8)
+    for region in regions:
+        candidates[region, region, region] = 1
+    return processor.postprocess(
+        candidates,
+        np.ones((12, 12, 12), dtype=np.float32),
+        spacing,
+        minimum_volume_mm3=minimum_volume_mm3,
+        maximum_ellipticity=maximum_ellipticity,
+        minimum_brain_distance_mm=minimum_brain_distance_mm,
     )
 
-    assert output[7, 7, 7] == 1
-    assert output[0, 0, 0] == 0
-    assert output.dtype == np.uint8
+
+@pytest.fixture
+def cleaned() -> np.ndarray:
+    return postprocess(slice(6, 9), slice(0, 1))
+
+
+def test_postprocess_keeps_interior_component(cleaned: np.ndarray) -> None:
+    assert cleaned[7, 7, 7] == 1
+
+
+def test_postprocess_drops_small_boundary_component(cleaned: np.ndarray) -> None:
+    assert cleaned[0, 0, 0] == 0
+
+
+def test_postprocess_returns_uint8(cleaned: np.ndarray) -> None:
+    assert cleaned.dtype == np.uint8
 
 
 def test_postprocess_uses_physical_spacing_for_component_shape(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     observed: list[tuple[float, float, float] | None] = []
     original_regionprops = processor.regionprops
@@ -61,31 +84,15 @@ def test_postprocess_uses_physical_spacing_for_component_shape(
 
     monkeypatch.setattr(processor, "regionprops", regionprops_with_observed_spacing)
 
-    volume = np.ones((12, 12, 12), dtype=np.float32)
-    candidate_mask = np.zeros_like(volume, dtype=np.uint8)
-    candidate_mask[5:8, 5:8, 5:8] = 1
-
-    processor.postprocess(
-        candidate_mask,
-        volume,
-        (1.0, 1.0, 2.0),
-        minimum_volume_mm3=2.5,
-        maximum_ellipticity=0.2,
-        minimum_brain_distance_mm=5.0,
-    )
+    postprocess(slice(5, 8), spacing=(1.0, 1.0, 2.0))
 
     assert observed == [None, (1.0, 1.0, 2.0)]
 
 
 def test_postprocess_uses_voxel_centroid_for_distance_index() -> None:
-    volume = np.ones((12, 12, 12), dtype=np.float32)
-    candidate_mask = np.zeros_like(volume, dtype=np.uint8)
-    candidate_mask[5:8, 5:8, 5:8] = 1
-
-    output = processor.postprocess(
-        candidate_mask,
-        volume,
-        (1.0, 1.0, 2.0),
+    output = postprocess(
+        slice(5, 8),
+        spacing=(1.0, 1.0, 2.0),
         minimum_volume_mm3=0.0,
         maximum_ellipticity=1.0,
         minimum_brain_distance_mm=0.0,
@@ -94,462 +101,474 @@ def test_postprocess_uses_voxel_centroid_for_distance_index() -> None:
     assert output[6, 6, 6] == 1
 
 
-def test_inference_manifest_round_trip(tmp_path: Path) -> None:
-    layout = ExperimentLayout(experiment_dir=tmp_path)
-    manifest = InferManifest(
-        status=ManifestStatus.COMPLETE,
-        created_at="now",
-        updated_at="now",
-        device="cpu",
-        detector_checkpoint_path="detector.pth",
-        student_checkpoint_path="student.pth",
-        detector_threshold=0.5,
-        student_threshold=0.5,
-        discriminator_patch_size=24,
-        minimum_volume_mm3=2.5,
-        maximum_ellipticity=0.2,
-        minimum_brain_distance_mm=5.0,
-        subjects=[],
-    )
-    manifest.write(layout.inference_manifest_path())
+# execute
 
-    loaded = InferManifest.read(layout.inference_manifest_path())
-    assert loaded.manifest_type == "inference"
-    assert loaded.status is ManifestStatus.COMPLETE
+
+@pytest.fixture
+def execution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """Fake preprocessing, model loading and inference around ``infer.execute``."""
+    inputs = write_explicit_inputs(
+        tmp_path,
+        subjects=[
+            *raw_subjects(1),
+            raw_subjects(2, source_id="other")[1],
+        ],
+        sources=[raw_source(), raw_source("other", modality="SWI")],
+    )
+    state = SimpleNamespace(
+        inputs=inputs,
+        processed=preprocessed_subjects(2, tmp_path / "processed"),
+        models=(cast(Any, object()), cast(Any, object())),
+        preprocess_calls=[],
+        infer_calls=[],
+    )
+
+    def preprocess_subject(*args: Any, **kwargs: Any) -> PreprocessedSubject:
+        state.preprocess_calls.append((args, kwargs))
+        return state.processed[len(state.preprocess_calls) - 1]
+
+    monkeypatch.setattr(infer, "preprocess_subject", preprocess_subject)
+    monkeypatch.setattr(infer, "load_inference_models", lambda *args: state.models)
+    monkeypatch.setattr(
+        infer, "infer_subjects", lambda *args: state.infer_calls.append(args)
+    )
+    monkeypatch.setattr(infer, "release_gpu_memory", lambda: None)
+    state.config = lambda **overrides: InferConfig(**{**inputs, **overrides})
+    return state
+
+
+@pytest.mark.parametrize("bias_field_correction", ["fast", "n4"])
+def test_execute_preprocesses_each_raw_subject_with_its_modality(
+    execution: SimpleNamespace, bias_field_correction: str
+) -> None:
+    config = execution.config(bias_field_correction=bias_field_correction)
+
+    infer.execute(config)
+
+    raw_manifest = RawDatasetManifest.read(
+        DatasetLayout(dataset_dir=config.dataset_dir).raw_manifest_path()
+    )
+    preprocessing_layout = DatasetLayout(dataset_dir=config.output_dir)
+    assert execution.preprocess_calls == [
+        (
+            (
+                subject,
+                modality,
+                preprocessing_layout,
+                PREPROCESSING_AUGMENTATION_FACTOR,
+            ),
+            {"bias_field_correction": bias_field_correction},
+        )
+        for subject, modality in zip(raw_manifest.subjects, ["QSM", "SWI"])
+    ]
+
+
+def test_execute_infers_preprocessed_subjects_with_loaded_models(
+    execution: SimpleNamespace,
+) -> None:
+    config = execution.config(use_amp=True)
+
+    infer.execute(config)
+
+    assert execution.infer_calls == [
+        (
+            "cpu",
+            ExperimentLayout(experiment_dir=config.output_dir),
+            config.detector_checkpoint_path,
+            config.student_checkpoint_path,
+            execution.processed,
+            *execution.models,
+            True,
+        )
+    ]
 
 
 def test_execute_loads_checkpoints_before_preprocessing(
-    tmp_path: Path, monkeypatch
+    execution: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    dataset_dir = tmp_path / "dataset"
-    output_dir = tmp_path / "output"
-    detector_checkpoint = tmp_path / "detector.pth"
-    student_checkpoint = tmp_path / "student.pth"
-    detector_checkpoint.touch()
-    student_checkpoint.touch()
-    RawDatasetManifest(
-        status=ManifestStatus.COMPLETE,
-        sources=[
-            RawSource(
-                input_dir=str(tmp_path),
-                volume_pattern="{subject_id}",
-                source_id="source",
-                modality="QSM",
-            )
-        ],
-        subjects=[
-            RawSubject(
-                subject_id="subject-1",
-                source_id="source",
-                volume_path="volume",
-            )
-        ],
-    ).write(DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path())
-    preprocessing_calls = []
-    monkeypatch.setattr(
-        infer,
-        "load_inference_models",
-        lambda *_: (_ for _ in ()).throw(
-            ApplicationError(
-                category="Checkpoint",
-                summary="invalid checkpoint",
-            )
-        ),
-    )
-    monkeypatch.setattr(
-        infer,
-        "preprocess_subject",
-        lambda *args: preprocessing_calls.append(args),
-    )
-    config = InferConfig(
-        output_dir=output_dir,
-        dataset_dir=dataset_dir,
-        detector_checkpoint_path=detector_checkpoint,
-        student_checkpoint_path=student_checkpoint,
-        use_amp=False,
-        device="cpu",
-    )
+    def fail_to_load(*_: Any) -> None:
+        raise ApplicationError(category="Checkpoint", summary="invalid checkpoint")
+
+    monkeypatch.setattr(infer, "load_inference_models", fail_to_load)
+    config = execution.config()
 
     with pytest.raises(ApplicationError, match="invalid checkpoint"):
         infer.execute(config)
 
-    assert preprocessing_calls == []
-    assert not ExperimentLayout(
-        experiment_dir=output_dir
-    ).inference_manifest_path().exists()
-
-
-def test_execute_writes_inference_manifest(tmp_path: Path, monkeypatch) -> None:
-    experiment_dir = tmp_path / "experiment"
-    layout = ExperimentLayout(experiment_dir=experiment_dir)
-    for stage in (DETECTOR_STAGE, STUDENT_STAGE):
-        checkpoint = layout.best_checkpoint_path(stage)
-        checkpoint.parent.mkdir(parents=True, exist_ok=True)
-        checkpoint.write_bytes(b"checkpoint")
-
-    subject = PreprocessedSubject(
-        subject_id="subject-1",
-        original_volume_path="original-volume",
-        brain_mask_path="brain-mask",
-        bounding_box=((0, 3), (0, 3), (0, 3)),
-        variants=[
-            PreprocessedVariant(
-                volume_path="volume", mask_path="mask", frst_path="frst"
-            )
-        ],
-    )
-    volume_image = nib.Nifti1Image(np.ones((3, 3, 3)), np.eye(4))
-    saved = {}
-    restore_calls = []
-
-    class FakeModel(nn.Module):
-        def forward(self, inputs):
-            return inputs
-
-    monkeypatch.setattr(infer.core_io, "load_volume", lambda _: volume_image)
-    monkeypatch.setattr(
-        infer.core_io,
-        "nifti_to_numpy",
-        lambda _: np.ones((3, 3, 3), dtype=np.float32),
-    )
-    detector_probabilities = np.full((3, 3, 3), 0.25, dtype=np.float32)
-    monkeypatch.setattr(
-        infer.core_inference,
-        "infer_detector",
-        lambda *args: detector_probabilities,
-    )
-    monkeypatch.setattr(
-        infer.core_inference,
-        "infer_discriminator",
-        lambda *args: np.ones((3, 3, 3), dtype=np.uint8),
-    )
-    monkeypatch.setattr(
-        infer.core_processor,
-        "postprocess",
-        lambda *args: np.ones((3, 3, 3), dtype=np.uint8),
-    )
-    monkeypatch.setattr(infer.core_io, "numpy_to_nifti", lambda array, _: array)
-    monkeypatch.setattr(
-        infer.core_processor.volume_ops,
-        "restore_cropped_volume",
-        lambda prediction, bounding_box, original_volume: restore_calls.append(
-            (prediction, bounding_box, original_volume)
-        )
-        or volume_image,
-    )
-    monkeypatch.setattr(
-        infer.core_io,
-        "save_volume",
-        lambda image, path: saved.update({str(path): image}),
-    )
-    monkeypatch.setattr(infer, "release_gpu_memory", lambda: None)
-
-    infer.infer_subjects(
-        "cpu",
-        layout,
-        layout.best_checkpoint_path(DETECTOR_STAGE),
-        layout.best_checkpoint_path(STUDENT_STAGE),
-        [subject],
-        cast(Any, FakeModel()),
-        cast(Any, FakeModel()),
-        False,
+    assert execution.preprocess_calls == []
+    assert (
+        not ExperimentLayout(experiment_dir=config.output_dir)
+        .inference_manifest_path()
+        .exists()
     )
 
-    manifest = InferManifest.read(layout.inference_manifest_path())
-    assert [item.subject_id for item in manifest.subjects] == ["subject-1"]
-    assert manifest.subjects[0].detector_output_path == str(
-        layout.inference_detector_output_path("subject-1").resolve()
-    )
-    assert manifest.subjects[0].discriminator_output_path == str(
-        layout.inference_discriminator_output_path("subject-1").resolve()
-    )
-    assert len(saved) == 2
-    assert restore_calls[0][1] == ((0, 3), (0, 3), (0, 3))
-    np.testing.assert_array_equal(restore_calls[0][0], detector_probabilities)
+
+# load_inference_models
 
 
-def test_load_inference_models_wraps_checkpoint_load_failure(
-    tmp_path: Path, monkeypatch
-) -> None:
-    class FakeModel(nn.Module):
-        def forward(self, inputs):
-            return inputs
-
-    monkeypatch.setattr(infer, "CandidateDetector", FakeModel)
-    monkeypatch.setattr(infer, "CandidateDiscriminatorStudent", FakeModel)
-    monkeypatch.setattr(
-        infer.core_io,
-        "load_model_weights",
-        lambda *args: (_ for _ in ()).throw(RuntimeError("invalid checkpoint")),
-    )
-    monkeypatch.setattr(infer, "release_gpu_memory", lambda: None)
-
-    with pytest.raises(ValueError, match="Could not load the detector"):
-        infer.load_inference_models(
-            "cpu",
-            tmp_path / "detector.pth",
-            tmp_path / "student.pth",
-        )
+class FakeDetector(nn.Module):
+    pass
 
 
-def test_load_inference_models_returns_both_loaded_models(
-    tmp_path: Path, monkeypatch
-) -> None:
-    class FakeDetector(nn.Module):
-        pass
+class FakeStudent(nn.Module):
+    pass
 
-    class FakeStudent(nn.Module):
-        pass
 
-    loads = []
+@pytest.fixture
+def model_loading(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    state = SimpleNamespace(loads=[], releases=0)
     monkeypatch.setattr(infer, "CandidateDetector", FakeDetector)
     monkeypatch.setattr(infer, "CandidateDiscriminatorStudent", FakeStudent)
     monkeypatch.setattr(
         infer,
+        "release_gpu_memory",
+        lambda: setattr(state, "releases", state.releases + 1),
+    )
+    return state
+
+
+def test_load_inference_models_returns_both_loaded_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model_loading: SimpleNamespace
+) -> None:
+    monkeypatch.setattr(
+        infer,
         "load_stage_checkpoint",
-        lambda model, path, stage: loads.append((model, path, stage)),
+        lambda model, path, stage: model_loading.loads.append((model, path, stage)),
     )
 
     detector, student = infer.load_inference_models(
-        "cpu",
-        tmp_path / "detector.pth",
-        tmp_path / "student.pth",
+        "cpu", tmp_path / "detector.pth", tmp_path / "student.pth"
     )
 
     assert isinstance(detector, FakeDetector)
     assert isinstance(student, FakeStudent)
-    assert loads == [
+    assert model_loading.loads == [
         (detector, tmp_path / "detector.pth", "detector"),
         (student, tmp_path / "student.pth", "student"),
     ]
 
 
-def test_load_inference_models_preserves_student_checkpoint_error(
-    tmp_path: Path, monkeypatch
+def test_load_inference_models_wraps_checkpoint_load_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model_loading: SimpleNamespace
 ) -> None:
-    class FakeModel(nn.Module):
-        def forward(self, inputs):
-            return inputs
+    def fail(*_: Any) -> None:
+        raise RuntimeError("invalid checkpoint")
 
+    monkeypatch.setattr(infer.core_io, "load_model_weights", fail)
+
+    with pytest.raises(ApplicationError, match="Could not load the detector"):
+        infer.load_inference_models(
+            "cpu", tmp_path / "detector.pth", tmp_path / "student.pth"
+        )
+
+
+def test_load_inference_models_preserves_student_checkpoint_error_and_releases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model_loading: SimpleNamespace
+) -> None:
     expected = ApplicationError(
         category="Checkpoint",
         summary="student checkpoint error",
         cause="already structured",
         fix="fix",
     )
-    loads = []
-    releases = []
 
-    def load_checkpoint(model, path, stage) -> None:
-        loads.append((path, stage))
+    def load_checkpoint(model: nn.Module, path: Path, stage: str) -> None:
+        model_loading.loads.append((path, stage))
         if stage == "student":
             raise expected
 
-    monkeypatch.setattr(infer, "CandidateDetector", FakeModel)
-    monkeypatch.setattr(infer, "CandidateDiscriminatorStudent", FakeModel)
-    monkeypatch.setattr(
-        infer,
-        "load_stage_checkpoint",
-        load_checkpoint,
-    )
-    monkeypatch.setattr(
-        infer, "release_gpu_memory", lambda: releases.append("release")
-    )
+    monkeypatch.setattr(infer, "load_stage_checkpoint", load_checkpoint)
 
     with pytest.raises(ApplicationError) as raised:
         infer.load_inference_models(
-            "cpu",
-            tmp_path / "detector.pth",
-            tmp_path / "student.pth",
+            "cpu", tmp_path / "detector.pth", tmp_path / "student.pth"
         )
 
     assert raised.value is expected
-    assert loads == [
+    assert model_loading.loads == [
         (tmp_path / "detector.pth", "detector"),
         (tmp_path / "student.pth", "student"),
     ]
-    assert releases == ["release"]
+    assert model_loading.releases == 1
 
 
-def test_infer_subjects_wraps_manifest_write_failure(
-    tmp_path: Path, monkeypatch
-) -> None:
-    class FakeModel(nn.Module):
-        def forward(self, inputs):
-            return inputs
+# infer_subjects
 
-    monkeypatch.setattr(
-        infer.InferManifest,
-        "write",
-        lambda *_args: (_ for _ in ()).throw(OSError("read-only")),
+
+@pytest.fixture
+def layout(tmp_path: Path) -> ExperimentLayout:
+    return ExperimentLayout(experiment_dir=tmp_path / "output")
+
+
+@pytest.fixture
+def subject_inference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layout: ExperimentLayout
+) -> SimpleNamespace:
+    """Run ``infer_subjects`` over two subjects whose per-subject step is faked."""
+    state = SimpleNamespace(
+        subjects=preprocessed_subjects(2, tmp_path / "processed"),
+        models=(cast(Any, object()), cast(Any, object())),
+        calls=[],
+        detector_checkpoint=tmp_path / "detector.pth",
+        student_checkpoint=tmp_path / "student.pth",
     )
-    monkeypatch.setattr(infer, "release_gpu_memory", lambda: None)
 
-    with pytest.raises(ValueError, match="Could not write the inference manifest"):
-        infer.infer_subjects(
-            "cpu",
-            ExperimentLayout(experiment_dir=tmp_path),
-            tmp_path / "detector.pth",
-            tmp_path / "student.pth",
-            [],
-            cast(Any, FakeModel()),
-            cast(Any, FakeModel()),
-            False,
+    def infer_subject(*args: Any) -> InferredSubject:
+        state.calls.append(args)
+        subject_id = args[0].subject_id
+        return InferredSubject(
+            subject_id=subject_id,
+            detector_output_path=f"{subject_id}-detector",
+            discriminator_output_path=f"{subject_id}-final",
         )
 
+    monkeypatch.setattr(infer, "infer_subject", infer_subject)
+    state.run = lambda: infer.infer_subjects(
+        "cpu",
+        layout,
+        state.detector_checkpoint,
+        state.student_checkpoint,
+        state.subjects,
+        state.models[0],
+        state.models[1],
+        True,
+    )
+    return state
 
-@pytest.mark.parametrize("failed_output", ["detector", "final"])
-def test_infer_subject_wraps_output_write_failure(
-    tmp_path: Path, monkeypatch, failed_output: str
+
+def test_infer_subjects_infers_every_subject_with_the_models(
+    subject_inference: SimpleNamespace, layout: ExperimentLayout
 ) -> None:
-    subject = PreprocessedSubject(
-        subject_id="subject-1",
-        original_volume_path="original-volume",
-        brain_mask_path="brain-mask",
-        bounding_box=((0, 3), (0, 3), (0, 3)),
-        variants=[
-            PreprocessedVariant(
-                volume_path="volume", mask_path=None, frst_path="frst"
+    subject_inference.run()
+
+    assert subject_inference.calls == [
+        (subject, *subject_inference.models, layout, True)
+        for subject in subject_inference.subjects
+    ]
+
+
+def test_infer_subjects_writes_manifest_of_results_and_recipe(
+    subject_inference: SimpleNamespace, layout: ExperimentLayout
+) -> None:
+    subject_inference.run()
+
+    expected = InferManifest(
+        status=ManifestStatus.COMPLETE,
+        device="cpu",
+        detector_checkpoint_path=str(subject_inference.detector_checkpoint.resolve()),
+        student_checkpoint_path=str(subject_inference.student_checkpoint.resolve()),
+        detector_threshold=DETECTOR_THRESHOLD,
+        student_threshold=STUDENT_THRESHOLD,
+        discriminator_patch_size=DISCRIMINATOR_PATCH_SIZE,
+        minimum_volume_mm3=MINIMUM_VOLUME_MM3,
+        maximum_ellipticity=MAXIMUM_ELLIPTICITY,
+        minimum_brain_distance_mm=MINIMUM_BRAIN_DISTANCE_MM,
+        subjects=[
+            InferredSubject(
+                subject_id=subject.subject_id,
+                detector_output_path=f"{subject.subject_id}-detector",
+                discriminator_output_path=f"{subject.subject_id}-final",
             )
+            for subject in subject_inference.subjects
         ],
     )
-    volume_image = nib.Nifti1Image(np.ones((3, 3, 3)), np.eye(4))
-    monkeypatch.setattr(infer.core_io, "load_volume", lambda _: volume_image)
-    monkeypatch.setattr(
-        infer.core_io,
-        "nifti_to_numpy",
-        lambda _: np.ones((3, 3, 3), dtype=np.float32),
+    manifest = InferManifest.read(layout.inference_manifest_path())
+    assert manifest.model_dump(exclude=IGNORED_LIFECYCLE_FIELDS) == expected.model_dump(
+        exclude=IGNORED_LIFECYCLE_FIELDS
     )
+
+
+@pytest.mark.parametrize("failure", [OSError, ValueError])
+def test_infer_subjects_wraps_manifest_write_failure(
+    subject_inference: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: type[Exception],
+) -> None:
+    def fail(*_: Any) -> None:
+        raise failure("read-only")
+
+    monkeypatch.setattr(infer.InferManifest, "write", fail)
+
+    with pytest.raises(
+        ApplicationError, match="Could not write the inference manifest"
+    ):
+        subject_inference.run()
+
+
+# infer_subject
+
+
+@pytest.fixture
+def subject_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layout: ExperimentLayout
+) -> SimpleNamespace:
+    """One real 3^3 subject whose detector, discriminator and postprocess are faked.
+
+    The volume has anisotropic voxels and a 1^3 crop box, so the faked 1^3 stage
+    outputs are restored for real into the 3^3 original space.
+    """
+    (subject,) = preprocessed_subjects(
+        1,
+        tmp_path / "processed",
+        write_files=True,
+        shape=(3, 3, 3),
+        affine=np.diag([1.0, 2.0, 3.0, 1.0]),
+    )
+    state = SimpleNamespace(
+        subject=subject,
+        layout=layout,
+        detector_probability=np.full((1, 1, 1), 0.25, dtype=np.float32),
+        retained_labels=np.full((1, 1, 1), 3, dtype=np.uint8),
+        final_mask=np.full((1, 1, 1), 7, dtype=np.uint8),
+        calls={},
+        models=(cast(Any, object()), cast(Any, object())),
+    )
+
+    def record(name: str, result: np.ndarray):
+        def stage(*args: Any) -> np.ndarray:
+            state.calls[name] = args
+            return result
+
+        return stage
+
     monkeypatch.setattr(
         infer.core_inference,
         "infer_detector",
-        lambda *args: np.ones((3, 3, 3), dtype=np.float32),
+        record("detector", state.detector_probability),
     )
     monkeypatch.setattr(
         infer.core_inference,
         "infer_discriminator",
-        lambda *args: np.ones((3, 3, 3), dtype=np.uint8),
+        record("discriminator", state.retained_labels),
     )
     monkeypatch.setattr(
-        infer.core_processor,
-        "postprocess",
-        lambda *args: np.ones((3, 3, 3), dtype=np.uint8),
+        infer.core_processor, "postprocess", record("postprocess", state.final_mask)
     )
-    monkeypatch.setattr(
-        infer.core_processor.volume_ops,
-        "restore_cropped_volume",
-        lambda *args: volume_image,
+    state.run = lambda use_amp=False: infer.infer_subject(
+        subject, state.models[0], state.models[1], layout, use_amp
     )
-    layout = ExperimentLayout(experiment_dir=tmp_path)
-    failed_path = (
-        layout.inference_detector_output_path(subject.subject_id)
-        if failed_output == "detector"
-        else layout.inference_discriminator_output_path(subject.subject_id)
+    return state
+
+
+def read_output(path: Path | str) -> np.ndarray:
+    return nib.load(path).get_fdata()  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def test_infer_subject_saves_detector_probabilities_in_original_space(
+    subject_stages: SimpleNamespace,
+) -> None:
+    subject_stages.run()
+
+    output = read_output(
+        subject_stages.layout.inference_detector_output_path("subject-0")
     )
+    expected = np.zeros((3, 3, 3))
+    expected[0, 0, 0] = 0.25
+    np.testing.assert_array_equal(output, expected)
 
-    def save_volume(image, path):
-        if path == failed_path:
-            raise OSError("read-only")
 
-    monkeypatch.setattr(infer.core_io, "save_volume", save_volume)
+def test_infer_subject_saves_final_mask_in_original_space(
+    subject_stages: SimpleNamespace,
+) -> None:
+    subject_stages.run()
 
-    expected_summary = (
-        "Could not write the detector output"
-        if failed_output == "detector"
-        else "Could not write the discriminator output"
+    output = read_output(
+        subject_stages.layout.inference_discriminator_output_path("subject-0")
     )
-    with pytest.raises(ValueError, match=expected_summary):
-        infer.infer_subject(
-            subject,
-            cast(Any, object()),
-            cast(Any, object()),
-            layout,
-            False,
-        )
+    expected = np.zeros((3, 3, 3))
+    expected[0, 0, 0] = 7
+    np.testing.assert_array_equal(output, expected)
 
 
-def test_execute_preprocesses_raw_subjects(tmp_path: Path, monkeypatch) -> None:
-    dataset_dir = tmp_path / "dataset"
-    output_dir = tmp_path / "output"
-    detector_checkpoint = tmp_path / "detector.pth"
-    student_checkpoint = tmp_path / "student.pth"
-    calls = []
-    dataset_dir.mkdir()
-    detector_checkpoint.touch()
-    student_checkpoint.touch()
-    raw_subject = RawSubject(
-        subject_id="subject-1",
-        source_id="source",
-        volume_path="volume",
-    )
-    preprocessed_subject = PreprocessedSubject(
-        subject_id="subject-1",
-        original_volume_path="original-volume",
-        brain_mask_path="brain-mask",
-        bounding_box=((0, 1), (0, 1), (0, 1)),
-        variants=[
-            PreprocessedVariant(
-                volume_path="processed-volume",
-                mask_path=None,
-                frst_path="processed-frst",
-            )
-        ],
-    )
-    now = timestamp()
-    RawDatasetManifest(
-        status=ManifestStatus.COMPLETE,
-        created_at=now,
-        updated_at=now,
-        sources=[
-            RawSource(
-                input_dir=".",
-                volume_pattern="{subject_id}",
-                source_id="source",
-                modality="QSM",
-            )
-        ],
-        subjects=[raw_subject],
-    ).write(DatasetLayout(dataset_dir=dataset_dir).raw_manifest_path())
+def test_infer_subject_returns_resolved_output_paths(
+    subject_stages: SimpleNamespace,
+) -> None:
+    result = subject_stages.run()
 
-    preprocessing_calls = []
-
-    def fake_preprocess_subject(*args, **kwargs):
-        preprocessing_calls.append((args, kwargs))
-        return preprocessed_subject
-
-    monkeypatch.setattr(infer, "preprocess_subject", fake_preprocess_subject)
-    detector = cast(Any, object())
-    student = cast(Any, object())
-    monkeypatch.setattr(
-        infer, "load_inference_models", lambda *args: (detector, student)
-    )
-    monkeypatch.setattr(
-        infer, "infer_subjects", lambda *args: calls.append(args)
+    layout = subject_stages.layout
+    assert result == InferredSubject(
+        subject_id="subject-0",
+        detector_output_path=str(
+            layout.inference_detector_output_path("subject-0").resolve()
+        ),
+        discriminator_output_path=str(
+            layout.inference_discriminator_output_path("subject-0").resolve()
+        ),
     )
 
-    config = InferConfig(
-        dataset_dir=dataset_dir,
-        output_dir=output_dir,
-        detector_checkpoint_path=detector_checkpoint,
-        student_checkpoint_path=student_checkpoint,
-        use_amp=True,
-        device="cpu",
+
+@pytest.mark.parametrize("use_amp", [True, False])
+def test_infer_subject_runs_models_with_amp_setting(
+    subject_stages: SimpleNamespace, use_amp: bool
+) -> None:
+    subject_stages.run(use_amp)
+
+    detector_args = subject_stages.calls["detector"]
+    discriminator_args = subject_stages.calls["discriminator"]
+    assert detector_args[0] is subject_stages.models[0]
+    assert discriminator_args[0] is subject_stages.models[1]
+    assert detector_args[-1] is use_amp
+    assert discriminator_args[-1] is use_amp
+
+
+def test_infer_subject_classifies_detector_candidates(
+    subject_stages: SimpleNamespace,
+) -> None:
+    subject_stages.run()
+
+    (_, _, _, probability, detector_threshold, patch_size, student_threshold, _) = (
+        subject_stages.calls["discriminator"]
+    )
+    assert probability is subject_stages.detector_probability
+    assert (detector_threshold, patch_size, student_threshold) == (
+        DETECTOR_THRESHOLD,
+        DISCRIMINATOR_PATCH_SIZE,
+        STUDENT_THRESHOLD,
     )
 
-    infer.execute(config)
 
-    assert preprocessing_calls[0][1] == {"bias_field_correction": "fast"}
-    assert calls == [
-        (
-            "cpu",
-            ExperimentLayout(experiment_dir=output_dir),
-            detector_checkpoint,
-            student_checkpoint,
-            [preprocessed_subject],
-            detector,
-            student,
-            True,
-        )
+def test_infer_subject_postprocesses_with_header_voxel_sizes(
+    subject_stages: SimpleNamespace,
+) -> None:
+    subject_stages.run()
+
+    labels, brain_mask, voxel_sizes, *limits = subject_stages.calls["postprocess"]
+    assert labels is subject_stages.retained_labels
+    np.testing.assert_array_equal(brain_mask, np.ones((3, 3, 3)))
+    assert voxel_sizes == (1.0, 2.0, 3.0)
+    assert limits == [
+        MINIMUM_VOLUME_MM3,
+        MAXIMUM_ELLIPTICITY,
+        MINIMUM_BRAIN_DISTANCE_MM,
     ]
 
 
+@pytest.mark.parametrize(
+    ("failed_output", "message"),
+    [
+        ("detector", "Could not write the detector output"),
+        ("discriminator", "Could not write the discriminator output"),
+    ],
+)
+def test_infer_subject_wraps_output_write_failure(
+    subject_stages: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_output: str,
+    message: str,
+) -> None:
+    layout = subject_stages.layout
+    failed_path = {
+        "detector": layout.inference_detector_output_path("subject-0"),
+        "discriminator": layout.inference_discriminator_output_path("subject-0"),
+    }[failed_output]
+    save_volume = infer.core_io.save_volume
+
+    def save_or_fail(image: nib.Nifti1Image, path: Path) -> None:
+        if path == failed_path:
+            raise OSError("read-only")
+        save_volume(image, path)
+
+    monkeypatch.setattr(infer.core_io, "save_volume", save_or_fail)
+
+    with pytest.raises(ApplicationError, match=message):
+        subject_stages.run()

@@ -1,3 +1,4 @@
+import pytest
 import torch
 import torch.nn as nn
 
@@ -7,78 +8,85 @@ from microbleednet.core.dataloading.datasets import (
     SegmentationBatch,
     SegmentationClassificationBatch,
 )
+from tests.support_cli_core import assert_close
+
+VOLUME = torch.zeros(2, 2, 2, 2, 2)
+MASK = torch.zeros(2, 2, 2, 2, dtype=torch.long)
+LABEL = torch.tensor([0, 1])
 
 
-class SegmentationModel(nn.Module):
-    def __init__(self) -> None:
+class StubModel(nn.Module):
+    """Zero logits shifted by a trainable bias, one output per requested head."""
+
+    def __init__(self, *heads: str) -> None:
         super().__init__()
         self.bias = nn.Parameter(torch.zeros(1))
+        self.heads = heads
 
-    def forward(self, volume: torch.Tensor) -> torch.Tensor:
-        shape = (volume.shape[0], 2, *volume.shape[2:])
-        return self.bias + torch.zeros(shape, device=volume.device)
-
-
-class TeacherModel(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.bias = nn.Parameter(torch.zeros(1))
-
-    def forward(
-        self, volume: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        shape = (volume.shape[0], 2, *volume.shape[2:])
-        segmentation = self.bias + torch.zeros(shape, device=volume.device)
-        classification = self.bias + torch.zeros(
-            (volume.shape[0], 2), device=volume.device
+    def forward(self, volume: torch.Tensor):
+        outputs = tuple(
+            self.bias
+            + torch.zeros(
+                volume.shape[0],
+                2,
+                *(volume.shape[2:] if head == "segmentation" else ()),
+            )
+            for head in self.heads
         )
-        return segmentation, classification
+        return outputs[0] if len(outputs) == 1 else outputs
 
 
-class StudentModel(SegmentationModel):
-    def forward(self, volume: torch.Tensor) -> torch.Tensor:
-        return self.bias + torch.zeros(
-            (volume.shape[0], 2), device=volume.device
+@pytest.fixture(params=["segmentation", "teacher", "student"])
+def task_case(request: pytest.FixtureRequest):
+    """A task, a model it can train, and a matching batch."""
+    if request.param == "segmentation":
+        return (
+            tasks.SegmentationTask(),
+            StubModel("segmentation"),
+            SegmentationBatch(VOLUME, MASK),
         )
-
-
-def test_tasks_compute_training_and_validation_losses(monkeypatch) -> None:
-    volume = torch.zeros(2, 2, 2, 2, 2)
-    mask = torch.zeros(2, 2, 2, 2, dtype=torch.long)
-    labels = torch.tensor([0, 1])
-
-    segmentation_task = tasks.SegmentationTask()
-    segmentation_batch = SegmentationBatch(volume, mask)
-    assert torch.isfinite(
-        segmentation_task.validation_step(
-            SegmentationModel(), segmentation_batch
+    if request.param == "teacher":
+        return (
+            tasks.SegmentationClassificationTask(),
+            StubModel("segmentation", "classification"),
+            SegmentationClassificationBatch(VOLUME, MASK, LABEL),
         )
+    return (
+        tasks.KnowledgeDistillationClassificationTask(
+            StubModel("segmentation", "classification")
+        ),
+        StubModel("classification"),
+        ClassificationBatch(VOLUME, LABEL),
     )
 
-    combined_task = tasks.SegmentationClassificationTask()
-    combined_batch = SegmentationClassificationBatch(volume, mask, labels)
-    assert torch.isfinite(
-        combined_task.validation_step(TeacherModel(), combined_batch)
-    )
 
-    teacher = TeacherModel()
-    student_task = tasks.KnowledgeDistillationClassificationTask(teacher)
-    classification_batch = ClassificationBatch(volume, labels)
-    assert torch.isfinite(
-        student_task.validation_step(StudentModel(), classification_batch)
-    )
+def test_training_step_returns_finite_differentiable_loss(task_case) -> None:
+    task, model, batch = task_case
+
+    loss = task.training_step(model, batch)
+    loss.backward()
+
+    assert loss.ndim == 0
+    assert torch.isfinite(loss)
+    assert model.bias.grad is not None
+
+
+def test_validation_step_matches_training_step(task_case) -> None:
+    task, model, batch = task_case
+
+    assert_close(task.validation_step(model, batch), task.training_step(model, batch))
+
+
+def test_distillation_task_freezes_teacher() -> None:
+    teacher = StubModel("segmentation", "classification")
+
+    tasks.KnowledgeDistillationClassificationTask(teacher)
+
     assert not teacher.training
     assert all(not parameter.requires_grad for parameter in teacher.parameters())
 
 
-def test_base_task_requires_step_implementations() -> None:
-    base = tasks.BaseTask()
-    model = nn.Linear(1, 1)
-
-    for step in (base.training_step, base.validation_step):
-        try:
-            step(model, object())
-        except NotImplementedError:
-            pass
-        else:
-            raise AssertionError("base task step must be abstract")
+@pytest.mark.parametrize("step", ["training_step", "validation_step"])
+def test_base_task_requires_step_implementations(step: str) -> None:
+    with pytest.raises(NotImplementedError):
+        getattr(tasks.BaseTask(), step)(nn.Linear(1, 1), object())

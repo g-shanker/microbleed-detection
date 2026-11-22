@@ -1,9 +1,9 @@
-import nibabel as nib
 import numpy as np
 import pytest
 
 from microbleednet.constants import DETECTOR_PATCH_SIZE, DISCRIMINATOR_PATCH_SIZE
 from microbleednet.core.datamodels import PreprocessInput
+from tests.support import nifti
 
 
 def test_patch_sizes_are_fixed_model_input_contracts() -> None:
@@ -23,9 +23,8 @@ def test_patch_sizes_are_fixed_model_input_contracts() -> None:
 def test_preprocess_input_rejects_invalid_affines(
     volume_affine, mask_affine, message: str
 ) -> None:
-    volume = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
+    volume, mask = nifti(), nifti()
     volume._affine = volume_affine
-    mask = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
     mask._affine = mask_affine
 
     with pytest.raises(ValueError, match=message):
@@ -33,9 +32,8 @@ def test_preprocess_input_rejects_invalid_affines(
 
 
 def test_preprocess_input_rejects_invalid_mask_spacing() -> None:
-    volume = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
-    mask = nib.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
+    mask = nifti()
     mask.header.set_zooms((0.0, 1.0, 1.0))
 
     with pytest.raises(ValueError, match="Mask voxel spacing is invalid"):
-        PreprocessInput(volume, mask, "QSM")
+        PreprocessInput(nifti(), mask, "QSM")

@@ -1,129 +1,103 @@
 from pathlib import Path
 
-import nibabel as nib
 import numpy as np
 import pytest
 from pydantic import ValidationError
 
 from microbleednet.orchestration.configs import SplitConfig
-from microbleednet.orchestration.layouts import DatasetLayout, ExperimentLayout
-from microbleednet.orchestration.manifests import (
-    ManifestStatus,
-    PreprocessedDatasetManifest,
-    PreprocessedSubject,
-    PreprocessedVariant,
-    SplitManifest,
-    timestamp,
-)
+from microbleednet.orchestration.layouts import ExperimentLayout
+from microbleednet.orchestration.manifests import SplitManifest
 from microbleednet.orchestration.pipes import split
+from tests.support import (
+    preprocessed_subjects,
+    save_nifti,
+    write_preprocessed_manifest,
+)
+
+SUBJECT_COUNT = 10
 
 
-def _write_preprocessed_manifest(
-    dataset_dir: Path, count: int = 10, maskless_subject_id: str | None = None
-) -> None:
-    subjects = []
-    for index in range(count):
-        subject_id = f"subject-{index}"
-        mask_path = dataset_dir / f"mask-{index}.nii.gz"
-        mask = np.zeros((1, 1, 1), dtype=np.uint8)
-        if index % 2 == 0:
-            mask[0, 0, 0] = 1
-        nib.save(nib.Nifti1Image(mask, np.eye(4)), mask_path)
-        subjects.append(PreprocessedSubject(
-            subject_id=f"subject-{index}",
-            original_volume_path=f"volume-{index}",
-            brain_mask_path=f"brain-mask-{index}",
-            bounding_box=((0, 1), (0, 1), (0, 1)),
-            variants=[
-                PreprocessedVariant(
-                    volume_path=f"volume-{index}",
-                    mask_path=(
-                        None
-                        if subject_id == maskless_subject_id
-                        else str(mask_path)
-                    ),
-                    frst_path=f"frst-{index}",
-                )
-            ],
-        ))
-    now = timestamp()
-    PreprocessedDatasetManifest(
-        status=ManifestStatus.COMPLETE,
-        created_at=now,
-        updated_at=now,
-        subjects=subjects,
-        bias_field_correction="fast",
-        raw_manifest_fingerprint="test-raw-manifest",
-    ).write(DatasetLayout(dataset_dir=dataset_dir).preprocessed_manifest_path())
+def _is_positive(subject_id: str) -> bool:
+    return int(subject_id.removeprefix("subject-")) % 2 == 0
 
 
-def test_split_execute_writes_seeded_manifest_and_overwrites_it(
-    tmp_path: Path,
-) -> None:
+def _write_dataset(tmp_path: Path, maskless_index: int | None = None) -> Path:
+    """Write a dataset whose even-numbered subjects contain a lesion mask."""
+    subjects = preprocessed_subjects(SUBJECT_COUNT, tmp_path / "inputs")
+    for index, subject in enumerate(subjects):
+        variant = subject.variants[0]
+        save_nifti(
+            Path(str(variant.mask_path)),
+            shape=(1, 1, 1),
+            value=int(_is_positive(subject.subject_id)),
+            dtype=np.uint8,
+        )
+        if index == maskless_index:
+            subjects[index] = subject.model_copy(
+                update={"variants": [variant.model_copy(update={"mask_path": None})]}
+            )
     dataset_dir = tmp_path / "dataset"
-    dataset_dir.mkdir()
-    _write_preprocessed_manifest(dataset_dir)
-    experiment_dir = tmp_path / "experiment"
+    write_preprocessed_manifest(dataset_dir, subjects)
+    return dataset_dir
 
-    config = SplitConfig(
+
+def _config(tmp_path: Path, dataset_dir: Path, seed: int = 42) -> SplitConfig:
+    return SplitConfig(
         dataset_dir=dataset_dir,
-        experiment_dir=experiment_dir,
+        experiment_dir=tmp_path / "experiment",
         train_size=0.6,
         validation_size=0.2,
         test_size=0.2,
-        seed=42,
-    )
-    split.execute(config)
-    first = SplitManifest.read(
-        ExperimentLayout(experiment_dir=experiment_dir).split_manifest_path()
+        seed=seed,
     )
 
-    split.execute(config.model_copy(update={"seed": 7}))
-    second = SplitManifest.read(
-        ExperimentLayout(experiment_dir=experiment_dir).split_manifest_path()
+
+def _read_split(tmp_path: Path) -> SplitManifest:
+    return SplitManifest.read(
+        ExperimentLayout(experiment_dir=tmp_path / "experiment").split_manifest_path()
     )
 
-    assert first.seed == 42
-    assert second.seed == 7
+
+def test_execute_partitions_all_subjects_with_stratified_lesion_balance(
+    tmp_path: Path,
+) -> None:
+    split.execute(_config(tmp_path, _write_dataset(tmp_path)))
+
+    manifest = _read_split(tmp_path)
+    partitions = [
+        manifest.train_subject_ids,
+        manifest.validation_subject_ids,
+        manifest.test_subject_ids,
+    ]
+    assert manifest.seed == 42
+    assert [len(ids) for ids in partitions] == [6, 2, 2]
+    assert sorted(sum(partitions, [])) == [
+        f"subject-{index}" for index in range(SUBJECT_COUNT)
+    ]
+    for ids in partitions:
+        assert sum(map(_is_positive, ids)) / len(ids) == 0.5
+
+
+def test_execute_overwrites_previous_split_with_new_seed(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset(tmp_path)
+    split.execute(_config(tmp_path, dataset_dir, seed=42))
+    first = _read_split(tmp_path)
+
+    split.execute(_config(tmp_path, dataset_dir, seed=7))
+    second = _read_split(tmp_path)
+
+    assert (first.seed, second.seed) == (42, 7)
     assert first.train_subject_ids != second.train_subject_ids
-    assert sorted(
-        second.train_subject_ids
-        + second.validation_subject_ids
-        + second.test_subject_ids
-    ) == [f"subject-{index}" for index in range(10)]
-    for subject_ids in (
-        second.train_subject_ids,
-        second.validation_subject_ids,
-        second.test_subject_ids,
-    ):
-        positive_count = sum(
-            int(subject_id.removeprefix("subject-")) % 2 == 0
-            for subject_id in subject_ids
-        )
-        assert positive_count / len(subject_ids) == 0.5
 
 
 def test_split_rejects_subjects_without_masks(tmp_path: Path) -> None:
-    dataset_dir = tmp_path / "dataset"
-    dataset_dir.mkdir()
-    _write_preprocessed_manifest(dataset_dir, maskless_subject_id="subject-3")
-    experiment_dir = tmp_path / "experiment"
+    dataset_dir = _write_dataset(tmp_path, maskless_index=3)
 
-    with pytest.raises(
-        ValidationError,
-        match="Required subject masks are missing",
-    ):
-        SplitConfig(
-            dataset_dir=dataset_dir,
-            experiment_dir=experiment_dir,
-            train_size=0.6,
-            validation_size=0.2,
-            test_size=0.2,
-            seed=42,
-        )
+    with pytest.raises(ValidationError, match="Required subject masks are missing"):
+        _config(tmp_path, dataset_dir)
 
-    assert not ExperimentLayout(
-        experiment_dir=experiment_dir
-    ).split_manifest_path().exists()
-
-
+    assert (
+        not ExperimentLayout(experiment_dir=tmp_path / "experiment")
+        .split_manifest_path()
+        .exists()
+    )
