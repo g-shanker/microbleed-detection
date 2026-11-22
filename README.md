@@ -25,7 +25,7 @@ If you use MicrobleedNet, please cite the following papers:
 ![Candidate detection and discrimination steps for CMB detection](images/Graphical_abstract.png)
 
 Initial candidate detection uses both intensity characteristics and the radial
-symmetry of CMBs. Its objective combines weighted cross-entropy and Dice losses.
+symmetry of CMBs. Its objective combines class-weighted focal loss and Dice loss.
 Candidate discrimination uses a teacher-student framework to classify true CMB
 candidates among false positives. The teacher model has three parts:
 
@@ -35,6 +35,22 @@ candidates among false positives. The teacher model has three parts:
 
 The student model contains the teacher's feature extractor and patch-level
 classifier and is trained offline using response-based knowledge distillation.
+
+## Known deviations from the paper
+
+This implementation differs from the method described in the papers cited
+above in the following ways:
+
+* **Detector loss.** The detector (and the teacher's segmentation term, which
+  reuses it) combines Dice loss with a class-weighted focal loss instead of
+  weighted cross-entropy. The class weights are unchanged at `(1.0, 10.0)` and
+  the focusing parameter is `FOCAL_GAMMA = 2.0` in
+  [`constants.py`](src/microbleednet/constants.py). A focal loss with
+  `gamma = 0` reduces to the original weighted cross-entropy.
+* **Bias-field correction.** FSL FAST remains the default, as in the paper, but
+  SimpleITK N4 is available through `bias_field_correction = "n4"`. Evaluation
+  with explicit checkpoints requires you to choose the method, and it must
+  match the one used to preprocess the training data.
 
 ## Requirements
 
@@ -52,41 +68,69 @@ installation directory. MicrobleedNet checks for the executable at
 `FSLDIR/bin/bet`. Configure FSL in the shell that will run the pipeline before
 starting preprocessing, inference, or evaluation.
 
+FSL supports Linux and macOS natively. On Windows, install FSL inside WSL and
+run the pipeline from that WSL shell, or point `FSLDIR` at a Windows-accessible
+FSL installation. Set `FSLDIR` for the current shell as follows, replacing the
+path with your FSL installation directory:
+
+Linux, macOS, or WSL:
+
+```shell
+export FSLDIR="$HOME/fsl"
+```
+
+Windows PowerShell:
+
+```powershell
+$env:FSLDIR = "C:\path\to\fsl"
+```
+
 ## Set up after cloning
+
+The commands in this guide are identical on Linux, macOS, and Windows unless a
+section shows separate Linux/macOS/WSL and Windows PowerShell variants.
 
 1. Enter the cloned repository directory:
 
-   ```powershell
+   ```shell
    cd microbleed-detection
    ```
 
 2. Install the required Python version through `uv`:
 
-   ```powershell
+   ```shell
    uv python install 3.13
    ```
 
 3. Create the locked project environment and install all dependency groups:
 
-   ```powershell
+   ```shell
    uv sync --frozen --all-groups
    ```
 
 4. Verify that the CLI starts:
 
-   ```powershell
+   ```shell
    uv run microbleednet --help
    ```
 
 5. Verify BET and FAST before running a command that preprocesses images:
+
+   Linux, macOS, or WSL:
+
+   ```shell
+   test -x "$FSLDIR/bin/bet" && echo True || echo False
+   test -x "$FSLDIR/bin/fast" && echo True || echo False
+   ```
+
+   Windows PowerShell:
 
    ```powershell
    Test-Path (Join-Path $env:FSLDIR "bin/bet")
    Test-Path (Join-Path $env:FSLDIR "bin/fast")
    ```
 
-   Both commands should return `True`. On Linux or WSL, use the corresponding
-   shell commands to verify `$FSLDIR/bin/bet` and `$FSLDIR/bin/fast`.
+   Both commands should print `True`.
 
 ## Prepare data and configuration
 
@@ -124,7 +168,7 @@ required `--config` option.
 
 Index the raw paths and metadata into the dataset manifest:
 
-```powershell
+```shell
 uv run microbleednet index-data --config configs/index-data.toml
 ```
 
@@ -136,7 +180,7 @@ replace an existing source, rebuild the dataset in a new or empty directory.
 
 Preprocess the indexed subjects and persist the image, mask, and FRST variants:
 
-```powershell
+```shell
 uv run microbleednet preprocess --config configs/preprocess.toml
 ```
 
@@ -155,7 +199,7 @@ training data.
 
 Create the train, validation, and held-out test assignments:
 
-```powershell
+```shell
 uv run microbleednet split --config configs/split.toml
 ```
 
@@ -166,7 +210,7 @@ reproducible.
 
 Train the detector, discriminator teacher, and discriminator student stages:
 
-```powershell
+```shell
 uv run microbleednet train --config configs/train.toml
 ```
 
@@ -184,7 +228,7 @@ The supplied evaluation configuration derives the detector and student
 checkpoints from `experiment_dir`. It runs inference on the held-out test split
 and then scores the source-space detections against the raw reference masks:
 
-```powershell
+```shell
 uv run microbleednet evaluate --config configs/evaluate.toml
 ```
 
@@ -204,7 +248,7 @@ repository.
 Use explicit checkpoint paths to process every subject in an indexed raw
 dataset:
 
-```powershell
+```shell
 uv run microbleednet infer --config configs/infer.toml
 ```
 
@@ -227,7 +271,7 @@ contract.
 > Global logging flags must appear before the command name. Place `--verbose`
 > or `--quiet` immediately after `microbleednet`, as shown below.
 
-```powershell
+```shell
 uv run microbleednet --verbose train --config configs/train.toml
 uv run microbleednet --quiet infer --config configs/infer.toml
 ```
@@ -258,7 +302,7 @@ stale or mismatched artifacts.
 
 Run the configured quality gates from the repository root:
 
-```powershell
+```shell
 uv run ruff check .
 uv run pyright
 uv run pytest
